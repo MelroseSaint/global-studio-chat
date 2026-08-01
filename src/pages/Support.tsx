@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
+import { Link } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
@@ -82,10 +83,18 @@ const FAQS = [
     a: "Email verification keeps fake accounts off the platform and makes sure every profile belongs to a real person. When your one-time code is redeemed, your account is verified and the badge is attached automatically. And for your privacy, PureWire never stores or shows your plain-text address — only a one-way hash and a masked form.",
   },
   {
-    q: "Are there tools for creators?",
-    a: "Yes — creators get a special badge on their profile and extra visibility. Send a support ticket to apply for the creator program.",
+    q: "What data does PureWire store about me?",
+    a: "Very little, and only what you create: your username, display name, bio, links, photo and banner, a one-way SHA-256 hash of your email (never the plain-text address), your posts and stories, your comments, likes, shares and follows, notifications, and support tickets. Stories are deleted automatically after 24 hours. There is no tracking, no analytics, no cookies, no location data, and no advertising profile of any kind.",
   },
-];
+  {
+    q: "How do I delete my account and all my data?",
+    a: "Settings → Your data & privacy → Delete account and all data. One confirmation permanently removes your profile, posts, comments, likes, shares, stories, follows, notifications, tickets, blocks, and every file you uploaded. No soft-delete, no copy kept anywhere. The full plain-language inventory is on the Privacy page.",
+  },
+  {
+    q: "Where can I read PureWire's full transparency statement?",
+    a: "On the Privacy page — it lists exactly what we store and why, what we never store (tracking, analytics, cookies, location, plain-text email), how long data lives, and the one-action right to erasure.",
+  },
+]
 
 const STATUS_VARIANTS: Record<string, string> = {
   open: "default",
@@ -147,7 +156,11 @@ export function Support() {
         </h1>
         <p className="text-sm text-muted-foreground">
           Have an issue, a bug, or a report? Open a ticket and the team will
-          review it. You can track everything right here.
+          review it. You can track everything right here.{" "}
+          <Link to="/privacy" className="text-primary hover:underline">
+            Read our full data & transparency statement
+          </Link>
+          .
         </p>
       </div>
 

@@ -384,6 +384,9 @@ export function Landing() {
             © {new Date().getFullYear()} PureWire. Say it anyway — no ads, ever.
           </p>
           <div className="flex items-center gap-4">
+            <Link to="/privacy" className="hover:text-foreground hover:underline">
+              Privacy
+            </Link>
             <Link to="/auth" className="hover:text-foreground hover:underline">
               Sign in
             </Link>

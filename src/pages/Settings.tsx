@@ -1,6 +1,14 @@
 import { useMutation } from "convex/react";
-import { Loader2, Plus, Save, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Loader2,
+  Plus,
+  Save,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
+import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
@@ -14,12 +22,23 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { isValidUsername, PLATFORM_OPTIONS } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 interface LinkRow {
   platform: string;
@@ -39,6 +58,9 @@ export function Settings() {
 
 function SettingsForm({ user }: { user: Profile }) {
   const updateProfile = useMutation(api.users.updateProfile);
+  const deleteAccount = useMutation(api.account.deleteAccount);
+  const { signOut } = useAuth();
+  const navigate = useNavigate();
 
   const [name, setName] = useState(user.name ?? "");
   const [username, setUsername] = useState(user.username ?? "");
@@ -47,6 +69,26 @@ function SettingsForm({ user }: { user: Profile }) {
   const [avatar, setAvatar] = useState<MediaItem[]>([]);
   const [banner, setBanner] = useState<MediaItem[]>([]);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const eraseAccount = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await deleteAccount();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not delete.");
+      setDeleting(false);
+      return;
+    }
+    // The account is gone — signing out and returning home must always
+    // happen, even if the session was already invalidated server-side.
+    try {
+      await signOut();
+    } finally {
+      navigate("/");
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -256,6 +298,105 @@ function SettingsForm({ user }: { user: Profile }) {
           Save changes
         </Button>
       </div>
+
+      <Separator />
+
+      {/* Data & privacy — full transparency, right to erasure */}
+      <Card className="border-oxide/25">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ShieldCheck className="size-4 text-oxide dark:text-oxide-light" />
+            Your data & privacy
+          </CardTitle>
+          <CardDescription>
+            PureWire saves zero tracking data and never stores your plain-text
+            email — only a one-way hash. Everything you create is kept only as
+            long as your account exists. You can delete your account and all of
+            it permanently, right here.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid gap-3 rounded-xl border bg-muted/30 p-4 text-sm sm:grid-cols-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Email
+              </p>
+              <p className="mt-0.5">{user.maskedEmail}</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Stored email form
+              </p>
+              <p className="mt-0.5">One-way SHA-256 hash only</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Tracking
+              </p>
+              <p className="mt-0.5">None — no analytics, no cookies</p>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            <Link to="/privacy" className="text-primary hover:underline">
+              Read the full data & transparency statement
+            </Link>{" "}
+            — a plain-language inventory of everything stored, why, for how
+            long, and how it is protected.
+          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive" />
+              <div>
+                <p className="font-semibold">Delete account and all data</p>
+                <p className="text-sm text-muted-foreground">
+                  Permanently removes your profile, posts, comments, likes,
+                  shares, stories, follows, notifications, tickets, and every
+                  file you uploaded. This cannot be undone.
+                </p>
+              </div>
+            </div>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="destructive" size="sm" className="gap-1.5">
+                  <Trash2 className="size-4" />
+                  Delete my account
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Delete your account permanently?</DialogTitle>
+                  <DialogDescription>
+                    This erases every trace of your account from PureWire —
+                    profile, posts, comments, likes, shares, stories, follows,
+                    notifications, support tickets, and all uploaded files.
+                    There is no undo and no copy kept anywhere.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="gap-2 sm:justify-between">
+                  <DialogClose asChild>
+                    <Button variant="outline" disabled={deleting}>
+                      Keep my account
+                    </Button>
+                  </DialogClose>
+                  <Button
+                    variant="destructive"
+                    className={cn("gap-1.5")}
+                    disabled={deleting}
+                    onClick={() => void eraseAccount()}
+                  >
+                    {deleting ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-4" />
+                    )}
+                    {deleting ? "Erasing…" : "Yes, delete everything"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

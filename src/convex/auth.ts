@@ -6,7 +6,7 @@ import { computeRiskScore } from "./security";
 
 import { EmailVerification, PasswordReset } from "./auth/email";
 
-const ADMIN_EMAIL = "monreodoses@gmail.com";
+export const ADMIN_EMAIL = "monreodoses@gmail.com";
 
 interface ProfileParams {
   email?: string | null;

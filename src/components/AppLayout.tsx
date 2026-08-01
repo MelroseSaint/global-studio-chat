@@ -62,14 +62,17 @@ export function AppLayout() {
   const navigate = useNavigate();
   const unread = useQuery(api.notifications.unreadCount);
   const ensureAdminStatus = useMutation(api.admin.ensureAdminStatus);
+  const pruneExpiredStories = useMutation(api.account.pruneExpiredStories);
 
   // Ensure a pre-existing admin account (e.g. from earlier testing) gets
-  // the admin role on next load.
+  // the admin role on next load, and prune expired story content so
+  // nothing outlives its 24-hour life.
   useEffect(() => {
     if (user) {
       void ensureAdminStatus();
+      void pruneExpiredStories();
     }
-  }, [user, ensureAdminStatus]);
+  }, [user, ensureAdminStatus, pruneExpiredStories]);
 
   const username = user?.username ?? "";
 

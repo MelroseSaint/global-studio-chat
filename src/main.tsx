@@ -19,6 +19,7 @@ import { Landing } from "@/pages/Landing";
 import { NotFound } from "@/pages/NotFound";
 import { Notifications } from "@/pages/Notifications";
 import { PostDetail } from "@/pages/PostDetail";
+import { Privacy } from "@/pages/Privacy";
 import { Profile } from "@/pages/Profile";
 import { Settings } from "@/pages/Settings";
 import { Support } from "@/pages/Support";
@@ -33,6 +34,7 @@ createRoot(document.getElementById("root")!).render(
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/privacy" element={<Privacy />} />
             <Route
               element={
                 <RequireAuth>
