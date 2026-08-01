@@ -9,7 +9,7 @@ import { publicUser } from "./privacy";
 
 import { mutation, query, type QueryCtx } from "./_generated/server";
 
-const ADMIN_EMAIL = "monreodoses@gmail.com";
+const ADMIN_EMAIL = "monroedoses@gmail.com";
 
 /**
  * Promote the admin account if it predates the role system (e.g. created

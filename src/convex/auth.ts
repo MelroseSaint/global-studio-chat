@@ -10,7 +10,7 @@ import type { MutationCtx } from "./_generated/server";
 
 import { EmailVerification, PasswordReset } from "./auth/email";
 
-export const ADMIN_EMAIL = "monreodoses@gmail.com";
+export const ADMIN_EMAIL = "monroedoses@gmail.com";
 
 interface ProfileParams {
   email?: string | null;
