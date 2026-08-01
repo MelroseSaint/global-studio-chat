@@ -12,8 +12,8 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
-import { scanImageBytes } from "@/lib/ai-media-scan";
-import { processImageFile } from "@/lib/media";
+import { scanImageBytes, scanMediaBytes } from "@/lib/ai-media-scan";
+import { processImageFile, processVideoFile } from "@/lib/media";
 import { computeImageHashes, computeVideoHashes } from "@/lib/perceptual-hash";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +49,10 @@ export function MediaUpload({
   const generateUploadUrl = useMutation(api.media.generateUploadUrl);
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  // "optimizing" shows while a video is being re-encoded client-side — a
+  // short clip takes up to its own length to process, so the user should
+  // know the upload isn't stuck.
+  const [optimizing, setOptimizing] = useState(false);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -65,9 +69,9 @@ export function MediaUpload({
         // 1. Scan the ORIGINAL bytes for AI-generator/deepfake markers
         //    BEFORE any stripping, so removing metadata never also removes
         //    the evidence that media was machine-made.
-        // 2. For images, re-encode locally (EXIF/GPS/device metadata
-        //    stripped, downscaled, compressed) so raw camera files with
-        //    hidden location data never reach PureWire's servers.
+        // 2. Re-encode locally so raw camera files with hidden location
+        //    data never reach PureWire's servers, and so videos store at a
+        //    few MB instead of hundreds — high quality, tiny footprint.
         let uploadFile = file;
         if (kind === "image") {
           // Metadata lives at the head of the file — only read the header
@@ -80,6 +84,20 @@ export function MediaUpload({
           }
           const processed = await processImageFile(file);
           uploadFile = processed.processed ? processed.file : file;
+        } else if (kind === "video") {
+          const head = await file.slice(0, 256 * 1024).arrayBuffer();
+          const verdict = scanMediaBytes(head);
+          if (verdict.status === "blocked") {
+            toast.error(verdict.reason);
+            continue;
+          }
+          setOptimizing(true);
+          try {
+            const processed = await processVideoFile(file);
+            uploadFile = processed.processed ? processed.file : file;
+          } finally {
+            setOptimizing(false);
+          }
         }
         const url = await generateUploadUrl();
         const response = await fetch(url, {
@@ -173,6 +191,12 @@ export function MediaUpload({
           )}
         </Button>
       )}
+      {optimizing ? (
+        <p className="w-full text-xs text-muted-foreground">
+          <Loader2 className="mr-1 inline size-3 animate-spin" />
+          Optimizing video — quality stays high, size drops to a few MB…
+        </p>
+      ) : null}
       <input
         ref={inputRef}
         type="file"
