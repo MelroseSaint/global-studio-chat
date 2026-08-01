@@ -8,6 +8,10 @@ import {
   locationValidator,
 } from "./location";
 import { publicUser } from "./privacy";
+import {
+  detectFollowChurn,
+  detectReciprocalFollow,
+} from "./farmNetwork";
 import { enforceActive, enforceRateLimit, isSandboxed } from "./security";
 
 import { mutation, query } from "./_generated/server";
@@ -167,6 +171,7 @@ export const follow = mutation({
           await ctx.db.insert("follows", {
             followerId,
             followingId: target._id,
+            createdAt: Date.now(),
           });
         }
       }
@@ -196,7 +201,9 @@ export const follow = mutation({
     await ctx.db.insert("follows", {
       followerId,
       followingId: target._id,
+      createdAt: Date.now(),
     });
+    await detectReciprocalFollow(ctx, followerId, target._id);
     await ctx.db.patch(target._id, {
       followersCount: (target.followersCount ?? 0) + 1,
     });
@@ -236,6 +243,7 @@ export const unfollow = mutation({
     if (existing === null) {
       return;
     }
+    await detectFollowChurn(ctx, followerId, existing.createdAt);
     await ctx.db.delete(existing._id);
     await ctx.db.patch(target._id, {
       followersCount: Math.max(0, (target.followersCount ?? 0) - 1),

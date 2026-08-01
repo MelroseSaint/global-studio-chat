@@ -53,6 +53,10 @@ const schema = defineSchema({
     shadowban: v.optional(v.boolean()),
     silentFlags: v.optional(v.number()),
     silentFlagsUpdatedAt: v.optional(v.number()),
+    // Farm-network churn: when a follow was last undone inside the churn
+    // window. Lets the churn detector escalate at most once per window so a
+    // real user cleaning up mis-clicks counts once, not per unfollow.
+    lastFollowChurnAt: v.optional(v.number()),
     // Moderation trail: the PureWire Standard principle an admin action
     // cited (and an optional note), so every restriction, ban, or silence
     // references a stated rule.
@@ -143,6 +147,11 @@ const schema = defineSchema({
   follows: defineTable({
     followerId: v.id("users"),
     followingId: v.id("users"),
+    // When the follow was created. Powers the silent farm-network detector:
+    // instant reciprocal follows and quick follow/unfollow churn are the
+    // shapes of network-boosting. Optional so pre-existing rows (created
+    // before this field existed) stay valid and simply don't trigger it.
+    createdAt: v.optional(v.number()),
   })
     .index("by_follower", ["followerId"])
     .index("by_following", ["followingId"])
