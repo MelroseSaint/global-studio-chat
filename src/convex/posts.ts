@@ -1,0 +1,418 @@
+import { paginationOptsValidator } from "convex/server";
+import { v } from "convex/values";
+
+import { getAuthUserId } from "@convex-dev/auth/server";
+
+import { mutation, query } from "./_generated/server";
+
+/**
+ * Simple FNV-1a fingerprint used to verify content originality.
+ * Every post is checked against recent posts before it goes live:
+ * PureWire only allows verified original content on the feed.
+ */
+function fingerprint(content: string): string {
+  let hash = 0x811c9dc5;
+  const normalized = content.toLowerCase().replace(/\s+/g, " ").trim();
+  for (let i = 0; i < normalized.length; i++) {
+    hash ^= normalized.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+async function isDuplicate(ctx: any, authorId: any, fp: string) {
+  const recent = await ctx.db
+    .query("posts")
+    .withIndex("by_fingerprint", (q: any) => q.eq("fingerprint", fp))
+    .filter((row: any) => row.gte(row.field("_creationTime"), Date.now() - 7 * 24 * 3600_000))
+    .take(5);
+  for (const post of recent) {
+    // Prevent stealing another user's content and oversaturation.
+    if (post.authorId !== authorId) {
+      return "This content already exists on PureWire. Only original posts are allowed.";
+    }
+  }
+  const own = recent.find((p: any) => p.authorId === authorId);
+  if (own && Date.now() - own._creationTime < 5 * 60_000) {
+    return "You've posted this recently. Please wait a moment.";
+  }
+  return null;
+}
+
+/** Resolve @username mentions in content to user ids and notify them. */
+async function notifyMentions(ctx: any, content: string, authorId: any, postId: any) {
+  const mentions = [...content.matchAll(/@([a-z0-9_]{3,24})/gi)]
+    .map((m) => m[1].toLowerCase());
+  const unique = [...new Set(mentions)];
+  for (const username of unique) {
+    const target = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q: any) => q.eq("username", username))
+      .first();
+    if (target !== null && target._id !== authorId) {
+      await ctx.db.insert("notifications", {
+        userId: target._id,
+        type: "mention",
+        actorId: authorId,
+        postId,
+        read: false,
+      });
+    }
+  }
+}
+
+export const createPost = mutation({
+  args: {
+    content: v.string(),
+    media: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          kind: v.union(
+            v.literal("image"),
+            v.literal("video"),
+            v.literal("audio"),
+          ),
+        }),
+      ),
+    ),
+  },
+  handler: async (ctx, { content, media }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const text = content.trim();
+    if (text.length === 0 && (media === undefined || media.length === 0)) {
+      throw new Error("Post must contain text or media.");
+    }
+    if (text.length > 1000) {
+      throw new Error("Post is too long (max 1000 characters).");
+    }
+    const fp = text.length > 0 ? fingerprint(text) : undefined;
+    if (fp !== undefined) {
+      const blocked = await isDuplicate(ctx, userId, fp);
+      if (blocked) {
+        throw new Error(blocked);
+      }
+    }
+    const postId = await ctx.db.insert("posts", {
+      authorId: userId,
+      content: text,
+      media,
+      fingerprint: fp,
+      // Only claim originality when a fingerprint check actually ran.
+      originalityVerified: fp !== undefined,
+      likeCount: 0,
+      commentCount: 0,
+      shareCount: 0,
+    });
+    const me = await ctx.db.get(userId);
+    await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
+    if (text.length > 0) {
+      await notifyMentions(ctx, text, userId, postId);
+    }
+    return postId;
+  },
+});
+
+export const deletePost = mutation({
+  args: { postId: v.id("posts") },
+  handler: async (ctx, { postId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      return;
+    }
+    const user = await ctx.db.get(userId);
+    if (post.authorId !== userId && user?.role !== "admin") {
+      throw new Error("You can only delete your own posts.");
+    }
+    await ctx.db.delete(postId);
+  },
+});
+
+async function withMedia(ctx: any, user: any) {
+  if (user === null) {
+    return null;
+  }
+  const [avatarUrl, bannerUrl] = await Promise.all([
+    user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null,
+    user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null,
+  ]);
+  return { ...user, avatarUrl, bannerUrl };
+}
+
+async function withAuthor(ctx: any, post: any, viewerId: any) {
+  const author = await withMedia(ctx, await ctx.db.get(post.authorId));
+  let likedByMe = false;
+  if (viewerId !== null) {
+    const like = await ctx.db
+      .query("likes")
+      .withIndex("by_pair", (q: any) =>
+        q.eq("userId", viewerId).eq("postId", post._id),
+      )
+      .first();
+    likedByMe = like !== null;
+  }
+  const mediaUrls = post.media
+    ? await Promise.all(
+        post.media.map(async (m: any) => ({
+          ...m,
+          url: await ctx.storage.getUrl(m.storageId),
+        })),
+      )
+    : undefined;
+  return {
+    ...post,
+    author,
+    likedByMe,
+    mediaUrls,
+  };
+}
+
+export const feed = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+    // PureWire has no algorithmic feed — users choose what they see.
+    // "global" and "latest" both show the platform in time order today;
+    // they stay distinct tabs so users control their view, and so a future
+    // ranking layer can never be silently forced on anyone.
+    filter: v.union(
+      v.literal("global"),
+      v.literal("following"),
+      v.literal("latest"),
+      v.literal("media"),
+    ),
+  },
+  handler: async (ctx, { paginationOpts, filter }) => {
+    const viewerId = await getAuthUserId(ctx);
+    let base: any = ctx.db.query("posts");
+    if (filter === "following" && viewerId !== null) {
+      const follows = await ctx.db
+        .query("follows")
+        .withIndex("by_follower", (q) => q.eq("followerId", viewerId))
+        .take(100);
+      const authorIds = new Set([
+        viewerId,
+        ...follows.map((f) => f.followingId),
+      ]);
+      if (authorIds.size === 1) {
+        // Viewer isn't following anyone — fall back to the full feed.
+        base = ctx.db.query("posts");
+      } else {
+        base = ctx.db
+          .query("posts")
+          .filter((q) =>
+            q.or(...[...authorIds].map((id) => q.eq(q.field("authorId"), id))),
+          );
+      }
+    } else if (filter === "media") {
+      // media is either undefined or a non-empty array (enforced in createPost)
+      base = ctx.db
+        .query("posts")
+        .filter((q) => q.neq(q.field("media"), undefined));
+    }
+    const result = await base.order("desc").paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map((p: any) => withAuthor(ctx, p, viewerId)),
+    );
+    return { ...result, page };
+  },
+});
+
+export const getPost = query({
+  args: { postId: v.id("posts") },
+  handler: async (ctx, { postId }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      return null;
+    }
+    return await withAuthor(ctx, post, viewerId);
+  },
+});
+
+export const likePost = mutation({
+  args: { postId: v.id("posts") },
+  handler: async (ctx, { postId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      throw new Error("Post not found");
+    }
+    const existing = await ctx.db
+      .query("likes")
+      .withIndex("by_pair", (q) => q.eq("userId", userId).eq("postId", postId))
+      .first();
+    if (existing !== null) {
+      return;
+    }
+    await ctx.db.insert("likes", { userId, postId });
+    await ctx.db.patch(postId, { likeCount: post.likeCount + 1 });
+    if (post.authorId !== userId) {
+      await ctx.db.insert("notifications", {
+        userId: post.authorId,
+        type: "like",
+        actorId: userId,
+        postId,
+        read: false,
+      });
+    }
+  },
+});
+
+export const unlikePost = mutation({
+  args: { postId: v.id("posts") },
+  handler: async (ctx, { postId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      return;
+    }
+    const existing = await ctx.db
+      .query("likes")
+      .withIndex("by_pair", (q) => q.eq("userId", userId).eq("postId", postId))
+      .first();
+    if (existing === null) {
+      return;
+    }
+    await ctx.db.delete(existing._id);
+    await ctx.db.patch(postId, {
+      likeCount: Math.max(0, post.likeCount - 1),
+    });
+  },
+});
+
+export const addComment = mutation({
+  args: { postId: v.id("posts"), content: v.string() },
+  handler: async (ctx, { postId, content }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const text = content.trim();
+    if (text.length === 0 || text.length > 500) {
+      throw new Error("Comment must be between 1 and 500 characters.");
+    }
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      throw new Error("Post not found");
+    }
+    await ctx.db.insert("comments", {
+      postId,
+      authorId: userId,
+      content: text,
+    });
+    await ctx.db.patch(postId, { commentCount: post.commentCount + 1 });
+    if (post.authorId !== userId) {
+      await ctx.db.insert("notifications", {
+        userId: post.authorId,
+        type: "comment",
+        actorId: userId,
+        postId,
+        read: false,
+      });
+    }
+  },
+});
+
+export const deleteComment = mutation({
+  args: { commentId: v.id("comments") },
+  handler: async (ctx, { commentId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const comment = await ctx.db.get(commentId);
+    if (comment === null) {
+      return;
+    }
+    const user = await ctx.db.get(userId);
+    if (comment.authorId !== userId && user?.role !== "admin") {
+      throw new Error("You can only delete your own comments.");
+    }
+    const post = await ctx.db.get(comment.postId);
+    if (post !== null) {
+      await ctx.db.patch(post._id, {
+        commentCount: Math.max(0, post.commentCount - 1),
+      });
+    }
+    await ctx.db.delete(commentId);
+  },
+});
+
+export const listComments = query({
+  args: { postId: v.id("posts"), paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { postId, paginationOpts }) => {
+    const result = await ctx.db
+      .query("comments")
+      .withIndex("by_post", (q) => q.eq("postId", postId))
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map(async (c) => ({
+        ...c,
+        author: await ctx.db.get(c.authorId),
+      })),
+    );
+    return { ...result, page };
+  },
+});
+
+export const sharePost = mutation({
+  args: { postId: v.id("posts") },
+  handler: async (ctx, { postId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      throw new Error("Post not found");
+    }
+    const existing = await ctx.db
+      .query("shares")
+      .withIndex("by_pair", (q) => q.eq("userId", userId).eq("postId", postId))
+      .first();
+    if (existing !== null) {
+      return;
+    }
+    await ctx.db.insert("shares", { postId, userId });
+    await ctx.db.patch(postId, { shareCount: post.shareCount + 1 });
+    if (post.authorId !== userId) {
+      await ctx.db.insert("notifications", {
+        userId: post.authorId,
+        type: "share",
+        actorId: userId,
+        postId,
+        read: false,
+      });
+    }
+  },
+});
+
+export const listUserPosts = query({
+  args: { userId: v.id("users"), paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { userId, paginationOpts }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const result = await ctx.db
+      .query("posts")
+      .withIndex("by_author", (q) => q.eq("authorId", userId))
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map((p) => withAuthor(ctx, p, viewerId)),
+    );
+    return { ...result, page };
+  },
+});

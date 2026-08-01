@@ -1,1 +1,16 @@
-[FILE_TOO_LARGE]: The combined read_files output exceeded the 100,000 character hard limit. This file was truncated after 0 characters. Read it separately or use code_search for the relevant section.
+{
+  "name": "PureWire — Say it anyway.",
+  "short_name": "PureWire",
+  "description": "Say it anyway. A social platform built around expression, connection, and freedom — every post verified original, no algorithms, no ads.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#171918",
+  "theme_color": "#171918",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

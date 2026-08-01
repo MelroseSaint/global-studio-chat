@@ -1,1 +1,35 @@
-[FILE_TOO_LARGE]: The combined read_files output exceeded the 100,000 character hard limit. This file was truncated after 0 characters. Read it separately or use code_search for the relevant section.
+import { cn } from "@/lib/utils";
+
+export function Item({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 rounded-md border px-3 py-2",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export function ItemTitle({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("font-medium text-sm", className)} {...props} />;
+}
+
+export function ItemDescription({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={cn("text-sm text-muted-foreground", className)}
+      {...props}
+    />
+  );
+}
