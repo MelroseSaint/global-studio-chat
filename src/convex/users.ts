@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { publicUser } from "./privacy";
 import { enforceActive, enforceRateLimit, isSandboxed } from "./security";
 
 import { mutation, query } from "./_generated/server";
@@ -20,7 +21,7 @@ export const getCurrentUser = query({
       user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null,
       user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null,
     ]);
-    return { ...user, avatarUrl, bannerUrl };
+    return { ...publicUser(user), avatarUrl, bannerUrl };
   },
 });
 
@@ -62,7 +63,7 @@ export const getProfile = query({
       user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null,
     ]);
     return {
-      ...user,
+      ...publicUser(user),
       avatarUrl,
       bannerUrl,
       isFollowing,
@@ -112,7 +113,8 @@ export const updateProfile = mutation({
       patch.username = username;
     }
     await ctx.db.patch(userId, patch);
-    return await ctx.db.get(userId);
+    const updated = await ctx.db.get(userId);
+    return updated ? publicUser(updated) : null;
   },
 });
 
@@ -279,7 +281,7 @@ export const suggestedUsers = query({
       .slice(0, 5);
     return await Promise.all(
       candidates.map(async (u) => ({
-        ...u,
+        ...publicUser(u),
         avatarUrl: u.avatarStorageId ? await ctx.storage.getUrl(u.avatarStorageId) : null,
         bannerUrl: u.bannerStorageId ? await ctx.storage.getUrl(u.bannerStorageId) : null,
       })),
@@ -309,7 +311,7 @@ export const searchUsers = query({
           u.avatarStorageId ? ctx.storage.getUrl(u.avatarStorageId) : null,
           u.bannerStorageId ? ctx.storage.getUrl(u.bannerStorageId) : null,
         ]);
-        return { ...u, avatarUrl, bannerUrl };
+        return { ...publicUser(u), avatarUrl, bannerUrl };
       }),
     );
   },

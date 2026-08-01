@@ -48,7 +48,7 @@ const features = [
     icon: BadgeCheck,
     title: "Real people, verified",
     description:
-      "Email-verified accounts and verified badges for notable ones — so you know who you're really talking to.",
+      "Verify your email with a one-time code and the verified badge is yours — so you know who you're really talking to.",
   },
   {
     icon: Ban,
@@ -68,7 +68,7 @@ const steps = [
   {
     title: "Create your account",
     description:
-      "Sign up with your email, pick a username, and verify your identity. No phone numbers, no data harvesting.",
+      "Sign up with your email, pick a username, and verify your identity with a one-time code. No phone numbers, no data harvesting.",
   },
   {
     title: "Make it yours",

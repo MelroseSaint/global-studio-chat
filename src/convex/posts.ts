@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import { publicUser } from "./privacy";
 import {
   enforceActive,
   enforceRateLimit,
@@ -231,7 +232,7 @@ async function withMedia(ctx: QueryCtx, user: Doc<"users"> | null) {
     user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null,
     user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null,
   ]);
-  return { ...user, avatarUrl, bannerUrl };
+  return { ...publicUser(user), avatarUrl, bannerUrl };
 }
 
 async function withAuthor(
@@ -523,10 +524,10 @@ export const listComments = query({
       .paginate(paginationOpts);
     const visible = result.page.filter((c) => !excluded.includes(c.authorId));
     const page = await Promise.all(
-      visible.map(async (c) => ({
-        ...c,
-        author: await ctx.db.get(c.authorId),
-      })),
+      visible.map(async (c) => {
+        const author = await ctx.db.get(c.authorId);
+        return { ...c, author: author ? publicUser(author) : null };
+      }),
     );
     return { ...result, page };
   },

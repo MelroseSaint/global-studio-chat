@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { publicUser } from "./privacy";
+
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   mutation,
@@ -346,7 +348,7 @@ export const listBlockedUsers = query({
         return user === null
           ? null
           : {
-              ...user,
+              ...publicUser(user),
               avatarUrl: user.avatarStorageId
                 ? await ctx.storage.getUrl(user.avatarStorageId)
                 : null,
@@ -489,7 +491,7 @@ export const listFlaggedAccounts = query({
       .paginate(paginationOpts);
     const page = await Promise.all(
       result.page.map(async (u) => ({
-        ...u,
+        ...publicUser(u),
         avatarUrl: u.avatarStorageId
           ? await ctx.storage.getUrl(u.avatarStorageId)
           : null,

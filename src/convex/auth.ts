@@ -1,6 +1,7 @@
 import { convexAuth } from "@convex-dev/auth/server";
 import { Password } from "@convex-dev/auth/providers/Password";
 
+import { sha256Hex } from "./privacy";
 import { computeRiskScore } from "./security";
 
 import { EmailVerification, PasswordReset } from "./auth/email";
@@ -58,7 +59,25 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   callbacks: {
     async afterUserCreatedOrUpdated(ctx, { userId }) {
       const user = await ctx.db.get(userId);
-      if (user === null || user.role === "admin") {
+      if (user === null) {
+        return;
+      }
+      // Privacy: the user record carries only a SHA-256 hash of the email,
+      // never plain-text. Existing accounts get backfilled on their next
+      // update through the auth library.
+      if (user.email !== undefined && user.emailHash === undefined) {
+        await ctx.db.patch(userId, { emailHash: await sha256Hex(user.email) });
+      }
+      // The moment the one-time email code is redeemed, the account is
+      // verified — attach the verified badge token right away. The auth
+      // library sets emailVerificationTime, then calls this callback. Only
+      // attach when the badge was never decided: this callback fires on
+      // every auth-library update (each sign-in), so an explicit admin
+      // decision (setVerified false) must never be silently undone.
+      if (user.emailVerificationTime !== undefined && user.verified === undefined) {
+        await ctx.db.patch(userId, { verified: true });
+      }
+      if (user.role === "admin") {
         return;
       }
       if (user.accountStatus !== undefined) {

@@ -144,7 +144,7 @@ function UsersPanel() {
     _id: string;
     name?: string | null;
     username?: string | null;
-    email?: string | null;
+    maskedEmail?: string | null;
     avatarUrl?: string | null;
     verified?: boolean | null;
     role?: string | null;
@@ -173,7 +173,7 @@ function UsersPanel() {
                 {u.verified ? " ✓" : ""}
               </p>
               <p className="truncate text-xs text-muted-foreground">
-                @{u.username} · {u.email} · joined {timeAgo(u._creationTime)}
+                @{u.username} · {u.maskedEmail} · joined {timeAgo(u._creationTime)}
               </p>
             </div>
           </div>
@@ -459,7 +459,7 @@ function SecurityPanel() {
     _creationTime: number;
     name?: string | null;
     username?: string | null;
-    email?: string | null;
+    maskedEmail?: string | null;
     avatarUrl?: string | null;
     riskScore?: number | null;
     accountStatus?: string | null;
@@ -507,7 +507,7 @@ function SecurityPanel() {
                 {u.name || u.username || "Unknown"}
               </p>
               <p className="truncate text-xs text-muted-foreground">
-                @{u.username} · {u.email} · risk {u.riskScore ?? 0}/100
+                @{u.username} · {u.maskedEmail} · risk {u.riskScore ?? 0}/100
               </p>
               {u.riskReasons && u.riskReasons.length > 0 ? (
                 <p className="mt-0.5 flex flex-wrap gap-1">

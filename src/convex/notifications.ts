@@ -3,6 +3,7 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { publicUser } from "./privacy";
 import { hiddenAuthorIds, silencedAuthorIds } from "./security";
 
 import { mutation, query } from "./_generated/server";
@@ -26,11 +27,15 @@ export const listNotifications = query({
       (n) => n.actorId === undefined || !excluded.includes(n.actorId),
     );
     const page = await Promise.all(
-      visible.map(async (n) => ({
-        ...n,
-        actor: n.actorId ? await ctx.db.get(n.actorId) : null,
-        post: n.postId ? await ctx.db.get(n.postId) : null,
-      })),
+      visible.map(async (n) => {
+        const actor = n.actorId ? await ctx.db.get(n.actorId) : null;
+        const post = n.postId ? await ctx.db.get(n.postId) : null;
+        return {
+          ...n,
+          actor: actor ? publicUser(actor) : null,
+          post,
+        };
+      }),
     );
     return { ...result, page };
   },

@@ -71,7 +71,7 @@ const FAQS = [
   },
   {
     q: "How do I get a verified badge?",
-    a: "Verified badges are granted to authentic, notable accounts so you can trust who you're talking to. The team reviews accounts manually — reach out via a support ticket if you believe your account qualifies.",
+    a: "The moment you verify your email with the one-time code, the verified badge is attached to your account — it proves you're a real person, not a fake. For special cases the team can add or remove badges manually; open a support ticket if you have questions.",
   },
   {
     q: "How do I reset my password?",
@@ -79,7 +79,7 @@ const FAQS = [
   },
   {
     q: "Why do I need to verify my email?",
-    a: "Email verification keeps fake accounts off the platform and makes sure every profile belongs to a real person. You'll verify once when you join.",
+    a: "Email verification keeps fake accounts off the platform and makes sure every profile belongs to a real person. When your one-time code is redeemed, your account is verified and the badge is attached automatically. And for your privacy, PureWire never stores or shows your plain-text address — only a one-way hash and a masked form.",
   },
   {
     q: "Are there tools for creators?",

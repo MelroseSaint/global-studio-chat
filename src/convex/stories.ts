@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import { publicUser } from "./privacy";
 import {
   enforceActive,
   enforceRateLimit,
@@ -132,7 +133,7 @@ export const listStories = query({
           ...s,
           author: author
             ? {
-                ...author,
+                ...publicUser(author),
                 avatarUrl: author.avatarStorageId
                   ? await ctx.storage.getUrl(author.avatarStorageId)
                   : null,

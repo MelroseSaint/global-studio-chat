@@ -248,7 +248,8 @@ function SettingsForm({ user }: { user: Profile }) {
 
       <div className="flex items-center justify-end gap-3">
         <p className="text-xs text-muted-foreground">
-          Email: {user.email}
+          {user.emailVerificationTime ? "Email verified" : "Email unverified"} ·{" "}
+          {user.maskedEmail}
         </p>
         <Button onClick={() => void save()} disabled={saving}>
           {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}

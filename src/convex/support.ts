@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { publicUser } from "./privacy";
+
 import { mutation, query } from "./_generated/server";
 
 export const createTicket = mutation({
@@ -64,12 +66,16 @@ export const listTickets = query({
       .order("desc")
       .paginate(paginationOpts);
     const page = await Promise.all(
-      result.page.map(async (t) => ({
-        ...t,
-        user: await ctx.db.get(t.userId),
-        post: t.postId ? await ctx.db.get(t.postId) : null,
-        offender: t.offenderId ? await ctx.db.get(t.offenderId) : null,
-      })),
+      result.page.map(async (t) => {
+        const user = await ctx.db.get(t.userId);
+        const offender = t.offenderId ? await ctx.db.get(t.offenderId) : null;
+        return {
+          ...t,
+          user: user ? publicUser(user) : null,
+          post: t.postId ? await ctx.db.get(t.postId) : null,
+          offender: offender ? publicUser(offender) : null,
+        };
+      }),
     );
     return { ...result, page };
   },

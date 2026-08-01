@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { publicUser } from "./privacy";
+
 import { mutation, query, type QueryCtx } from "./_generated/server";
 
 const ADMIN_EMAIL = "monreodoses@gmail.com";
@@ -84,10 +86,11 @@ export const listUsers = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
     await requireAdmin(ctx);
-    return await ctx.db
+    const result = await ctx.db
       .query("users")
       .order("desc")
       .paginate(paginationOpts);
+    return { ...result, page: result.page.map((u) => publicUser(u)) };
   },
 });
 
@@ -125,7 +128,7 @@ export const listRecentPosts = query({
           ...p,
           author: author
             ? {
-                ...author,
+                ...publicUser(author),
                 avatarUrl: author.avatarStorageId
                   ? await ctx.storage.getUrl(author.avatarStorageId)
                   : null,
@@ -172,7 +175,7 @@ export const listAiReview = query({
           ...p,
           author: author
             ? {
-                ...author,
+                ...publicUser(author),
                 avatarUrl: author.avatarStorageId
                   ? await ctx.storage.getUrl(author.avatarStorageId)
                   : null,
