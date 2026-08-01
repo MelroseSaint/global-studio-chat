@@ -58,6 +58,12 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
                 kind: m.kind,
               }))
             : undefined,
+        // Perceptual hashes computed during upload — the server uses them
+        // to catch flipped/cropped/re-encoded copies of existing media.
+        mediaHashes:
+          media.length > 0
+            ? media.map((m) => m.hashes ?? []).filter((h) => h.length > 0)
+            : undefined,
         aiMediaStatus,
         location,
       });

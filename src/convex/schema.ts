@@ -104,6 +104,15 @@ const schema = defineSchema({
     ),
     fingerprint: v.optional(v.string()),
     originalityVerified: v.optional(v.boolean()),
+    // Verified Original fingerprinting, part two: perceptual hashes of
+    // attached media (each item carries a set of variant dHash signatures
+    // — original, mirrored, center-crop — and video posts carry sampled
+    // frames) plus the text body's shingle set. Together they catch the
+    // near-duplicates that defeat a plain fingerprint: flipped media,
+    // light crops, re-encodes, speed shifts, and lightly reworded text.
+    // Optional so existing posts stay valid.
+    mediaHashes: v.optional(v.array(v.array(v.string()))),
+    textTokens: v.optional(v.array(v.string())),
     // Anti-AI enforcement: "clean" or "review" (suspicious, awaiting a
     // human check). Posts that clearly self-identify as AI-generated are
     // rejected at creation and never stored.
@@ -123,6 +132,11 @@ const schema = defineSchema({
     .index("by_author", ["authorId"])
     .index("by_fingerprint", ["fingerprint"])
     .index("by_ai_status", ["aiStatus"]),
+  // Feeds order by _creationTime via the built-in per-table index that
+  // Convex maintains automatically — `order("desc")` on the Global,
+  // Following, Latest, and Media feed queries resolves against it, so
+  // timestamp pagination stays indexed at real-time load without an
+  // explicit (redundant) index declaration.
   stories: defineTable({
     authorId: v.id("users"),
     media: v.object({

@@ -10,6 +10,7 @@ import {
   Heart,
   History,
   Image as ImageIcon,
+  Loader2,
   MessageCircle,
   MessagesSquare,
   ScanSearch,
@@ -1131,6 +1132,7 @@ function SilencedPanel() {
 function AiReviewPanel() {
   const moderatePost = useMutation(api.admin.moderatePost);
   const resolveAiReview = useMutation(api.admin.resolveAiReview);
+  const resolveAiReviewBatch = useMutation(api.admin.resolveAiReviewBatch);
   const { results, status, loadMore } = usePaginatedQuery(
     api.admin.listAiReview,
     {},
@@ -1150,6 +1152,27 @@ function AiReviewPanel() {
     content: string;
     author: { username?: string | null; name?: string | null } | null;
   }[];
+
+  const [approvingPage, setApprovingPage] = useState(false);
+
+  // Genuine human creators with formal writing styles trip the statistical
+  // scan; approving the whole loaded page keeps the queue fast for them.
+  const approvePage = async () => {
+    if (posts.length === 0 || approvingPage) return;
+    setApprovingPage(true);
+    try {
+      await resolveAiReviewBatch({ postIds: posts.map((p) => p._id as Id<"posts">) });
+      toast.success(
+        posts.length === 1
+          ? "Marked as original — kept live."
+          : `${posts.length} posts marked as original — kept live.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not approve.");
+    } finally {
+      setApprovingPage(false);
+    }
+  };
 
   const approve = async (postId: string) => {
     try {
@@ -1196,6 +1219,28 @@ function AiReviewPanel() {
           text and image metadata before it goes live.
         </p>
       )}
+      {posts.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">
+            <b className="text-foreground">{posts.length}</b> posts waiting —
+            genuine creators with formal writing styles get flagged here.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={approvingPage}
+            onClick={() => void approvePage()}
+            title="Mark every post on this page as human-made and keep it live"
+          >
+            {approvingPage ? (
+              <Loader2 className="mr-1 size-4 animate-spin" />
+            ) : (
+              <CheckCheck className="mr-1 size-4" />
+            )}
+            Looks human — approve page
+          </Button>
+        </div>
+      ) : null}
       {posts.map((p, i) => (
         <motion.div
           key={p._id}

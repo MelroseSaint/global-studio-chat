@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { mediaHashesMatch } from "@/lib/perceptual-hash";
+
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
 import {
   boundingBox,
@@ -44,27 +46,127 @@ function fingerprint(content: string): string {
   return (hash >>> 0).toString(36);
 }
 
+/**
+ * Word-bigram shingles of a post body, hashed, capped at a fixed size.
+ * Stored on the post as `textTokens` so near-duplicate copies — lightly
+ * reworded text that defeats the exact fingerprint — can be compared by
+ * Jaccard similarity. Hashed so the stored tokens never reconstruct the
+ * original words (privacy stays whole).
+ */
+function textShingles(content: string): string[] {
+  const words = content
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 0);
+  const set = new Set<string>();
+  for (let i = 0; i + 1 < words.length; i++) {
+    const shingle = `${words[i]}|${words[i + 1]}`;
+    let hash = 0x811c9dc5;
+    for (let j = 0; j < shingle.length; j++) {
+      hash ^= shingle.charCodeAt(j);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    set.add((hash >>> 0).toString(36));
+  }
+  const arr = [...set];
+  if (arr.length <= 128) return arr;
+  // Deterministic cap keeps long posts bounded while preserving a spread
+  // of the set, so similarity stays meaningful for verbose text.
+  const step = Math.ceil(arr.length / 128);
+  const capped: string[] = [];
+  for (let i = 0; i < arr.length; i += step) capped.push(arr[i]);
+  return capped;
+}
+
+/** Jaccard similarity between two shingle sets. */
+function jaccardSimilarity(a: string[], b: string[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const setB = new Set(b);
+  let intersection = 0;
+  for (const x of a) {
+    if (setB.has(x)) intersection++;
+  }
+  const union = a.length + b.length - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/** Posts sharing at least this fraction of word shingles count as copies. */
+const TEXT_SIMILARITY_THRESHOLD = 0.7;
+
+/**
+ * Minimum shingle count before text similarity is meaningful. Bigram
+ * overlap on tiny texts is pure noise — a two-word post has one shingle,
+ * so sharing it would score 1.0 for phrases as ordinary as "good morning".
+ * The exact fingerprint already catches verbatim copies at any length.
+ */
+const MIN_SHINGLES_FOR_SIMILARITY = 5;
+
+/** True when any candidate media item's hash set matches any stored set. */
+function anyMediaMatches(
+  candidate: string[][],
+  stored: string[][] | undefined,
+): boolean {
+  if (stored === undefined || stored.length === 0) return false;
+  for (const item of candidate) {
+    if (mediaHashesMatch(item, stored)) return true;
+  }
+  return false;
+}
+
+/**
+ * Verify a post is original against recent posts — twice:
+ *
+ * 1. Exact fingerprint match (same normalized text), the cheapest check.
+ * 2. Near-duplicates: evasive copies (flipped media, light crops, speed
+ *    shifts, re-encodes, lightly reworded text) defeat the fingerprint,
+ *    so compare shingle similarity and perceptual-hash distance against
+ *    the most recent posts. Bounded so the scan cost stays flat.
+ */
 async function isDuplicate(
   ctx: MutationCtx,
   authorId: Id<"users">,
-  fp: string,
+  fp: string | undefined,
+  tokens: string[],
+  mediaHashes: string[][],
 ): Promise<{ kind: "stolen" } | { kind: "own-recent" } | null> {
-  const recent = await ctx.db
-    .query("posts")
-    .withIndex("by_fingerprint", (q) => q.eq("fingerprint", fp))
-    .filter((row) =>
-      row.gte(row.field("_creationTime"), Date.now() - 7 * 24 * 3600_000),
-    )
-    .take(5);
-  for (const post of recent) {
-    // Prevent stealing another user's content and oversaturation.
-    if (post.authorId !== authorId) {
-      return { kind: "stolen" };
+  if (fp !== undefined) {
+    const recent = await ctx.db
+      .query("posts")
+      .withIndex("by_fingerprint", (q) => q.eq("fingerprint", fp))
+      .filter((row) =>
+        row.gte(row.field("_creationTime"), Date.now() - 7 * 24 * 3600_000),
+      )
+      .take(5);
+    for (const post of recent) {
+      // Prevent stealing another user's content and oversaturation.
+      if (post.authorId !== authorId) {
+        return { kind: "stolen" };
+      }
+    }
+    const own = recent.find((p) => p.authorId === authorId);
+    if (own && Date.now() - own._creationTime < 5 * 60_000) {
+      return { kind: "own-recent" };
     }
   }
-  const own = recent.find((p) => p.authorId === authorId);
-  if (own && Date.now() - own._creationTime < 5 * 60_000) {
-    return { kind: "own-recent" };
+  if (tokens.length > 0 || mediaHashes.length > 0) {
+    const cutoff = Date.now() - 7 * 24 * 3600_000;
+    const recent = await ctx.db.query("posts").order("desc").take(200);
+    for (const post of recent) {
+      if (post._creationTime < cutoff) continue;
+      const textClose =
+        tokens.length >= MIN_SHINGLES_FOR_SIMILARITY &&
+        post.textTokens !== undefined &&
+        post.textTokens.length >= MIN_SHINGLES_FOR_SIMILARITY &&
+        jaccardSimilarity(tokens, post.textTokens) >= TEXT_SIMILARITY_THRESHOLD;
+      const mediaClose = anyMediaMatches(mediaHashes, post.mediaHashes);
+      if (!textClose && !mediaClose) continue;
+      if (post.authorId !== authorId) {
+        return { kind: "stolen" };
+      }
+      if (Date.now() - post._creationTime < 5 * 60_000) {
+        return { kind: "own-recent" };
+      }
+    }
   }
   return null;
 }
@@ -112,13 +214,18 @@ export const createPost = mutation({
         }),
       ),
     ),
+    // Perceptual hash sets per attached media item, computed in the browser
+    // (original + mirrored + center-crop variants, sampled video frames).
+    // Compared by Hamming distance against recent posts so flipped, cropped,
+    // re-encoded, and speed-shifted copies still count as duplicates.
+    mediaHashes: v.optional(v.array(v.array(v.string()))),
     // Verdict from the client-side scan action (api.aiContent.scanMediaForAi),
     // which reads the uploaded bytes — the only place storage reads exist.
     aiMediaStatus: v.optional(AI_MEDIA_STATUS),
     // Optional place the post was shared from (see the Local feed).
     location: v.optional(locationValidator),
   },
-  handler: async (ctx, { content, media, aiMediaStatus, location }) => {
+  handler: async (ctx, { content, media, mediaHashes, aiMediaStatus, location }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
@@ -174,8 +281,9 @@ export const createPost = mutation({
       };
     }
     const fp = text.length > 0 ? fingerprint(text) : undefined;
-    if (fp !== undefined) {
-      const blocked = await isDuplicate(ctx, userId, fp);
+    const tokens = text.length > 0 ? textShingles(text) : [];
+    if (fp !== undefined || tokens.length > 0 || (mediaHashes ?? []).length > 0) {
+      const blocked = await isDuplicate(ctx, userId, fp, tokens, mediaHashes ?? []);
       if (blocked !== null) {
         // Reposting someone else's content is a strong spam signal — count
         // it toward a quiet shadowban. Your own recent re-posts are a gentle
@@ -227,6 +335,10 @@ export const createPost = mutation({
       content: text,
       media,
       fingerprint: fp,
+      // Shingle tokens and media hash sets back the near-duplicate layer;
+      // store them only when a check actually ran.
+      textTokens: tokens.length > 0 ? tokens : undefined,
+      mediaHashes: (mediaHashes ?? []).length > 0 ? mediaHashes : undefined,
       // Only claim originality when a fingerprint check actually ran.
       originalityVerified: fp !== undefined,
       aiStatus: needsReview ? "review" : "clean",

@@ -84,6 +84,25 @@ const DEEPFAKE_MARKERS = [
 const DEEPFAKE_REVIEW_MARKERS = ["deepfake", "faceapp"];
 
 /**
+ * C2PA / JUMBF provenance and Google SynthID watermark markers.
+ *
+ * C2PA (Content Credentials) is the open standard cameras and editors use
+ * to record how a file was made. A manifest alone is provenance, not proof
+ * of AI — but the `trainedAlgorithmicMedia` assertion is C2PA's explicit
+ * declaration that an AI model created or edited the content, and SynthID
+ * is Google's watermarking system for AI-generated media. Both are demoted
+ * to the human review tier (never a hard block) so genuine photos carrying
+ * provenance metadata are never rejected on presence alone — a human keeps
+ * the final call, keeping the review queue fast for real creators.
+ */
+const PROVENANCE_REVIEW_MARKERS = [
+  "trainedalgorithmicmedia", // C2PA: AI model was involved
+  "synthid", // Google's AI-media watermark tooling
+  "contentcredentials", // C2PA reader/verifier signatures
+  "c2pa.actions", // C2PA action log (contains the AI assertion)
+];
+
+/**
  * Audio/video AI-generator signatures. Compound tool names are
  * hard-blocked; standalone brand words (Suno, ElevenLabs, Runway) are
  * demoted to review so legitimate metadata that merely mentions a brand
@@ -180,6 +199,14 @@ export function scanImageBytes(bytes: ArrayBuffer): AiScanResult {
       };
     }
   }
+  for (const marker of PROVENANCE_REVIEW_MARKERS) {
+    if (lower.includes(marker)) {
+      return {
+        status: "review",
+        reason: `This image carries AI-provenance metadata (${marker.trim()}) — flagged for a human check.`,
+      };
+    }
+  }
   return { status: "clean" };
 }
 
@@ -199,6 +226,14 @@ export function scanMediaBytes(bytes: ArrayBuffer): AiScanResult {
       return {
         status: "review",
         reason: `This media mentions a possible AI tool (${marker.trim()}) — flagged for a human check.`,
+      };
+    }
+  }
+  for (const marker of PROVENANCE_REVIEW_MARKERS) {
+    if (lower.includes(marker)) {
+      return {
+        status: "review",
+        reason: `This media carries AI-provenance metadata (${marker.trim()}) — flagged for a human check.`,
       };
     }
   }

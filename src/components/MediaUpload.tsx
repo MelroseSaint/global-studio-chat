@@ -14,6 +14,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { scanImageBytes } from "@/lib/ai-media-scan";
 import { processImageFile } from "@/lib/media";
+import { computeImageHashes, computeVideoHashes } from "@/lib/perceptual-hash";
 import { cn } from "@/lib/utils";
 
 export type MediaKind = "image" | "video" | "audio";
@@ -21,6 +22,11 @@ export interface MediaItem {
   storageId: Id<"_storage">;
   kind: MediaKind;
   url: string;
+  // Perceptual hash variants of this item, computed here in the browser
+  // (original + mirrored + center-crop for images, sampled frames for
+  // video). Passed to createPost as mediaHashes so the server can catch
+  // flipped/cropped/re-encoded copies that defeat the exact fingerprint.
+  hashes?: string[];
 }
 
 function kindFromMime(type: string): MediaKind {
@@ -83,10 +89,20 @@ export function MediaUpload({
         });
         if (!response.ok) throw new Error("Upload failed");
         const { storageId } = (await response.json()) as { storageId: string };
+        // Fingerprint the exact bytes that are stored (the processed file
+        // for images), so server-side duplicate matching sees the same
+        // pixels. Hashing is best-effort — a failure never blocks upload.
+        let hashes: string[] | undefined;
+        if (kind === "image") {
+          hashes = await computeImageHashes(uploadFile);
+        } else if (kind === "video") {
+          hashes = await computeVideoHashes(uploadFile);
+        }
         items.push({
           storageId: storageId as Id<"_storage">,
           kind: kindFromMime(uploadFile.type),
           url: URL.createObjectURL(uploadFile),
+          hashes,
         });
       }
       onChange([...value, ...items]);

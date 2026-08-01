@@ -221,3 +221,22 @@ export const resolveAiReview = mutation({
     }
   },
 });
+
+/**
+ * Admin clears a whole page of flagged posts at once. Genuine creators with
+ * formal writing styles get mis-flagged by the statistical scan; approving
+ * in bulk keeps the human review queue moving instead of blocking their
+ * content behind dozens of individual clicks.
+ */
+export const resolveAiReviewBatch = mutation({
+  args: { postIds: v.array(v.id("posts")) },
+  handler: async (ctx, { postIds }) => {
+    await requireAdmin(ctx);
+    for (const postId of postIds) {
+      const post = await ctx.db.get(postId);
+      if (post !== null && post.aiStatus === "review") {
+        await ctx.db.patch(postId, { aiStatus: "clean" });
+      }
+    }
+  },
+});
