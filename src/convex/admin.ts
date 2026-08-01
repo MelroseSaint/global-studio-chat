@@ -39,7 +39,7 @@ async function requireAdmin(ctx: QueryCtx) {
 export const dashboardStats = query({
   handler: async (ctx) => {
     await requireAdmin(ctx);
-    const [users, posts, stories, tickets, follows, comments, aiReview] =
+    const [users, posts, stories, tickets, follows, comments, aiReview, flagged] =
       await Promise.all([
         ctx.db.query("users").collect(),
         ctx.db.query("posts").collect(),
@@ -50,6 +50,18 @@ export const dashboardStats = query({
         ctx.db
           .query("posts")
           .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
+          .collect(),
+        // Only accounts that actually need a decision — not every user
+        // that was ever auto-scored "active".
+        ctx.db
+          .query("users")
+          .filter((q) =>
+            q.or(
+              q.eq(q.field("accountStatus"), "suspicious"),
+              q.eq(q.field("accountStatus"), "restricted"),
+              q.eq(q.field("accountStatus"), "banned"),
+            ),
+          )
           .collect(),
       ]);
     return {
@@ -62,6 +74,7 @@ export const dashboardStats = query({
       comments: comments.length,
       likes: (await ctx.db.query("likes").collect()).length,
       aiReview: aiReview.length,
+      security: flagged.length,
     };
   },
 });

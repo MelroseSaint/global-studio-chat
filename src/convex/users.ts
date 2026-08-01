@@ -2,6 +2,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { enforceActive, enforceRateLimit } from "./security";
+
 import { mutation, query } from "./_generated/server";
 
 export const getCurrentUser = query({
@@ -77,6 +79,8 @@ export const updateProfile = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
+    // Banned/restricted accounts can't keep changing their identity.
+    await enforceActive(ctx, userId);
     const patch: Record<string, unknown> = {};
     if (args.name !== undefined) patch.name = args.name;
     if (args.bio !== undefined) patch.bio = args.bio;
@@ -111,6 +115,8 @@ export const follow = mutation({
     if (followerId === null) {
       throw new Error("Not authenticated");
     }
+    await enforceActive(ctx, followerId);
+    await enforceRateLimit(ctx, followerId, "follow");
     const target = await ctx.db
       .query("users")
       .withIndex("by_username", (q) => q.eq("username", username.toLowerCase()))
@@ -220,12 +226,17 @@ export const suggestedUsers = query({
       .take(200);
     const followingIds = new Set(following.map((f) => f.followingId));
     const all = await ctx.db.query("users").take(200);
+    // Suspicious (awaiting approval), restricted, and banned accounts never
+    // appear as suggestions — they're off the public surface until cleared.
+    const visible = (u: { accountStatus?: string | undefined }) =>
+      u.accountStatus === undefined || u.accountStatus === "active";
     const candidates = all
       .filter(
         (u) =>
           u._id !== viewerId &&
           !followingIds.has(u._id) &&
-          (u.username ?? "").length > 0,
+          (u.username ?? "").length > 0 &&
+          visible(u),
       )
       .sort((a, b) => (b.followersCount ?? 0) - (a.followersCount ?? 0))
       .slice(0, 5);
@@ -247,10 +258,12 @@ export const searchUsers = query({
       return [];
     }
     const all = await ctx.db.query("users").take(500);
+    // Suspicious/restricted/banned accounts are invisible in search.
     const matches = all.filter(
       (u) =>
-        (u.username ?? "").includes(q) ||
-        (u.name ?? "").toLowerCase().includes(q),
+        (u.accountStatus === undefined || u.accountStatus === "active") &&
+        ((u.username ?? "").includes(q) ||
+          (u.name ?? "").toLowerCase().includes(q)),
     );
     return await Promise.all(
       matches.slice(0, 10).map(async (u) => {

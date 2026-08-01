@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import { enforceActive, enforceRateLimit, hiddenAuthorIds, suspiciousAuthorIds } from "./security";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -105,6 +106,8 @@ export const createPost = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
+    await enforceActive(ctx, userId);
+    await enforceRateLimit(ctx, userId, "post");
     const text = content.trim();
     if (text.length === 0 && (media === undefined || media.length === 0)) {
       throw new Error("Post must contain text or media.");
@@ -240,6 +243,7 @@ export const feed = query({
   },
   handler: async (ctx, { paginationOpts, filter }) => {
     const viewerId = await getAuthUserId(ctx);
+    // Pick the tab's base query first…
     let base = ctx.db.query("posts");
     if (filter === "following" && viewerId !== null) {
       const follows = await ctx.db
@@ -250,21 +254,31 @@ export const feed = query({
         viewerId,
         ...follows.map((f) => f.followingId),
       ]);
-      if (authorIds.size === 1) {
-        // Viewer isn't following anyone — fall back to the full feed.
-        base = ctx.db.query("posts");
-      } else {
+      if (authorIds.size > 1) {
         base = ctx.db
           .query("posts")
           .filter((q) =>
             q.or(...[...authorIds].map((id) => q.eq(q.field("authorId"), id))),
           );
       }
+      // Viewer follows nobody — keep the full feed as the base.
     } else if (filter === "media") {
       // media is either undefined or a non-empty array (enforced in createPost)
       base = ctx.db
         .query("posts")
         .filter((q) => q.neq(q.field("media"), undefined));
+    }
+    // …then apply the safety exclusions on every tab: accounts the viewer
+    // blocked, accounts that blocked the viewer, banned accounts, and
+    // accounts awaiting admin approval — in both directions. A suspicious
+    // user still sees their own posts (suspiciousAuthorIds excludes them).
+    const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
+    const suspiciousIds = await suspiciousAuthorIds(ctx, viewerId);
+    const excludedIds = [...hiddenIds, ...suspiciousIds];
+    if (excludedIds.length > 0) {
+      base = base.filter((q) =>
+        q.not(q.or(...excludedIds.map((id) => q.eq(q.field("authorId"), id)))),
+      );
     }
     // Posts awaiting a human AI-review are kept out of public feeds.
     base = base.filter((q) => q.neq(q.field("aiStatus"), "review"));
@@ -282,6 +296,13 @@ export const getPost = query({
     const viewerId = await getAuthUserId(ctx);
     const post = await ctx.db.get(postId);
     if (post === null) {
+      return null;
+    }
+    // Blocked, blocking, banned, and pending-review authors are invisible
+    // to the viewer.
+    const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
+    const suspiciousIds = await suspiciousAuthorIds(ctx, viewerId);
+    if (hiddenIds.includes(post.authorId) || suspiciousIds.includes(post.authorId)) {
       return null;
     }
     // Posts awaiting AI review are only visible to their author and admins.
@@ -303,6 +324,8 @@ export const likePost = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
+    await enforceActive(ctx, userId);
+    await enforceRateLimit(ctx, userId, "like");
     const post = await ctx.db.get(postId);
     if (post === null) {
       throw new Error("Post not found");
@@ -360,6 +383,8 @@ export const addComment = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
+    await enforceActive(ctx, userId);
+    await enforceRateLimit(ctx, userId, "comment");
     const text = content.trim();
     if (text.length === 0 || text.length > 500) {
       throw new Error("Comment must be between 1 and 500 characters.");
@@ -420,13 +445,18 @@ export const deleteComment = mutation({
 export const listComments = query({
   args: { postId: v.id("posts"), paginationOpts: paginationOptsValidator },
   handler: async (ctx, { postId, paginationOpts }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const hidden = await hiddenAuthorIds(ctx, viewerId);
+    const suspicious = await suspiciousAuthorIds(ctx, viewerId);
+    const excluded = [...hidden, ...suspicious];
     const result = await ctx.db
       .query("comments")
       .withIndex("by_post", (q) => q.eq("postId", postId))
       .order("desc")
       .paginate(paginationOpts);
+    const visible = result.page.filter((c) => !excluded.includes(c.authorId));
     const page = await Promise.all(
-      result.page.map(async (c) => ({
+      visible.map(async (c) => ({
         ...c,
         author: await ctx.db.get(c.authorId),
       })),
@@ -442,6 +472,8 @@ export const sharePost = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
+    await enforceActive(ctx, userId);
+    await enforceRateLimit(ctx, userId, "share");
     const post = await ctx.db.get(postId);
     if (post === null) {
       throw new Error("Post not found");
@@ -472,6 +504,14 @@ export const listUserPosts = query({
   handler: async (ctx, { userId, paginationOpts }) => {
     const viewerId = await getAuthUserId(ctx);
     const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
+    // Blocked, blocking, banned, and pending-review accounts are invisible
+    // to the viewer.
+    const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
+    const suspiciousIds = await suspiciousAuthorIds(ctx, viewerId);
+    const hidden = hiddenIds.includes(userId) || suspiciousIds.includes(userId);
+    if (hidden && viewer?.role !== "admin") {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
     const canSeePending = viewerId === userId || viewer?.role === "admin";
     let base = ctx.db
       .query("posts")

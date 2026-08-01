@@ -174,21 +174,144 @@ export type AiMediaStatus =
   | "review"
   | "blocked";
 
-const SCAN_HEAD_BYTES = 128 * 1024; // metadata lives at the head of the file
+/**
+ * Deepfake / face-manipulation tool markers found in image metadata or
+ * container tags. Only tool-specific signatures are hard-blocked — a
+ * generic word like "deepfake" or a consumer filter like "faceapp" is
+ * demoted to the review tier so real photos are never rejected on a hunch.
+ */
+const DEEPFAKE_MARKERS = [
+  "deepfacelab",
+  "deep face lab",
+  "faceswap",
+  "face swap",
+  "reface",
+  "avatarify",
+  "sadtalker",
+  "roop",
+  "inswap",
+  "swapface",
+];
 
-/** Scan raw image bytes for generator metadata markers. */
-export function scanImageBytes(bytes: ArrayBuffer): AiScanResult {
-  const head = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, SCAN_HEAD_BYTES));
+/** Ambiguous wording/filter names — flagged for a human check, not blocked. */
+const DEEPFAKE_REVIEW_MARKERS = ["deepfake", "faceapp"];
+
+/**
+ * Audio/video AI-generator signatures. Compound tool names are
+ * hard-blocked; standalone brand words (Suno, ElevenLabs, Runway) are
+ * demoted to review so legitimate metadata that merely mentions a brand
+ * is never rejected automatically.
+ */
+const AV_GENERATOR_MARKERS = [
+  "openai sora",
+  "sora video",
+  "sora-generated",
+  "runwayml",
+  "runway ml",
+  "runway gen",
+  "google veo",
+  "veo 3",
+  "pika labs",
+  "pika.art",
+  "pikavideo",
+  "synthesia",
+  "d-id.com",
+  "d-id video",
+  "luma dream machine",
+  "lumaai",
+  "kling ai",
+  "klingai",
+  "hailuo",
+  "minimax video",
+  "motion one",
+  "musicgen",
+  "riffusion",
+  "fakeyou",
+  "voice.ai",
+  "lovoai",
+  "resemble.ai",
+  "murf.ai",
+  "wellsaid",
+  "play.ht",
+  "tts-1",
+  "tts-1-hd",
+];
+
+/** Standalone brand names — flagged for a human check, not blocked. */
+const AV_REVIEW_MARKERS = [
+  "suno",
+  "elevenlabs",
+  "eleven labs",
+  "heygen",
+  "hey gen",
+  "runway",
+  "pika",
+  "udio",
+  "descript",
+  "ai voice",
+];
+
+const SCAN_HEAD_BYTES = 256 * 1024; // metadata lives at the head of the file
+
+function bytesToLatin1(bytes: ArrayBuffer): string {
+  const head = new Uint8Array(
+    bytes,
+    0,
+    Math.min(bytes.byteLength, SCAN_HEAD_BYTES),
+  );
   let text = "";
   for (let i = 0; i < head.length; i++) {
     text += String.fromCharCode(head[i]);
   }
-  const lower = text.toLowerCase();
+  return text.toLowerCase();
+}
+
+/** Scan raw image bytes for generator and deepfake metadata markers. */
+export function scanImageBytes(bytes: ArrayBuffer): AiScanResult {
+  const lower = bytesToLatin1(bytes);
   for (const marker of IMAGE_GENERATOR_MARKERS) {
     if (lower.includes(marker)) {
       return {
         status: "blocked",
         reason: `This image carries AI-generator metadata (${marker.trim()}), which isn't allowed on PureWire.`,
+      };
+    }
+  }
+  for (const marker of DEEPFAKE_MARKERS) {
+    if (lower.includes(marker)) {
+      return {
+        status: "blocked",
+        reason: `This image looks deepfake-manipulated (${marker.trim()}), which isn't allowed on PureWire.`,
+      };
+    }
+  }
+  for (const marker of DEEPFAKE_REVIEW_MARKERS) {
+    if (lower.includes(marker)) {
+      return {
+        status: "review",
+        reason: `This image mentions a possible manipulation tool (${marker.trim()}) — flagged for a human check.`,
+      };
+    }
+  }
+  return { status: "clean" };
+}
+
+/** Scan raw audio/video bytes for AI-generator markers in container tags. */
+export function scanMediaBytes(bytes: ArrayBuffer): AiScanResult {
+  const lower = bytesToLatin1(bytes);
+  for (const marker of AV_GENERATOR_MARKERS) {
+    if (lower.includes(marker)) {
+      return {
+        status: "blocked",
+        reason: `This media carries AI-generator metadata (${marker.trim()}), which isn't allowed on PureWire.`,
+      };
+    }
+  }
+  for (const marker of AV_REVIEW_MARKERS) {
+    if (lower.includes(marker)) {
+      return {
+        status: "review",
+        reason: `This media mentions a possible AI tool (${marker.trim()}) — flagged for a human check.`,
       };
     }
   }
@@ -216,14 +339,15 @@ export const scanMediaForAi = action({
   ),
   handler: async (ctx, { media }): Promise<AiScanResult> => {
     for (const item of media) {
-      if (item.kind !== "image") {
-        continue;
-      }
       const blob = await ctx.storage.get(item.storageId);
       if (blob === null) {
         continue;
       }
-      const result: AiScanResult = scanImageBytes(await blob.arrayBuffer());
+      const bytes = await blob.arrayBuffer();
+      const result: AiScanResult =
+        item.kind === "image"
+          ? scanImageBytes(bytes)
+          : scanMediaBytes(bytes);
       if (result.status !== "clean") {
         return result;
       }

@@ -17,6 +17,10 @@ say it.
 - **Human-made only** — AI-generated text, images, audio, and video are not
   allowed. Posts are scanned for AI text patterns and AI-generator image
   metadata at creation; suspicious content goes to a human review queue.
+- **Highest-moderation trust & safety** — new accounts are screened against
+  bot and farm signals at signup, every activity runs on a rate budget, media
+  is checked for deepfake and AI-generator markers, and anyone can block
+  harassers. Restricted or banned accounts are hidden platform-wide.
 - **Freedom with a reason** — PureWire isn't "no rules." The PureWire
   Standard draws the lines (no impersonation, no stealing work, no spam, no
   harassment) so one person's freedom never costs another's.

@@ -1,6 +1,7 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
+  Ban,
   CheckCheck,
   Flag,
   Heart,
@@ -9,6 +10,7 @@ import {
   MessagesSquare,
   ScanSearch,
   Shield,
+  ShieldAlert,
   Trash2,
   UserCheck,
   Users,
@@ -67,6 +69,7 @@ const STAT_CARDS = [
   { key: "stories", label: "Stories", icon: ImageIcon },
   { key: "openTickets", label: "Open tickets", icon: Flag },
   { key: "aiReview", label: "AI review", icon: ScanSearch },
+  { key: "security", label: "Security", icon: ShieldAlert },
 ] as const;
 
 function AdminDashboard() {
@@ -102,11 +105,12 @@ function AdminDashboard() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>
           <TabsTrigger value="aiReview">AI review</TabsTrigger>
+          <TabsTrigger value="security">Security</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -114,6 +118,7 @@ function AdminDashboard() {
       {tab === "tickets" && <TicketsPanel />}
       {tab === "posts" && <PostsPanel />}
       {tab === "aiReview" && <AiReviewPanel />}
+      {tab === "security" && <SecurityPanel />}
     </div>
   );
 }
@@ -414,6 +419,134 @@ function PostsPanel() {
               aria-label="Remove post"
             >
               <Trash2 className="size-4" />
+            </Button>
+          </div>
+        </motion.div>
+      ))}
+      <div ref={ref} className="py-2 text-center text-sm text-muted-foreground">
+        {status === "LoadingMore" ? "Loading more…" : ""}
+      </div>
+    </div>
+  );
+}
+
+const STATUS_VARIANTS: Record<string, string> = {
+  active: "secondary",
+  suspicious: "outline",
+  restricted: "default",
+  banned: "destructive",
+};
+
+function SecurityPanel() {
+  const setAccountStatus = useMutation(api.security.setAccountStatus);
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.security.listFlaggedAccounts,
+    {},
+    { initialNumItems: 15 },
+  );
+  const { ref, inView } = useInView();
+
+  useEffect(() => {
+    if (inView && status === "CanLoadMore") {
+      void loadMore(15);
+    }
+  }, [inView, status, loadMore]);
+
+  const accounts = results as unknown as {
+    _id: string;
+    _creationTime: number;
+    name?: string | null;
+    username?: string | null;
+    email?: string | null;
+    avatarUrl?: string | null;
+    riskScore?: number | null;
+    accountStatus?: string | null;
+    riskReasons?: string[] | null;
+  }[];
+
+  const setStatus = async (userId: string, accountStatus: string) => {
+    try {
+      await setAccountStatus({
+        userId: userId as Id<"users">,
+        status: accountStatus as "active" | "suspicious" | "restricted" | "banned",
+      });
+      toast.success(`Account ${accountStatus}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update.");
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {status === "LoadingFirstPage" &&
+        Array.from({ length: 2 }).map((_, i) => (
+          <Skeleton key={i} className="h-20" />
+        ))}
+      {accounts.length === 0 && status !== "LoadingFirstPage" && (
+        <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+          No flagged accounts. Every new signup is screened for bot and farm
+          signals; suspicious accounts land here for review.
+        </p>
+      )}
+      {accounts.map((u, i) => (
+        <motion.div
+          key={u._id}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: Math.min(i * 0.02, 0.3) }}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <UserAvatar user={u} className="size-10" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">
+                {u.name || u.username || "Unknown"}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                @{u.username} · {u.email} · risk {u.riskScore ?? 0}/100
+              </p>
+              {u.riskReasons && u.riskReasons.length > 0 ? (
+                <p className="mt-0.5 flex flex-wrap gap-1">
+                  {u.riskReasons.map((r) => (
+                    <span
+                      key={r}
+                      className="rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive"
+                    >
+                      {r}
+                    </span>
+                  ))}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant={STATUS_VARIANTS[u.accountStatus ?? "active"] as "default"}>
+              {u.accountStatus ?? "active"}
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void setStatus(u._id, "active")}
+            >
+              <UserCheck className="size-4" />
+              Approve
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void setStatus(u._id, "restricted")}
+            >
+              <ShieldAlert className="size-4" />
+              Restrict
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive"
+              onClick={() => void setStatus(u._id, "banned")}
+            >
+              <Ban className="size-4" />
+              Ban
             </Button>
           </div>
         </motion.div>

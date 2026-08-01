@@ -17,6 +17,7 @@ import type * as links from "../links.js";
 import type * as media from "../media.js";
 import type * as notifications from "../notifications.js";
 import type * as posts from "../posts.js";
+import type * as security from "../security.js";
 import type * as staticHosting from "../staticHosting.js";
 import type * as stories from "../stories.js";
 import type * as support from "../support.js";
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   media: typeof media;
   notifications: typeof notifications;
   posts: typeof posts;
+  security: typeof security;
   staticHosting: typeof staticHosting;
   stories: typeof stories;
   support: typeof support;

@@ -31,11 +31,24 @@ const schema = defineSchema({
     followersCount: v.optional(v.number()),
     followingCount: v.optional(v.number()),
     postsCount: v.optional(v.number()),
+    // Trust & safety: risk score from signup screening, the current account
+    // status, and the signals that raised the score.
+    riskScore: v.optional(v.number()),
+    accountStatus: v.optional(
+      v.union(
+        v.literal("active"),
+        v.literal("suspicious"),
+        v.literal("restricted"),
+        v.literal("banned"),
+      ),
+    ),
+    riskReasons: v.optional(v.array(v.string())),
   })
     // Keep auth's original index names — the auth library queries these.
     .index("email", ["email"])
     .index("phone", ["phone"])
-    .index("by_username", ["username"]),
+    .index("by_username", ["username"])
+    .index("by_account_status", ["accountStatus"]),
   posts: defineTable({
     authorId: v.id("users"),
     content: v.string(),
@@ -76,9 +89,13 @@ const schema = defineSchema({
     }),
     caption: v.optional(v.string()),
     expiresAt: v.number(),
+    // Anti-AI enforcement, same policy as posts: "review" keeps the story
+    // off everyone else's ring until a human clears it.
+    aiStatus: v.optional(v.union(v.literal("clean"), v.literal("review"))),
   })
     .index("by_author", ["authorId"])
-    .index("by_expiration", ["expiresAt"]),
+    .index("by_expiration", ["expiresAt"])
+    .index("by_ai_status", ["aiStatus"]),
   urlPreviews: defineTable({
     url: v.string(),
     title: v.optional(v.string()),
@@ -142,6 +159,22 @@ const schema = defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_status", ["status"]),
+  // Trust & safety: who blocked whom (mutual hiding).
+  blocks: defineTable({
+    blockerId: v.id("users"),
+    blockedId: v.id("users"),
+  })
+    .index("by_blocker", ["blockerId"])
+    .index("by_blocked", ["blockedId"])
+    .index("by_pair", ["blockerId", "blockedId"]),
+  // Trust & safety: rolling activity budget for rate limiting.
+  rateLimits: defineTable({
+    userId: v.id("users"),
+    action: v.string(),
+    windowStart: v.number(),
+  })
+    .index("by_user_action", ["userId", "action"])
+    .index("by_window", ["windowStart"]),
 });
 
 export default schema;

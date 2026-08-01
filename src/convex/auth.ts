@@ -1,6 +1,8 @@
 import { convexAuth } from "@convex-dev/auth/server";
 import { Password } from "@convex-dev/auth/providers/Password";
 
+import { computeRiskScore } from "./security";
+
 import { EmailVerification, PasswordReset } from "./auth/email";
 
 const ADMIN_EMAIL = "monreodoses@gmail.com";
@@ -49,4 +51,34 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       reset: PasswordReset,
     }),
   ],
+  // Screen every new account against bot/farm signals and flag high-risk
+  // signups for a human review in the admin Security tab. The admin email
+  // is always trusted, and a status set by an admin (restricted/banned, or
+  // an explicit approve) is never overwritten by the auto-scorer.
+  callbacks: {
+    async afterUserCreatedOrUpdated(ctx, { userId }) {
+      const user = await ctx.db.get(userId);
+      if (user === null || user.role === "admin") {
+        return;
+      }
+      if (user.accountStatus !== undefined) {
+        // Already reviewed — the auto-scorer runs only on the first creation.
+        // This guarantees an admin decision (approve, restrict, or ban) is
+        // never overwritten by a later automatic score.
+        return;
+      }
+      const verdict = computeRiskScore({
+        email: user.email ?? "",
+        username: user.username ?? "",
+        name: user.name ?? "",
+      });
+      if (verdict.score > 0) {
+        await ctx.db.patch(userId, {
+          riskScore: verdict.score,
+          riskReasons: verdict.reasons,
+          accountStatus: verdict.score >= 60 ? "suspicious" : "active",
+        });
+      }
+    },
+  },
 });

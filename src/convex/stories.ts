@@ -3,6 +3,12 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import {
+  enforceActive,
+  enforceRateLimit,
+  hiddenAuthorIds,
+  suspiciousAuthorIds,
+} from "./security";
 
 import { mutation, query } from "./_generated/server";
 
@@ -25,25 +31,32 @@ export const createStory = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
-    if (caption !== undefined) {
-      const captionScan = scanText(caption);
-      if (captionScan.status === "blocked") {
-        throw new Error(
-          "AI-generated content isn't allowed on PureWire. Say it in your own words.",
-        );
-      }
+    await enforceActive(ctx, userId);
+    await enforceRateLimit(ctx, userId, "post");
+    const captionScan = caption !== undefined ? scanText(caption) : null;
+    if (captionScan?.status === "blocked") {
+      throw new Error(
+        "AI-generated content isn't allowed on PureWire. Say it in your own words.",
+      );
     }
     if (aiMediaStatus === "blocked") {
       throw new Error(
         "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
       );
     }
+    // A missing scan verdict means the client never ran the scan action —
+    // route to the human review queue instead of trusting it as clean.
+    const needsReview =
+      captionScan?.status === "review" ||
+      aiMediaStatus === undefined ||
+      aiMediaStatus === "review";
     const expiresAt = Date.now() + 24 * 3600_000; // 24 hours
     return await ctx.db.insert("stories", {
       authorId: userId,
       media,
       caption,
       expiresAt,
+      aiStatus: needsReview ? "review" : "clean",
     });
   },
 });
@@ -78,12 +91,24 @@ export const listStories = query({
       .withIndex("by_follower", (q) => q.eq("followerId", userId))
       .take(200);
     const authorIds = new Set([userId, ...follows.map((f) => f.followingId)]);
+    const hidden = await hiddenAuthorIds(ctx, userId);
+    const suspicious = await suspiciousAuthorIds(ctx, userId);
+    const excluded = [...hidden, ...suspicious];
+    const me = await ctx.db.get(userId);
+    const isAdmin = me?.role === "admin";
     const now = Date.now();
     const stories = await ctx.db
       .query("stories")
       .withIndex("by_expiration", (q) => q.gte("expiresAt", now))
       .take(200);
-    const mine = stories.filter((s) => authorIds.has(s.authorId));
+    const mine = stories.filter(
+      (s) =>
+        authorIds.has(s.authorId) &&
+        !excluded.includes(s.authorId) &&
+        // Stories awaiting a human AI-review stay on the author's own ring
+        // only — everyone else (admins included) sees them once approved.
+        (s.aiStatus !== "review" || s.authorId === userId || isAdmin),
+    );
     const withMeta = await Promise.all(
       mine.map(async (s) => {
         const author = await ctx.db.get(s.authorId);

@@ -54,6 +54,14 @@ const FAQS = [
     a: "No. PureWire is for human expression — 'say it anyway' means your voice, not a machine's. Text, images, audio, and video must be made by you. Every post is scanned for AI-generated text and AI-generator image metadata before it goes live, and anything suspicious is reviewed by the team. Report AI content anytime with the ⋯ menu → “Report post” → “AI-generated content”.",
   },
   {
+    q: "How does PureWire protect against bots, farms, and deepfakes?",
+    a: "Three layers. Signup screening: every new account is checked against bot and farm signals — disposable email domains, machine-like usernames, placeholder names — and suspicious accounts are held for a human review, with their content kept off the public feed until they're approved. Activity budgets: posts, comments, likes, shares, and follows run against per-account rate limits so automated floods can't take over. Media checks: images and video are scanned for AI-generator and deepfake metadata before they go live. Scans read what's baked into the file, so nothing is treated as final on its own — anything ambiguous goes to a human review queue, and you can report a bot, farm, or deepfake at any time. Accounts confirmed as bots, farms, or manipulators are restricted or banned, and their content is hidden platform-wide.",
+  },
+  {
+    q: "How do I block someone?",
+    a: "Open their profile and tap Block. Blocking hides their profile, posts, and notifications from you in both directions, and unfollows them automatically. You can unblock them anytime from their profile.",
+  },
+  {
     q: "What content is not allowed on PureWire?",
     a: "PureWire protects your freedom to express yourself — but freedom with a reason means harassment, doxxing, intimidation, impersonation, stolen work, spam, AI-generated content, and illegal content are against the Standard. You can report anything you see; the lines exist so one person's freedom never costs another's.",
   },

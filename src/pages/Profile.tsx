@@ -1,7 +1,7 @@
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
-import { CalendarDays, Link2, Settings2 } from "lucide-react";
-import { useEffect } from "react";
+import { Ban, CalendarDays, Link2, Settings2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
@@ -19,6 +19,10 @@ export function Profile() {
   const { username = "" } = useParams();
   const navigate = useNavigate();
   const profile = useQuery(api.users.getProfile, { username });
+  const blockUser = useMutation(api.security.blockUser);
+  const unblockUser = useMutation(api.security.unblockUser);
+  const blocked = useQuery(api.security.isBlocked, { username });
+  const [blocking, setBlocking] = useState(false);
   const { results, status, loadMore } = usePaginatedQuery(
     api.posts.listUserPosts,
     profile?._id ? { userId: profile._id } : "skip",
@@ -61,6 +65,24 @@ export function Profile() {
 
   const posts = results as unknown as PostItem[];
 
+  const toggleBlock = async () => {
+    if (blocking || profile.username === undefined) return;
+    setBlocking(true);
+    try {
+      if (blocked) {
+        await unblockUser({ username: profile.username });
+        toast.success("Unblocked.");
+      } else {
+        await blockUser({ username: profile.username });
+        toast.success("Blocked. Their posts and profile are now hidden from you.");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update.");
+    } finally {
+      setBlocking(false);
+    }
+  };
+
   return (
     <div className="pb-20 lg:pb-0">
       {/* Banner */}
@@ -92,10 +114,22 @@ export function Profile() {
                 </Link>
               </Button>
             ) : (
-              <FollowButton
-                username={profile.username ?? ""}
-                initialFollowing={profile.isFollowing}
-              />
+              <>
+                <FollowButton
+                  username={profile.username ?? ""}
+                  initialFollowing={profile.isFollowing}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={blocking || blocked === undefined}
+                  onClick={() => void toggleBlock()}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Ban className="size-4" />
+                  {blocked ? "Unblock" : "Block"}
+                </Button>
+              </>
             )}
           </div>
         </div>

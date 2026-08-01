@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { hiddenAuthorIds, suspiciousAuthorIds } from "./security";
+
 import { mutation, query } from "./_generated/server";
 
 export const listNotifications = query({
@@ -12,13 +14,19 @@ export const listNotifications = query({
     if (userId === null) {
       return { page: [], isDone: true, continueCursor: "" };
     }
+    const hidden = await hiddenAuthorIds(ctx, userId);
+    const suspicious = await suspiciousAuthorIds(ctx, userId);
+    const excluded = [...hidden, ...suspicious];
     const result = await ctx.db
       .query("notifications")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .order("desc")
       .paginate(paginationOpts);
+    const visible = result.page.filter(
+      (n) => n.actorId === undefined || !excluded.includes(n.actorId),
+    );
     const page = await Promise.all(
-      result.page.map(async (n) => ({
+      visible.map(async (n) => ({
         ...n,
         actor: n.actorId ? await ctx.db.get(n.actorId) : null,
         post: n.postId ? await ctx.db.get(n.postId) : null,

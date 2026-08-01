@@ -26,6 +26,8 @@ import { Textarea } from "@/components/ui/textarea";
 
 const VIOLATIONS = [
   "AI-generated content",
+  "Deepfake or manipulated media",
+  "Bot or fake account",
   "Copied or stolen content",
   "Repetitive or spam content",
   "Harassment or bullying",
