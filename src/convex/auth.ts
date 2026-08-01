@@ -3,7 +3,7 @@ import { Password } from "@convex-dev/auth/providers/Password";
 
 import { normalizeEmailIdentity } from "@/lib/format";
 
-import { saltedEmailHash } from "./privacy";
+import { currentEmailHashVersion, saltedEmailHash } from "./privacy";
 import { computeRiskScore } from "./security";
 
 import type { MutationCtx } from "./_generated/server";
@@ -104,12 +104,14 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
           }
         }
         // Always converge to the salted hash on every auth event: accounts
-        // created before the salt was configured are re-salted here, so no
-        // stored identifier is ever left unsalted once EMAIL_HASH_SALT is
-        // set. The write is skipped when the value is already correct.
-        const emailHash = await saltedEmailHash(canonicalEmail);
-        if (user.emailHash !== emailHash) {
-          await ctx.db.patch(userId, { emailHash });
+        // created before the salt was configured — or under an older salt
+        // version — are re-salted here, so no stored identifier is ever
+        // left unsalted or stale once EMAIL_HASH_SALT / EMAIL_HASH_VERSION
+        // is set. The write is skipped when both values are already correct.
+        const emailHashVersion = currentEmailHashVersion();
+        const emailHash = await saltedEmailHash(canonicalEmail, emailHashVersion);
+        if (user.emailHash !== emailHash || user.emailHashVersion !== emailHashVersion) {
+          await ctx.db.patch(userId, { emailHash, emailHashVersion });
         }
       }
       // The moment the one-time email code is redeemed, the account is

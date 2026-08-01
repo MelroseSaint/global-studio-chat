@@ -18,6 +18,7 @@ import type * as http from "../http.js";
 import type * as links from "../links.js";
 import type * as location from "../location.js";
 import type * as media from "../media.js";
+import type * as migrations from "../migrations.js";
 import type * as notifications from "../notifications.js";
 import type * as places from "../places.js";
 import type * as posts from "../posts.js";
@@ -47,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   links: typeof links;
   location: typeof location;
   media: typeof media;
+  migrations: typeof migrations;
   notifications: typeof notifications;
   places: typeof places;
   posts: typeof posts;

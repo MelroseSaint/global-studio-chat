@@ -13,6 +13,11 @@ const schema = defineSchema({
     // Privacy: salted SHA-256 hash of the normalized email. Plain-text addresses
     // are never sent to clients — surfaces get the hash and a masked form.
     emailHash: v.optional(v.string()),
+    // Which salt version produced emailHash (see currentEmailHashVersion).
+    // Lets a compromised salt be rotated without waiting for each user's
+    // next sign-in: bump the version + salt env, redeploy, and run the
+    // rehash migration to converge every existing hash in one pass.
+    emailHashVersion: v.optional(v.number()),
     phone: v.optional(v.string()),
     phoneVerificationTime: v.optional(v.number()),
     isAnonymous: v.optional(v.boolean()),

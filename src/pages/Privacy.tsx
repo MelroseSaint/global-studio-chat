@@ -32,7 +32,7 @@ const neverStored = [
     icon: Lock,
     title: "No plain-text email on any surface",
     detail:
-      "Every page, query, and export shows only a salted one-way SHA-256 hash — a random server-side secret is mixed in before hashing, so even a stolen database can't be run against lookup tables. The raw address exists only inside the sign-in service, where it is required to deliver your one-time code and let you sign in; it never appears on any page, query, or export.",
+      "Every page, query, and export shows only a salted one-way SHA-256 hash — a random server-side secret is mixed in before hashing, so even a stolen database can't be run against lookup tables. The secret is versioned: if it ever needed to be rotated, every stored hash is re-salted in a single pass — no account waits for its next sign-in to be protected. The raw address exists only inside the sign-in service, where it is required to deliver your one-time code and let you sign in; it never appears on any page, query, or export.",
   },
   {
     icon: Database,
