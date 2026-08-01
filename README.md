@@ -14,6 +14,9 @@ say it.
 - **Verified original** — every post is fingerprinted and checked against the
   platform before it appears. Stolen work and copycats are blocked, and posts
   that pass carry the **Original** badge.
+- **Human-made only** — AI-generated text, images, audio, and video are not
+  allowed. Posts are scanned for AI text patterns and AI-generator image
+  metadata at creation; suspicious content goes to a human review queue.
 - **Freedom with a reason** — PureWire isn't "no rules." The PureWire
   Standard draws the lines (no impersonation, no stealing work, no spam, no
   harassment) so one person's freedom never costs another's.

@@ -50,8 +50,12 @@ const FAQS = [
     a: "Open any post, tap the ⋯ menu and choose “Report post”. Choose what was violated and add details — the post and its author are included automatically so the team can review it quickly.",
   },
   {
+    q: "Is AI-generated content allowed on PureWire?",
+    a: "No. PureWire is for human expression — 'say it anyway' means your voice, not a machine's. Text, images, audio, and video must be made by you. Every post is scanned for AI-generated text and AI-generator image metadata before it goes live, and anything suspicious is reviewed by the team. Report AI content anytime with the ⋯ menu → “Report post” → “AI-generated content”.",
+  },
+  {
     q: "What content is not allowed on PureWire?",
-    a: "PureWire protects your freedom to express yourself — but freedom with a reason means harassment, doxxing, intimidation, impersonation, stolen work, spam, and illegal content are against the Standard. You can report anything you see; the lines exist so one person's freedom never costs another's.",
+    a: "PureWire protects your freedom to express yourself — but freedom with a reason means harassment, doxxing, intimidation, impersonation, stolen work, spam, AI-generated content, and illegal content are against the Standard. You can report anything you see; the lines exist so one person's freedom never costs another's.",
   },
   {
     q: "How do I get a verified badge?",
@@ -159,6 +163,7 @@ export function Support() {
               "Don't steal people's work.",
               "Don't spam the platform.",
               "Don't use freedom as an excuse to take someone else's freedom away.",
+              "No AI-generated content — say it yourself.",
             ].map((rule, i) => (
               <li key={rule} className="flex items-start gap-2.5">
                 <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-oxide/15 text-[11px] font-bold text-oxide dark:text-oxide-light">

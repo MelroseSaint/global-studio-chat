@@ -1,5 +1,5 @@
-import { useMutation } from "convex/react";
-import { Loader2, Send } from "lucide-react";
+import { useAction, useMutation } from "convex/react";
+import { Loader2, Send, Sparkles } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -16,6 +16,7 @@ const MAX_LENGTH = 1000;
 export function Composer({ onPosted }: { onPosted?: () => void }) {
   const { user } = useAuth();
   const createPost = useMutation(api.posts.createPost);
+  const scanMedia = useAction(api.aiContent.scanMediaForAi);
   const [content, setContent] = useState("");
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -28,6 +29,20 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
     if (!canPost || submitting || overLimit) return;
     setSubmitting(true);
     try {
+      // Scan uploaded media bytes for AI-generator metadata before posting.
+      let aiMediaStatus: "clean" | "review" | "blocked" = "clean";
+      if (media.length > 0) {
+        const scan = await scanMedia({
+          media: media.map((m) => ({ storageId: m.storageId, kind: m.kind })),
+        });
+        if (scan.status === "blocked") {
+          toast.error(
+            "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
+          );
+          return;
+        }
+        aiMediaStatus = scan.status;
+      }
       await createPost({
         content: content.trim(),
         media:
@@ -37,6 +52,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
                 kind: m.kind,
               }))
             : undefined,
+        aiMediaStatus,
       });
       setContent("");
       setMedia([]);
@@ -104,6 +120,11 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
             </Button>
           </div>
         </div>
+        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Sparkles className="size-3" />
+          Your own original work only — AI-generated content is not allowed on
+          PureWire.
+        </p>
       </div>
     </div>
   );

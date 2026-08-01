@@ -39,7 +39,7 @@ async function requireAdmin(ctx: QueryCtx) {
 export const dashboardStats = query({
   handler: async (ctx) => {
     await requireAdmin(ctx);
-    const [users, posts, stories, tickets, follows, comments] =
+    const [users, posts, stories, tickets, follows, comments, aiReview] =
       await Promise.all([
         ctx.db.query("users").collect(),
         ctx.db.query("posts").collect(),
@@ -47,6 +47,10 @@ export const dashboardStats = query({
         ctx.db.query("supportTickets").collect(),
         ctx.db.query("follows").collect(),
         ctx.db.query("comments").collect(),
+        ctx.db
+          .query("posts")
+          .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
+          .collect(),
       ]);
     return {
       users: users.length,
@@ -57,6 +61,7 @@ export const dashboardStats = query({
       follows: follows.length,
       comments: comments.length,
       likes: (await ctx.db.query("likes").collect()).length,
+      aiReview: aiReview.length,
     };
   },
 });
@@ -132,6 +137,48 @@ export const moderatePost = mutation({
         });
       }
       await ctx.db.delete(postId);
+    }
+  },
+});
+
+/** Posts whose text or media was flagged as possibly AI-generated. */
+export const listAiReview = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    await requireAdmin(ctx);
+    const result = await ctx.db
+      .query("posts")
+      .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map(async (p) => {
+        const author = await ctx.db.get(p.authorId);
+        return {
+          ...p,
+          author: author
+            ? {
+                ...author,
+                avatarUrl: author.avatarStorageId
+                  ? await ctx.storage.getUrl(author.avatarStorageId)
+                  : null,
+              }
+            : null,
+        };
+      }),
+    );
+    return { ...result, page };
+  },
+});
+
+/** Admin decides a flagged post is fine — mark it clean. */
+export const resolveAiReview = mutation({
+  args: { postId: v.id("posts") },
+  handler: async (ctx, { postId }) => {
+    await requireAdmin(ctx);
+    const post = await ctx.db.get(postId);
+    if (post !== null) {
+      await ctx.db.patch(postId, { aiStatus: "clean" });
     }
   },
 });

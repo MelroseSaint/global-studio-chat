@@ -10,6 +10,7 @@ import {
   Quote,
   Repeat2,
   ShieldCheck,
+  Sparkles,
   UserPlus,
 } from "lucide-react";
 import { Link } from "react-router";
@@ -54,6 +55,12 @@ const features = [
     title: "No ads, ever",
     description:
       "No advertising, no sponsorships, no algorithm selling your attention. Pure freedom, with a reason.",
+  },
+  {
+    icon: Sparkles,
+    title: "Human-made only",
+    description:
+      "No AI-generated text, images, audio, or video. PureWire is for your words and your work — not a machine's.",
   },
 ];
 
@@ -109,6 +116,10 @@ const standard = [
   {
     title: "Don't use freedom as an excuse to take someone else's freedom away.",
     detail: "Harassment, doxxing, and intimidation end where your freedom begins.",
+  },
+  {
+    title: "No AI-generated content.",
+    detail: "Say it yourself. Text, images, audio, and video must be made by human hands.",
   },
 ];
 

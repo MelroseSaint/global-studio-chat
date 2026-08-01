@@ -2,6 +2,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+
 import { mutation, query } from "./_generated/server";
 
 export const createStory = mutation({
@@ -15,11 +17,26 @@ export const createStory = mutation({
       ),
     }),
     caption: v.optional(v.string()),
+    // Verdict from the client-side scan action (api.aiContent.scanMediaForAi).
+    aiMediaStatus: v.optional(AI_MEDIA_STATUS),
   },
-  handler: async (ctx, { media, caption }) => {
+  handler: async (ctx, { media, caption, aiMediaStatus }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
+    }
+    if (caption !== undefined) {
+      const captionScan = scanText(caption);
+      if (captionScan.status === "blocked") {
+        throw new Error(
+          "AI-generated content isn't allowed on PureWire. Say it in your own words.",
+        );
+      }
+    }
+    if (aiMediaStatus === "blocked") {
+      throw new Error(
+        "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
+      );
     }
     const expiresAt = Date.now() + 24 * 3600_000; // 24 hours
     return await ctx.db.insert("stories", {

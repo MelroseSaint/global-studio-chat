@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { AudioLines, ChevronLeft, ChevronRight, Loader2, Plus, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -21,6 +21,7 @@ export function StoriesBar() {
   const { user } = useAuth();
   const stories = useQuery(api.stories.listStories);
   const createStory = useMutation(api.stories.createStory);
+  const scanMedia = useAction(api.aiContent.scanMediaForAi);
   const [addOpen, setAddOpen] = useState(false);
   const [viewing, setViewing] = useState<number>(0);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -36,12 +37,23 @@ export function StoriesBar() {
     if (media.length === 0 || submitting) return;
     setSubmitting(true);
     try {
+      // Scan the uploaded media bytes for AI-generator metadata first.
+      const scan = await scanMedia({
+        media: [{ storageId: media[0].storageId, kind: media[0].kind }],
+      });
+      if (scan.status === "blocked") {
+        toast.error(
+          "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
+        );
+        return;
+      }
       await createStory({
         media: {
           storageId: media[0].storageId,
           kind: media[0].kind,
         },
         caption: caption.trim() || undefined,
+        aiMediaStatus: scan.status,
       });
       toast.success("Story added!");
       setAddOpen(false);

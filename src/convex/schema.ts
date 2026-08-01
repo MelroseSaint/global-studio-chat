@@ -53,12 +53,17 @@ const schema = defineSchema({
     ),
     fingerprint: v.optional(v.string()),
     originalityVerified: v.optional(v.boolean()),
+    // Anti-AI enforcement: "clean" or "review" (suspicious, awaiting a
+    // human check). Posts that clearly self-identify as AI-generated are
+    // rejected at creation and never stored.
+    aiStatus: v.optional(v.union(v.literal("clean"), v.literal("review"))),
     likeCount: v.number(),
     commentCount: v.number(),
     shareCount: v.number(),
   })
     .index("by_author", ["authorId"])
-    .index("by_fingerprint", ["fingerprint"]),
+    .index("by_fingerprint", ["fingerprint"])
+    .index("by_ai_status", ["aiStatus"]),
   stories: defineTable({
     authorId: v.id("users"),
     media: v.object({

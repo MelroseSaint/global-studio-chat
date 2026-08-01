@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   mutation,
@@ -94,8 +96,11 @@ export const createPost = mutation({
         }),
       ),
     ),
+    // Verdict from the client-side scan action (api.aiContent.scanMediaForAi),
+    // which reads the uploaded bytes — the only place storage reads exist.
+    aiMediaStatus: v.optional(AI_MEDIA_STATUS),
   },
-  handler: async (ctx, { content, media }) => {
+  handler: async (ctx, { content, media, aiMediaStatus }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
@@ -114,6 +119,28 @@ export const createPost = mutation({
         throw new Error(blocked);
       }
     }
+    // Anti-AI enforcement: block clear AI content, flag suspicious text
+    // for a human review in the admin dashboard.
+    const textScan = scanText(text);
+    if (textScan.status === "blocked") {
+      throw new Error(
+        "AI-generated content isn't allowed on PureWire. Say it yourself — in your own words.",
+      );
+    }
+    if (aiMediaStatus === "blocked") {
+      throw new Error(
+        "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
+      );
+    }
+    // If media is present but no scan verdict was provided (e.g. a client
+    // that never ran the scan action), send it to the human review queue
+    // instead of trusting it as clean.
+    const mediaVerdict: "clean" | "review" | "blocked" =
+      media !== undefined && media.length > 0 && aiMediaStatus === undefined
+        ? "review"
+        : (aiMediaStatus ?? "clean");
+    const needsReview =
+      textScan.status === "review" || mediaVerdict === "review";
     const postId = await ctx.db.insert("posts", {
       authorId: userId,
       content: text,
@@ -121,6 +148,7 @@ export const createPost = mutation({
       fingerprint: fp,
       // Only claim originality when a fingerprint check actually ran.
       originalityVerified: fp !== undefined,
+      aiStatus: needsReview ? "review" : "clean",
       likeCount: 0,
       commentCount: 0,
       shareCount: 0,
@@ -238,6 +266,8 @@ export const feed = query({
         .query("posts")
         .filter((q) => q.neq(q.field("media"), undefined));
     }
+    // Posts awaiting a human AI-review are kept out of public feeds.
+    base = base.filter((q) => q.neq(q.field("aiStatus"), "review"));
     const result = await base.order("desc").paginate(paginationOpts);
     const page = await Promise.all(
       result.page.map((p) => withAuthor(ctx, p, viewerId)),
@@ -253,6 +283,14 @@ export const getPost = query({
     const post = await ctx.db.get(postId);
     if (post === null) {
       return null;
+    }
+    // Posts awaiting AI review are only visible to their author and admins.
+    if (post.aiStatus === "review") {
+      const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
+      const isAuthor = viewerId === post.authorId;
+      if (!isAuthor && viewer?.role !== "admin") {
+        return null;
+      }
     }
     return await withAuthor(ctx, post, viewerId);
   },
@@ -325,6 +363,12 @@ export const addComment = mutation({
     const text = content.trim();
     if (text.length === 0 || text.length > 500) {
       throw new Error("Comment must be between 1 and 500 characters.");
+    }
+    const textScan = scanText(text);
+    if (textScan.status === "blocked") {
+      throw new Error(
+        "AI-generated content isn't allowed on PureWire. Say it in your own words.",
+      );
     }
     const post = await ctx.db.get(postId);
     if (post === null) {
@@ -427,11 +471,16 @@ export const listUserPosts = query({
   args: { userId: v.id("users"), paginationOpts: paginationOptsValidator },
   handler: async (ctx, { userId, paginationOpts }) => {
     const viewerId = await getAuthUserId(ctx);
-    const result = await ctx.db
+    const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
+    const canSeePending = viewerId === userId || viewer?.role === "admin";
+    let base = ctx.db
       .query("posts")
-      .withIndex("by_author", (q) => q.eq("authorId", userId))
-      .order("desc")
-      .paginate(paginationOpts);
+      .withIndex("by_author", (q) => q.eq("authorId", userId));
+    if (!canSeePending) {
+      // Posts awaiting AI review stay hidden from other users.
+      base = base.filter((q) => q.neq(q.field("aiStatus"), "review"));
+    }
+    const result = await base.order("desc").paginate(paginationOpts);
     const page = await Promise.all(
       result.page.map((p) => withAuthor(ctx, p, viewerId)),
     );

@@ -1,11 +1,13 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
+  CheckCheck,
   Flag,
   Heart,
   Image as ImageIcon,
   MessageCircle,
   MessagesSquare,
+  ScanSearch,
   Shield,
   Trash2,
   UserCheck,
@@ -64,6 +66,7 @@ const STAT_CARDS = [
   { key: "comments", label: "Comments", icon: MessageCircle },
   { key: "stories", label: "Stories", icon: ImageIcon },
   { key: "openTickets", label: "Open tickets", icon: Flag },
+  { key: "aiReview", label: "AI review", icon: ScanSearch },
 ] as const;
 
 function AdminDashboard() {
@@ -99,16 +102,18 @@ function AdminDashboard() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
           <TabsTrigger value="users">Users</TabsTrigger>
-          <TabsTrigger value="tickets">Support tickets</TabsTrigger>
+          <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>
+          <TabsTrigger value="aiReview">AI review</TabsTrigger>
         </TabsList>
       </Tabs>
 
       {tab === "users" && <UsersPanel />}
       {tab === "tickets" && <TicketsPanel />}
       {tab === "posts" && <PostsPanel />}
+      {tab === "aiReview" && <AiReviewPanel />}
     </div>
   );
 }
@@ -401,6 +406,110 @@ function PostsPanel() {
             >
               View
             </Link>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-destructive"
+              onClick={() => void remove(p._id)}
+              aria-label="Remove post"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        </motion.div>
+      ))}
+      <div ref={ref} className="py-2 text-center text-sm text-muted-foreground">
+        {status === "LoadingMore" ? "Loading more…" : ""}
+      </div>
+    </div>
+  );
+}
+
+function AiReviewPanel() {
+  const moderatePost = useMutation(api.admin.moderatePost);
+  const resolveAiReview = useMutation(api.admin.resolveAiReview);
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.admin.listAiReview,
+    {},
+    { initialNumItems: 15 },
+  );
+  const { ref, inView } = useInView();
+
+  useEffect(() => {
+    if (inView && status === "CanLoadMore") {
+      void loadMore(15);
+    }
+  }, [inView, status, loadMore]);
+
+  const posts = results as unknown as {
+    _id: string;
+    _creationTime: number;
+    content: string;
+    author: { username?: string | null; name?: string | null } | null;
+  }[];
+
+  const approve = async (postId: string) => {
+    try {
+      await resolveAiReview({ postId: postId as Id<"posts"> });
+      toast.success("Marked as original — kept live.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update.");
+    }
+  };
+
+  const remove = async (postId: string) => {
+    if (!window.confirm("Remove this post from the platform?")) return;
+    try {
+      await moderatePost({ postId: postId as Id<"posts"> });
+      toast.success("Post removed.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not remove.");
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {status === "LoadingFirstPage" &&
+        Array.from({ length: 2 }).map((_, i) => (
+          <Skeleton key={i} className="h-20" />
+        ))}
+      {posts.length === 0 && status !== "LoadingFirstPage" && (
+        <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+          No posts waiting on review. Every post is scanned for AI-generated
+          text and image metadata before it goes live.
+        </p>
+      )}
+      {posts.map((p, i) => (
+        <motion.div
+          key={p._id}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: Math.min(i * 0.02, 0.3) }}
+          className="flex items-center justify-between gap-3 rounded-xl border p-3"
+        >
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">
+              <b className="text-foreground">@{p.author?.username}</b> ·{" "}
+              {timeAgo(p._creationTime)}
+            </p>
+            <p className="mt-1 line-clamp-2 text-sm">{p.content}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              to={`/post/${p._id}`}
+              className="rounded-full border px-3 py-1 text-xs font-medium hover:bg-muted"
+            >
+              View
+            </Link>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => void approve(p._id)}
+              aria-label="Mark as original"
+              title="Looks human — keep it live"
+            >
+              <CheckCheck className="size-4" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
