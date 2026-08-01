@@ -88,11 +88,11 @@ const FAQS = [
   },
   {
     q: "Why do I need to verify my email?",
-    a: "Email verification keeps fake accounts off the platform and makes sure every profile belongs to a real person. When your one-time code is redeemed, your account is verified and the badge is attached automatically. And for your privacy, PureWire never stores or shows your plain-text address — only a one-way hash and a masked form.",
+    a: "Email verification keeps fake accounts off the platform and makes sure every profile belongs to a real person. When your one-time code is redeemed, your account is verified and the badge is attached automatically. And for your privacy, PureWire never stores or shows your plain-text address — only a salted one-way hash and a masked form.",
   },
   {
     q: "What data does PureWire store about me?",
-    a: "Very little, and only what you create: your username, display name, bio, links, photo and banner, a one-way SHA-256 hash of your email (never the plain-text address), your posts and stories, your comments, likes, shares and follows, notifications, and support tickets. Stories are deleted automatically after 24 hours. There is no tracking, no analytics, no cookies, no location data, and no advertising profile of any kind.",
+    a: "Very little, and only what you create: your username, display name, bio, links, photo and banner, a salted one-way SHA-256 hash of your email (never the plain-text address), your posts and stories, your comments, likes, shares and follows, notifications, and support tickets. Stories are deleted automatically after 24 hours. There is no tracking, no analytics, no cookies, no location data, and no advertising profile of any kind.",
   },
   {
     q: "How do I delete my account and all my data?",

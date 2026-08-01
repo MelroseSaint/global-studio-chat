@@ -397,9 +397,9 @@ function SettingsForm({ user }: { user: Profile }) {
           </CardTitle>
           <CardDescription>
             PureWire saves zero tracking data and never stores your plain-text
-            email — only a one-way hash. Everything you create is kept only as
-            long as your account exists. You can delete your account and all of
-            it permanently, right here.
+            email — only a salted one-way hash. Everything you create is kept
+            only as long as your account exists. You can delete your account
+            and all of it permanently, right here.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">

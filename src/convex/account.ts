@@ -11,7 +11,7 @@ import type { Id } from "./_generated/dataModel";
  *
  * The platform keeps only what it needs to work, and nothing else: no
  * tracking, no analytics, no third-party embeds, no cookies. Whatever is
- * kept is either a one-way hash (email), content the user posted, records
+ * kept is either a salted one-way hash (email), content the user posted, records
  * of their own actions, or a short-lived moderation signal.
  *
  * The right to erasure is absolute: `deleteAccount` permanently removes a

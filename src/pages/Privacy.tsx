@@ -58,7 +58,7 @@ const stored = [
   {
     title: "Your account",
     detail:
-      "Username, display name, bio, links, photo and banner, your email's one-way hash, and your verified status.",
+      "Username, display name, bio, links, photo and banner, your email's salted one-way hash, and your verified status.",
   },
   {
     title: "What you post",

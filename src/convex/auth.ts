@@ -68,9 +68,9 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       if (user === null) {
         return;
       }
-      // Privacy: the user record carries only a SHA-256 hash of the email,
-      // never plain-text. Existing accounts get backfilled on their next
-      // update through the auth library. The hash is computed from the
+      // Privacy: the user record carries only a salted SHA-256 hash of the
+      // email, never plain-text. Existing accounts get backfilled on their
+      // next update through the auth library. The hash is computed from the
       // canonical identity so user@gmail.com, u.ser@gmail.com, and
       // user+spam1@gmail.com all resolve to one inbox — and one badge.
       const canonicalEmail = user.email !== undefined

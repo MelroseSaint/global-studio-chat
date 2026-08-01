@@ -3,7 +3,7 @@
  *
  * The platform never exposes plain-text email addresses to clients. Every
  * user record returned by an API goes through `publicUser`, which replaces
- * the address with a masked form for display. The SHA-256 hash lives on the
+ * the address with a masked form for display. The salted SHA-256 hash lives on the
  * user document so the platform can reason about identity without holding
  * the plain address, which only ever exists inside the auth service (it is
  * required to deliver one-time codes and to link accounts).
