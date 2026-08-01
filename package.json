@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "icons": "node scripts/generate-icons.mjs",
     "typecheck": "tsc -b --noEmit",
     "deploy": "npm run deploy:backend && npm run upload:version && npm run deploy:web",
     "deploy:backend": "npx convex deploy",

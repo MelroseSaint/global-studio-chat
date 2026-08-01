@@ -26,6 +26,17 @@ import { Support } from "@/pages/Support";
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
+// PWA: register the offline-capable service worker in production only (in
+// dev it would fight Vite's HMR and live reload).
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Offline support is progressive — a failed registration never blocks
+      // the app.
+    });
+  });
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ConvexAuthProvider client={convex}>
