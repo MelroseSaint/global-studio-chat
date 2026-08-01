@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { LinkCard } from "@/components/LinkCard";
+import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
 import { ReportDialog } from "@/components/ReportDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -38,6 +39,9 @@ export interface PostMedia {
   storageId: Id<"_storage">;
   kind: "image" | "video" | "audio";
   url: string | null;
+  // True when GPS/device metadata was removed before upload (client
+  // re-encode or server-side remux) — shows the "Metadata stripped" chip.
+  stripped?: boolean | null;
 }
 
 export interface PostAuthor {
@@ -55,7 +59,11 @@ export interface PostItem {
   _creationTime: number;
   authorId: Id<"users">;
   content: string;
-  media?: { storageId: Id<"_storage">; kind: "image" | "video" | "audio" }[] | null;
+  media?: {
+    storageId: Id<"_storage">;
+    kind: "image" | "video" | "audio";
+    stripped?: boolean | null;
+  }[] | null;
   likeCount: number;
   commentCount: number;
   shareCount: number;
@@ -109,10 +117,16 @@ export function PostMediaGrid({
   media: PostMedia[];
 }) {
   if (media.length === 0) return null;
+  // Any attached photo/video had GPS/device metadata removed before
+  // upload — a tiny chip on the media tells viewers it was scrubbed.
+  const anyStripped = media.some((m) => m.stripped === true);
+
+  const strippedChip = anyStripped ? <MetadataStrippedChip /> : null;
+
   if (media.length === 1) {
     const m = media[0];
     return (
-      <div className="mt-3 overflow-hidden rounded-xl border bg-muted/40">
+      <div className="relative mt-3 overflow-hidden rounded-xl border bg-muted/40">
         {m.kind === "image" && m.url && (
           <img
             src={m.url}
@@ -130,27 +144,31 @@ export function PostMediaGrid({
             <audio src={m.url} controls className="w-full" />
           </div>
         )}
+        {strippedChip}
       </div>
     );
   }
   return (
-    <div className="mt-3 grid grid-cols-2 gap-2">
-      {media.map((m, i) => (
-        <div
-          key={i}
-          className="aspect-square overflow-hidden rounded-xl border bg-muted/40"
-        >
-          {m.kind === "image" && m.url ? (
-            <img src={m.url} alt="" className="size-full object-cover" loading="lazy" />
-          ) : m.kind === "video" && m.url ? (
-            <video src={m.url} controls className="size-full object-cover" />
-          ) : (
-            <div className="flex size-full items-center justify-center">
-              <AudioLines className="size-6 text-primary" />
-            </div>
-          )}
-        </div>
-      ))}
+    <div className="relative mt-3">
+      <div className="grid grid-cols-2 gap-2">
+        {media.map((m, i) => (
+          <div
+            key={i}
+            className="aspect-square overflow-hidden rounded-xl border bg-muted/40"
+          >
+            {m.kind === "image" && m.url ? (
+              <img src={m.url} alt="" className="size-full object-cover" loading="lazy" />
+            ) : m.kind === "video" && m.url ? (
+              <video src={m.url} controls className="size-full object-cover" />
+            ) : (
+              <div className="flex size-full items-center justify-center">
+                <AudioLines className="size-6 text-primary" />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {strippedChip}
     </div>
   );
 }

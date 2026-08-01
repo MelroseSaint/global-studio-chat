@@ -27,6 +27,10 @@ export interface MediaItem {
   // video). Passed to createPost as mediaHashes so the server can catch
   // flipped/cropped/re-encoded copies that defeat the exact fingerprint.
   hashes?: string[];
+  // True when this file was actually re-encoded in the browser (metadata
+  // stripped). The server-side video remux also sets it. Powers the tiny
+  // "Metadata stripped" note next to the post's media.
+  stripped?: boolean;
 }
 
 function kindFromMime(type: string): MediaKind {
@@ -73,6 +77,12 @@ export function MediaUpload({
         //    data never reach PureWire's servers, and so videos store at a
         //    few MB instead of hundreds — high quality, tiny footprint.
         let uploadFile = file;
+        // Whether this file's metadata was actually removed before upload.
+        // The privacy pipeline is best-effort: a re-encode that fails or a
+        // file that already qualifies as lean keeps the original bytes, and
+        // then no stripping happened client-side (the server-side video
+        // remux may still catch it — that path sets stripped on its own).
+        let stripped = false;
         if (kind === "image") {
           // Metadata lives at the head of the file — only read the header
           // the scanner actually inspects, not the whole image.
@@ -84,6 +94,7 @@ export function MediaUpload({
           }
           const processed = await processImageFile(file);
           uploadFile = processed.processed ? processed.file : file;
+          stripped = processed.processed;
         } else if (kind === "video") {
           const head = await file.slice(0, 256 * 1024).arrayBuffer();
           const verdict = scanMediaBytes(head);
@@ -95,6 +106,7 @@ export function MediaUpload({
           try {
             const processed = await processVideoFile(file);
             uploadFile = processed.processed ? processed.file : file;
+            stripped = processed.processed;
           } finally {
             setOptimizing(false);
           }
@@ -121,6 +133,7 @@ export function MediaUpload({
           kind: kindFromMime(uploadFile.type),
           url: URL.createObjectURL(uploadFile),
           hashes,
+          stripped: stripped || undefined,
         });
       }
       onChange([...value, ...items]);

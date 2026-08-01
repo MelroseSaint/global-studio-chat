@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import { MediaUpload, type MediaItem } from "@/components/MediaUpload";
+import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,7 +53,13 @@ export function StoriesBar() {
       // before it exists, so it never references a dirty clip. Runs after
       // the AI scan, which must read the original bytes first.
       const cleaned = await stripMedia({
-        media: [{ storageId: media[0].storageId, kind: media[0].kind }],
+        media: [
+          {
+            storageId: media[0].storageId,
+            kind: media[0].kind,
+            stripped: media[0].stripped,
+          },
+        ],
       });
       await createStory({
         media: cleaned[0],
@@ -198,7 +205,10 @@ export function StoriesBar() {
                 <p className="text-xs text-white/60">24h story</p>
               </div>
             </div>
-            <div className="overflow-hidden rounded-2xl bg-black">
+            <div className="relative overflow-hidden rounded-2xl bg-black">
+              {current.media?.stripped === true ? (
+                <MetadataStrippedChip className="z-10" />
+              ) : null}
               {current.mediaKind === "image" && (
                 <img
                   src={current.mediaUrl ?? ""}

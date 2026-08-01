@@ -50,7 +50,7 @@ const neverStored = [
     icon: ShieldCheck,
     title: "Your media is scrubbed",
     detail:
-      "Photos are processed in your own browser before upload: hidden EXIF metadata — GPS coordinates, camera serials, device info — is stripped, and images are resized and compressed. Raw camera files with embedded location data never reach PureWire's servers. Videos get the same treatment twice: most clips are re-encoded in your browser, and every video is remuxed again on PureWire's servers — GPS, camera, and device atoms are stripped from the container before it is ever served. A video can never leak where or on what it was filmed.",
+      "Photos are processed in your own browser before upload: hidden EXIF metadata — GPS coordinates, camera serials, device info — is stripped, and images are resized and compressed. Raw camera files with embedded location data never reach PureWire's servers. Videos get the same treatment twice: most clips are re-encoded in your browser, and every video is remuxed again on PureWire's servers — GPS, camera, and device atoms are stripped from the container before it is ever served. A video can never leak where or on what it was filmed. Posts whose media was scrubbed carry a tiny \"Metadata stripped\" note on the media itself, so it is always visible that GPS and device data were removed before upload.",
   },
 ];
 

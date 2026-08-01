@@ -30,6 +30,7 @@ export const stripVideoMetadataInternal = internalAction({
           v.literal("video"),
           v.literal("audio"),
         ),
+        stripped: v.optional(v.boolean()),
       }),
     ),
   },

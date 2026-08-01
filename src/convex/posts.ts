@@ -212,6 +212,10 @@ export const createPost = mutation({
             v.literal("video"),
             v.literal("audio"),
           ),
+          // True when GPS/device metadata was removed from this item — by
+          // the client re-encode or the server-side remux. Surfaced as the
+          // "Metadata stripped" note next to the post's media.
+          stripped: v.optional(v.boolean()),
         }),
       ),
     ),

@@ -25,6 +25,7 @@ export const createStory = mutation({
         v.literal("video"),
         v.literal("audio"),
       ),
+      stripped: v.optional(v.boolean()),
     }),
     caption: v.optional(v.string()),
     // Verdict from the client-side scan action (api.aiContent.scanMediaForAi).

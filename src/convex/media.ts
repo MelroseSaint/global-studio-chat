@@ -22,11 +22,16 @@ const mediaItemValidator = v.object({
     v.literal("video"),
     v.literal("audio"),
   ),
+  stripped: v.optional(v.boolean()),
 });
 
 type MediaItem = {
   storageId: Id<"_storage">;
   kind: "image" | "video" | "audio";
+  // True when GPS/device metadata was removed from this item — by the
+  // client re-encode (images and most videos) or by the server remux
+  // (pass-through videos). Surfaced as the "Metadata stripped" note.
+  stripped?: boolean;
 };
 
 /**
@@ -80,26 +85,35 @@ export async function stripVideos(
   const out: MediaItem[] = [];
   for (const item of media) {
     let storageId = item.storageId;
+    // The client may have already re-encoded this item; the server remux
+    // below may add that guarantee for pass-through videos. Either path
+    // means the stored copy is metadata-clean — carry it as the flag.
+    let metadataStripped = item.stripped === true;
     if (item.kind === "video") {
       const blob = await ctx.storage.get(item.storageId);
       if (blob !== null) {
         const bytes = new Uint8Array(await blob.arrayBuffer());
-        const stripped = stripMp4Metadata(bytes);
-        if (stripped !== null && stripped.changed) {
+        const result = stripMp4Metadata(bytes);
+        if (result !== null && result.changed) {
           // Copy into a fresh Uint8Array: it guarantees a plain ArrayBuffer
           // backing (the remux may hand back a subarray of a SharedArrayBuffer
           // from the source blob), which Blob's type accepts.
-          const cleanBytes = new Uint8Array(stripped.bytes);
+          const cleanBytes = new Uint8Array(result.bytes);
           const cleaned = await ctx.storage.store(
             new Blob([cleanBytes], { type: blob.type }),
           );
           await ctx.storage.delete(item.storageId);
           replacements.push({ oldStorageId: item.storageId, newStorageId: cleaned });
           storageId = cleaned;
+          metadataStripped = true;
         }
       }
     }
-    out.push({ storageId, kind: item.kind });
+    out.push({
+      storageId,
+      kind: item.kind,
+      ...(metadataStripped ? { stripped: true } : {}),
+    });
   }
   return { media: out, replacements };
 }
@@ -153,7 +167,9 @@ export const applyVideoStrip = internalMutation({
           const rep = replacements.find(
             (r) => r.oldStorageId === m.storageId,
           );
-          return rep ? { ...m, storageId: rep.newStorageId } : m;
+          return rep
+            ? { ...m, storageId: rep.newStorageId, stripped: true }
+            : m;
         });
         await ctx.db.patch(postId, { media });
       }
@@ -166,7 +182,7 @@ export const applyVideoStrip = internalMutation({
         );
         if (rep) {
           await ctx.db.patch(storyId, {
-            media: { ...story.media, storageId: rep.newStorageId },
+            media: { ...story.media, storageId: rep.newStorageId, stripped: true },
           });
         }
       }

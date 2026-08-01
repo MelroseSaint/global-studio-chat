@@ -53,8 +53,10 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
       // Scan uploaded media bytes for AI-generator metadata before posting.
       let aiMediaStatus: "clean" | "review" | "blocked" = "clean";
       // The server-side strip may swap video storageIds, so the list passed
-      // to createPost is the cleaned one, not the original uploads.
-      let postMedia: Pick<MediaItem, "storageId" | "kind">[] | undefined;
+      // to createPost is the cleaned one, not the original uploads. The
+      // `stripped` flag rides along so the post knows which media had GPS/
+      // device metadata removed before upload.
+      let postMedia: Pick<MediaItem, "storageId" | "kind" | "stripped">[] | undefined;
       if (media.length > 0) {
         const scan = await scanMedia({
           media: media.map((m) => ({ storageId: m.storageId, kind: m.kind })),
@@ -72,7 +74,11 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
         // above, which must read the original bytes first — stripping must
         // never remove the evidence that media was machine-made.
         postMedia = await stripMedia({
-          media: media.map((m) => ({ storageId: m.storageId, kind: m.kind })),
+          media: media.map((m) => ({
+            storageId: m.storageId,
+            kind: m.kind,
+            stripped: m.stripped,
+          })),
         });
       }
       const result = await createPost({

@@ -103,6 +103,10 @@ const schema = defineSchema({
             v.literal("video"),
             v.literal("audio"),
           ),
+          // True when GPS/device metadata was removed from this item — by
+          // the client re-encode or the server-side remux. Powers the tiny
+          // "Metadata stripped" note next to the post's media.
+          stripped: v.optional(v.boolean()),
         }),
       ),
     ),
@@ -150,6 +154,7 @@ const schema = defineSchema({
         v.literal("video"),
         v.literal("audio"),
       ),
+      stripped: v.optional(v.boolean()),
     }),
     caption: v.optional(v.string()),
     expiresAt: v.number(),
