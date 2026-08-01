@@ -124,10 +124,20 @@ export function Landing() {
             <span className="font-bold tracking-tight">PureWire</span>
           </Link>
           <nav className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              asChild
+              className="hidden sm:inline-flex"
+            >
               <Link to="/#features">Why PureWire</Link>
             </Button>
-            <Button variant="ghost" size="sm" asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              asChild
+              className="hidden sm:inline-flex"
+            >
               <Link to="/#standard">The Standard</Link>
             </Button>
             <Button size="sm" asChild>

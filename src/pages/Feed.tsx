@@ -50,10 +50,10 @@ export function Feed() {
                 key={f.value}
                 value={f.value}
                 className={cn(
-                  "flex-1 rounded-none border-b-2 border-transparent py-3 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none",
+                  "min-w-0 flex-1 rounded-none border-b-2 border-transparent px-2 py-3 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none",
                 )}
               >
-                {f.label}
+                <span className="truncate">{f.label}</span>
               </TabsTrigger>
             ))}
           </TabsList>

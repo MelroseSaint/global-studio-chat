@@ -27,7 +27,7 @@ export function Explore() {
   }, [query]);
 
   return (
-    <div className="flex flex-col gap-6 p-4 sm:p-6">
+    <div className="flex flex-col gap-6 p-4 pb-24 sm:p-6">
       <div>
         <h1 className="text-xl font-bold tracking-tight">Discover</h1>
         <p className="text-sm text-muted-foreground">

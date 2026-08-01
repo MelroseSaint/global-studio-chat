@@ -249,12 +249,10 @@ export function PostCard({
             {post.author?.verified ? (
               <VerifiedBadge className="shrink-0" />
             ) : null}
-            <span className="shrink-0 text-muted-foreground">
-              @{post.author?.username}
-            </span>
-            <span className="shrink-0 text-muted-foreground">·</span>
-            <span className="shrink-0 text-muted-foreground">
-              {timeAgo(post._creationTime)}
+            <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
+              <span className="truncate">@{post.author?.username}</span>
+              <span className="shrink-0">·</span>
+              <span className="shrink-0">{timeAgo(post._creationTime)}</span>
             </span>
           </div>
           <DropdownMenu>
