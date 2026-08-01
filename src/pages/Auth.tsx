@@ -28,14 +28,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
 import { isValidUsername } from "@/lib/format";
 
-type Step =
-  | "signin"
-  | "signup"
-  | "verify"
-  | "forgot"
-  | "reset"
-  | "code"
-  | "code-verify";
+type Step = "signin" | "signup" | "verify" | "forgot" | "reset";
 
 export function Auth() {
   const { isLoading, isAuthenticated, signIn } = useAuth();
@@ -179,39 +172,6 @@ export function Auth() {
     }
   };
 
-  const submitCodeRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    try {
-      await signIn("emailCode", {
-        email: email.trim(),
-      });
-      setStep("code-verify");
-      toast.success("Code sent. Check your inbox.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send the code.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const submitCodeVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    try {
-      await signIn("emailCode", {
-        email: email.trim(),
-        code,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid code.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <div className="relative flex min-h-dvh flex-col overflow-hidden">
       {/* Ambient background */}
@@ -252,8 +212,6 @@ export function Auth() {
                 {step === "verify" && "Verify your email"}
                 {step === "forgot" && "Reset your password"}
                 {step === "reset" && "Choose a new password"}
-                {step === "code" && "Sign in with a code"}
-                {step === "code-verify" && "Enter your code"}
               </CardTitle>
               <p className="text-xs font-medium uppercase tracking-widest text-oxide dark:text-oxide-light">
                 Say it anyway.
@@ -268,10 +226,6 @@ export function Auth() {
                   "Enter your email and we'll send you a reset code."}
                 {step === "reset" &&
                   "Enter the code from your email and a new password."}
-                {step === "code" &&
-                  "We'll email you a one-time code. New to PureWire? Your account is created when you verify — set your username in Settings anytime."}
-                {step === "code-verify" &&
-                  `We sent a one-time code to ${email}. Enter it below to sign in.`}
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-5">
@@ -396,18 +350,6 @@ export function Auth() {
                         "Create account"
                       )}
                     </Button>
-                    {step === "signin" && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="self-center gap-1.5"
-                        onClick={() => switchStep("code")}
-                      >
-                        <Mail className="size-4" />
-                        Sign in with a one-time email code
-                      </Button>
-                    )}
                   </form>
                 </>
               ) : null}
@@ -532,103 +474,6 @@ export function Auth() {
                     ) : (
                       "Reset password"
                     )}
-                  </Button>
-                </form>
-              )}
-
-              {step === "code" && (
-                <form onSubmit={submitCodeRequest} className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="code-email">Email</Label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="code-email"
-                        type="email"
-                        required
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        placeholder="you@email.com"
-                        className="pl-9"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <Button
-                    type="submit"
-                    size="lg"
-                    disabled={submitting}
-                  >
-                    {submitting ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <>
-                        <Mail className="size-4" />
-                        Send me a code
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => switchStep("signin")}
-                  >
-                    Back to sign in
-                  </Button>
-                </form>
-              )}
-
-              {step === "code-verify" && (
-                <form onSubmit={submitCodeVerify} className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="code-input">One-time code</Label>
-                    <Input
-                      id="code-input"
-                      required
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="123456"
-                      className="text-center font-mono text-lg tracking-[0.5em]"
-                      value={code}
-                      onChange={(e) =>
-                        setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-                      }
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    size="lg"
-                    disabled={submitting || code.length !== 6}
-                  >
-                    {submitting ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <>
-                        <BadgeCheck className="size-4" />
-                        Sign in
-                      </>
-                    )}
-                  </Button>
-                  <p className="text-center text-xs text-muted-foreground">
-                    Didn&apos;t get the code?{" "}
-                    <button
-                      type="button"
-                      className="font-medium text-primary hover:underline"
-                      onClick={() => switchStep("code")}
-                    >
-                      Send it again
-                    </button>
-                    .
-                  </p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => switchStep("signin")}
-                  >
-                    Back to sign in
                   </Button>
                 </form>
               )}
