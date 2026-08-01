@@ -1,29 +1,17 @@
-import { useAuthActions, useAuthToken } from "@convex-dev/auth/react";
-import { useQuery } from "convex/react";
-
 import { api } from "@/convex/_generated/api";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { useConvexAuth, useQuery } from "convex/react";
 
-/**
- * Auth state hook. Use this everywhere instead of reaching into
- * @convex-dev/auth/react directly.
- *
- * Returns:
- * - `isLoading`: true while the auth state is being resolved
- * - `isAuthenticated`: whether the user has a valid session
- * - `user`: the current user document (null when signed out)
- * - `signIn` / `signOut`: auth actions
- */
 export function useAuth() {
+  const { isLoading: isAuthLoading, isAuthenticated } = useConvexAuth();
+  const user = useQuery(api.users.currentUser);
   const { signIn, signOut } = useAuthActions();
-  const token = useAuthToken();
-  const isAuthenticated = token !== null;
-  const user = useQuery(
-    api.users.getCurrentUser,
-    isAuthenticated ? undefined : "skip",
-  );
+
+  // Derive isLoading directly from the dependencies instead of managing separate state
+  const isLoading = isAuthLoading || user === undefined;
 
   return {
-    isLoading: isAuthenticated && user === undefined,
+    isLoading,
     isAuthenticated,
     user,
     signIn,

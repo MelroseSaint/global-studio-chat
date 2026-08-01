@@ -6,13 +6,7 @@ import tseslint from "typescript-eslint";
 import eslintConfigPrettier from "eslint-config-prettier/flat";
 
 export default tseslint.config(
-  {
-    ignores: [
-      "dist",
-      // Generated code — never hand-edited, so it isn't linted.
-      "src/convex/_generated",
-    ],
-  },
+  { ignores: ["dist"] },
   {
     extends: [
       js.configs.recommended,
@@ -34,15 +28,6 @@ export default tseslint.config(
         "warn",
         { allowConstantExport: true },
       ],
-    },
-  },
-  {
-    // UI primitives intentionally co-locate variant recipes (cva) with their
-    // component, matching the shadcn/ui convention — so fast-refresh's
-    // "one export per file" rule doesn't apply here.
-    files: ["src/components/ui/**/*.{ts,tsx}"],
-    rules: {
-      "react-refresh/only-export-components": "off",
     },
   },
 );

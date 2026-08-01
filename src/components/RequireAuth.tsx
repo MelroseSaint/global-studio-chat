@@ -1,25 +1,28 @@
+import { useAuth } from "@/hooks/use-auth";
+import { Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router";
 
-import { Spinner } from "@/components/ui/spinner";
-import { useAuth } from "@/hooks/use-auth";
-
-export function RequireAuth({ children }: { children: React.ReactNode }) {
+export function RequireAuth({ children }: { children: ReactNode }) {
   const { isLoading, isAuthenticated } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
     return (
-      <div className="flex min-h-dvh items-center justify-center">
-        <Spinner className="size-6 text-muted-foreground" />
-      </div>
+      <main className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </main>
     );
   }
 
   if (!isAuthenticated) {
-    const returnTo = encodeURIComponent(
-      location.pathname + location.search,
+    const returnTo = `${location.pathname}${location.search}`;
+    return (
+      <Navigate
+        to={`/auth?returnTo=${encodeURIComponent(returnTo)}`}
+        replace
+      />
     );
-    return <Navigate to={`/auth?returnTo=${returnTo}`} replace />;
   }
 
   return children;

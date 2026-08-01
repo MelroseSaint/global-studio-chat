@@ -1,160 +1,272 @@
-# PureWire — Say it anyway.
+## Overview
 
-A social platform built around expression, connection, and freedom — not
-advertising, corporate sponsorships, or telling people how they're supposed
-to participate.
+This project uses the following tech stack:
+- Vite
+- Typescript
+- React Router v7 (all imports from `react-router` instead of `react-router-dom`)
+- React 19 (for frontend components)
+- Tailwind v4 (for styling)
+- Shadcn UI (for UI components library)
+- Lucide Icons (for icons)
+- Convex (for backend & database)
+- Convex Auth (for authentication)
+- Framer Motion (for animations)
+- Three js (for 3d models)
 
-Other platforms tell you what you can say. PureWire gives you the space to
-say it.
+All relevant files live in the 'src' directory.
 
-## The PureWire promise
+Use bun for the package manager.
 
-- **Say it anyway** — your voice, your words, your way. No ads, no
-  algorithms, no corporate curation, no forced trends.
-- **Verified original** — every post is fingerprinted and checked against the
-  platform before it appears. Stolen work and copycats are blocked, and posts
-  that pass carry the **Original** badge.
-- **Human-made only** — AI-generated text, images, audio, and video are not
-  allowed. Posts are scanned for AI text patterns and AI-generator image
-  metadata at creation; suspicious content goes to a human review queue.
-- **Highest-moderation trust & safety** — new accounts are screened against
-  bot and farm signals at signup, every activity runs on a rate budget, media
-  is checked for deepfake and AI-generator markers, and anyone can block
-  harassers. Restricted or banned accounts are hidden platform-wide, and
-  accounts that keep tripping abuse signals are quietly limited — nothing
-  errors, their content simply stops reaching anyone until a human reviews.
-- **Freedom with a reason** — PureWire isn't "no rules." The PureWire
-  Standard draws the lines (no impersonation, no stealing work, no spam, no
-  harassment) so one person's freedom never costs another's.
-- **No algorithm, your choice** — the feed is Global, Following, Latest, and
-  Photos & videos. You choose what you see.
-- **Real people** — email verification at signup, verified badges for notable
-  accounts, and no guest accounts. Sign in with your password; one-time codes
-  verify your account and secure password resets.
-- **Your profile, your way** — upload your photo and banner, write a bio, and
-  link your other socials.
+## Setup
 
-## What you can do on PureWire
+This project is set up already and running on a cloud environment, as well as a convex development in the sandbox.
 
-- Post your original text, photos, videos, and audio
-- Share 24-hour stories with a built-in viewer
-- Follow people and build your own circle
-- Like, comment, share, and @mention
-- Pick your feed: Global, Following, Latest, Photos & videos
-- Get notified on likes, comments, follows, shares, and mentions
-- Build a profile with a banner, bio, and links to your other platforms
-- Open a support ticket — reports include the post, the user, and what was
-  violated
-- Verified badges for authentic, notable accounts
+## Environment Variables
 
-## The PureWire Standard
+The project is set up with project specific CONVEX_DEPLOYMENT and VITE_CONVEX_URL environment variables on the client side.
 
-Say what you mean. Create what you want. Find your people. Disagree without
-destroying each other. Don't impersonate people. Don't steal people's work.
-Don't spam the platform. Don't use freedom as an excuse to take someone
-else's freedom away.
+The convex server has a separate set of environment variables that are accessible by the convex backend.
 
-## Brand
+Currently, these variables include auth-specific keys: JWKS, JWT_PRIVATE_KEY, and SITE_URL.
 
-- **Palette** — Wire Black `#171918` (strength), Paper `#F4F0E8` (space),
-  Oxide `#B84A32` (expression), Moss `#465A4C` (grounding), Copper `#C97952`
-  (accent).
-- **Slogan** — *Say it anyway.*
 
-## Bot & identity defenses
+# Using Authentication (Important!)
 
-PureWire stops inbox-abuse at signup with two layered defenses:
+You must follow these conventions when using authentication.
 
-- **One inbox = one badge.** Email identity is canonicalized before it is
-  hashed — Gmail/Googlemail dots and `+tag` sub-addressing are stripped, so
-  `user@gmail.com`, `u.ser@gmail.com`, and `user+spam1@gmail.com` all resolve
-  to the same inbox and can only ever claim one verified account badge.
-- **Human-only email triggers.** Sign-up, sign-in, forgot-password, and
-  password-reset flows run through a Cloudflare Turnstile check when it is
-  configured. To enable:
-  1. Create a free Turnstile widget at
-     https://dash.cloudflare.com/?to=/:account/turnstile (one site key + one
-     secret key).
-  2. Add the **site key** to the deploy environment as `VITE_TURNSTILE_SITE_KEY`
-     (in `.env.production` or your Vercel env).
-  3. Add the **secret key** to Convex env — never to the repo:
-     `npx convex env set TURNSTILE_SECRET_KEY <secret-key>`
+## Auth is already set up.
 
-  Until the site key is set the widget is not loaded and signups are still
-  protected by email normalization, signup risk scoring, and per-account rate
-  limits. With the keys set, the widget renders on the auth forms and the
-  server verifies each token before any verification or reset email is sent.
+All convex authentication functions are already set up. The auth currently uses email OTP and anonymous users, but can support more.
 
-## Privacy, safety & network security
+The email OTP configuration is defined in `src/convex/auth/emailOtp.ts`. DO NOT MODIFY THIS FILE.
 
-PureWire treats privacy and safety as architecture, not add-ons. How each
-layer works:
+Also, DO NOT MODIFY THESE AUTH FILES: `src/convex/auth.config.ts` and `src/convex/auth.ts`.
 
-### Data privacy
+## Using Convex Auth on the backend
 
-- **Salted email hashes.** An address is stored only as `SHA-256(salt + email)`.
-  The salt is a random server-side secret from Convex env, never sent to
-  clients, so a leaked database is useless against lookup tables. Configure it:
+On the `src/convex/users.ts` file, you can use the `getCurrentUser` function to get the current user's data.
 
-      npx convex env set EMAIL_HASH_SALT <long random hex>
+## Using Convex Auth on the frontend
 
-  Without a salt the hash degrades to plain SHA-256 so local dev keeps working
-  — production must set one.
+The `/auth` page is already set up to use auth. Navigate to `/auth` for all log in / sign up sequences.
 
-- **No persistent identifying logs.** The application never writes IP
-  addresses, browser headers, or connection metadata to storage. Edge-level
-  logging (if any) is configured at the hosting layer, not in the app.
+You MUST use this hook to get user data. Never do this yourself without the hook:
+```typescript
+import { useAuth } from "@/hooks/use-auth";
 
-- **Ephemeral auth state.** Sign-in sessions and one-time codes are short-lived
-  and scoped to the auth service; nothing user-identifying is persisted beyond
-  what the platform needs to function.
+const { isLoading, isAuthenticated, user, signIn, signOut } = useAuth();
+```
 
-### Media privacy (anti-doxing)
+## Protected Routes
 
-- **Client-side processing before upload.** Photos are re-encoded in the user's
-  own browser (`src/lib/media.ts`): EXIF/GPS/device metadata is stripped, the
-  image is downscaled to at most 2048px and compressed.  Raw camera files with
-  hidden location data never reach PureWire's servers.
-- **Scan-before-strip.** The original bytes are scanned for AI-generator and
-  deepfake markers *before* stripping (`src/lib/ai-media-scan.ts`, shared with
-  the server action), so removing metadata can never also remove the evidence
-  that media was machine-made.
-- **Videos/audio** pass through client-side (no heavy browser transcoding) and
-  are scanned server-side for AI-generator markers before going live. Video
-  container metadata (e.g. MP4 GPS atoms) is not stripped in the browser — a
-  known, documented limitation of client-only processing.
+The starter `/dashboard` route is protected with `RequireAuth`, which sends
+signed-out users to `/auth?returnTo=<current route>`. Extend that page for the
+product's authenticated experience, and reuse `RequireAuth` when adding another
+protected route.
 
-### Anti-scraping & creator protection
+## Auth Page
 
-- **Per-account rate limits** on posts, comments, likes, follows, shares, and
-  media uploads (`src/convex/security.ts`) blunt automated floods.
-- **Human-only bot checks** — Cloudflare Turnstile on every email trigger
-  (signup, sign-in, forgot/reset password).
-- **Signup risk scoring** flags bot/farm signals (disposable domains, pattern
-  usernames, placeholder names) for human review; suspicious accounts are kept
-  off public feeds until approved.
-- **IP reputation and headless-crawler defenses** require edge/hosting
-  configuration (Cloudflare or Vercel Firewall bot/IP rules) where the network
-  signals live. That config lives at the hosting provider, not in this repo;
-  in-app protections cover the write path (Turnstile, risk scoring, rate
-  limits), while read-side scraping defense is a hosting-edge item.
+The auth page is defined in `src/pages/Auth.tsx`. Send sign-in and sign-up actions
+to `/auth`.
 
-### Storage isolation & delivery
+## Authorization
 
-- **Media lives in isolated storage, not the database.** The DB holds only
-  `storageId` references; files are stored separately and delivered through
-  read-only signed CDN URLs (`ctx.storage.getUrl`). Users never touch the core
-  database when viewing media.
+You can perform authorization checks on the frontend and backend.
 
-### Network hardening
+On the frontend, you can use the `useAuth` hook to get the current user's data and authentication state.
 
-- **TLS 1.3 end-to-end** and **DDoS scrubbing** are provided by the hosting
-  edge (Vercel/Convex).
-- **Security headers** are set in `vercel.json` (Vercel host): HSTS
-  (`max-age=63072000; includeSubDomains; preload`), `X-Content-Type-Options:
-  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a
-  `Permissions-Policy` that denies camera/microphone and interest cohort.
-  The `convex.site` static-hosting host is a preview surface and does not
-  carry custom headers.
+You should also be protecting queries, mutations, and actions at the base level, checking for authorization securely.
 
-© PureWire. Say it anyway — no ads, ever.
+## Adding a redirect after auth
+
+The `/auth` route in `src/main.tsx` redirects to `/dashboard` by default. If the
+product's main authenticated route is different, update `redirectAfterAuth` to
+that route. A validated same-origin `returnTo` query parameter takes priority so
+users can resume the protected page they originally requested. Never leave an
+authenticated product redirecting back to the public landing page.
+
+## Complete authenticated products
+
+When the requested product implies accounts, a workspace, a dashboard, or other
+signed-in functionality, the task is not complete with only a landing page and
+auth form. Build the main authenticated experience, protect its route, and verify
+that signing in reaches it.
+
+# Frontend Conventions
+
+You will be using the Vite frontend with React 19, Tailwind v4, and Shadcn UI.
+
+Generally, pages should be in the `src/pages` folder, and components should be in the `src/components` folder.
+
+Shadcn primitives are located in the `src/components/ui` folder and should be used by default.
+
+## Page routing
+
+Your page component should go under the `src/pages` folder.
+
+When adding a page, update the react router configuration in `src/main.tsx` to include the new route you just added.
+
+## Shad CN conventions
+
+Follow these conventions when using Shad CN components, which you should use by default.
+- Remember to use "cursor-pointer" to make the element clickable
+- For title text, use the "tracking-tight font-bold" class to make the text more readable
+- Always make apps MOBILE RESPONSIVE. This is important
+- AVOID NESTED CARDS. Try and not to nest cards, borders, components, etc. Nested cards add clutter and make the app look messy.
+- AVOID SHADOWS. Avoid adding any shadows to components. stick with a thin border without the shadow.
+- Avoid skeletons; instead, use the loader2 component to show a spinning loading state when loading data.
+
+
+## Landing Pages
+
+You must always create good-looking designer-level styles to your application. 
+- Make it well animated and fit a certain "theme", ie neo brutalist, retro, neumorphism, glass morphism, etc
+
+Use known images and emojis from online.
+
+If the user is logged in already, show the get started button to say "Dashboard" or "Profile" instead to take them there.
+
+## Responsiveness and formatting
+
+Make sure pages are wrapped in a container to prevent the width stretching out on wide screens. Always make sure they are centered aligned and not off-center.
+
+Always make sure that your designs are mobile responsive. Verify the formatting to ensure it has correct max and min widths as well as mobile responsiveness.
+
+- Always create sidebars for protected dashboard pages and navigate between pages
+- Always create navbars for landing pages
+- On these bars, the created logo should be clickable and redirect to the index page
+
+## Animating with Framer Motion
+
+You must add animations to components using Framer Motion. It is already installed and configured in the project.
+
+To use it, import the `motion` component from `framer-motion` and use it to wrap the component you want to animate.
+
+
+### Other Items to animate
+- Fade in and Fade Out
+- Slide in and Slide Out animations
+- Rendering animations
+- Button clicks and UI elements
+
+Animate for all components, including on landing page and app pages.
+
+## Three JS Graphics
+
+Your app comes with three js by default. You can use it to create 3D graphics for landing pages, games, etc.
+
+
+## Colors
+
+You can override colors in: `src/index.css`
+
+This uses the oklch color format for tailwind v4.
+
+Always use these color variable names.
+
+Make sure all ui components are set up to be mobile responsive and compatible with both light and dark mode.
+
+Set theme using `dark` or `light` variables at the parent className.
+
+## Styling and Theming
+
+When changing the theme, always change the underlying theme of the shad cn components app-wide under `src/components/ui` and the colors in the index.css file.
+
+Avoid hardcoding in colors unless necessary for a use case, and properly implement themes through the underlying shad cn ui components.
+
+When styling, ensure buttons and clickable items have pointer-click on them (don't by default).
+
+Always follow a set theme style and ensure it is tuned to the user's liking.
+
+## Toasts
+
+You should always use toasts to display results to the user, such as confirmations, results, errors, etc.
+
+Use the shad cn Sonner component as the toaster. For example:
+
+```
+import { toast } from "sonner"
+
+import { Button } from "@/components/ui/button"
+export function SonnerDemo() {
+  return (
+    <Button
+      variant="outline"
+      onClick={() =>
+        toast("Event has been created", {
+          description: "Sunday, December 03, 2023 at 9:00 AM",
+          action: {
+            label: "Undo",
+            onClick: () => console.log("Undo"),
+          },
+        })
+      }
+    >
+      Show Toast
+    </Button>
+  )
+}
+```
+
+Remember to import { toast } from "sonner". Usage: `toast("Event has been created.")`
+
+## Dialogs
+
+Always ensure your larger dialogs have a scroll in its content to ensure that its content fits the screen size. Make sure that the content is not cut off from the screen.
+
+Ideally, instead of using a new page, use a Dialog instead. 
+
+# Using the Convex backend
+
+You will be implementing the convex backend. Follow your knowledge of convex and the documentation to implement the backend.
+
+## The Convex Schema
+
+You must correctly follow the convex schema implementation.
+
+The schema is defined in `src/convex/schema.ts`.
+
+Do not include the `_id` and `_creationTime` fields in your queries (it is included by default for each table).
+Do not index `_creationTime` as it is indexed for you. Never have duplicate indexes.
+
+
+## Convex Actions: Using CRUD operations
+
+When running anything that involves external connections, you must use a convex action with "use node" at the top of the file.
+
+You cannot have queries or mutations in the same file as a "use node" action file. Thus, you must use pre-built queries and mutations in other files.
+
+You can also use the pre-installed internal crud functions for the database:
+
+```ts
+// in convex/users.ts
+import { crud } from "convex-helpers/server/crud";
+import schema from "./schema.ts";
+
+export const { create, read, update, destroy } = crud(schema, "users");
+
+// in some file, in an action:
+const user = await ctx.runQuery(internal.users.read, { id: userId });
+
+await ctx.runMutation(internal.users.update, {
+  id: userId,
+  patch: {
+    status: "inactive",
+  },
+});
+```
+
+
+## Common Convex Mistakes To Avoid
+
+When using convex, make sure:
+- Document IDs are referenced as `_id` field, not `id`.
+- Document ID types are referenced as `Id<"TableName">`, not `string`.
+- Document object types are referenced as `Doc<"TableName">`.
+- Keep schemaValidation to false in the schema file.
+- You must correctly type your code so that it passes the type checker.
+- You must handle null / undefined cases of your convex queries for both frontend and backend, or else it will throw an error that your data could be null or undefined.
+- Always use the `@/folder` path, with `@/convex/folder/file.ts` syntax for importing convex files.
+- This includes importing generated files like `@/convex/_generated/server`, `@/convex/_generated/api`
+- Remember to import functions like useQuery, useMutation, useAction, etc. from `convex/react`
+- NEVER have return type validators.

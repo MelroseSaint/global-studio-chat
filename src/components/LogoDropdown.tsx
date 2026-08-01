@@ -1,88 +1,65 @@
-import { Link, useNavigate } from "react-router";
+// simple logo dropdown component that can be used to go to the landing page or sign out for the user
 
-import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import logo from "@/assets/logo.svg";
 import { useAuth } from "@/hooks/use-auth";
-import { cn } from "@/lib/utils";
+import { Home, LogOut } from "lucide-react";
+import { useNavigate } from "react-router";
 
-export function LogoDropdown({
-  className,
-}: {
-  className?: string;
-}) {
-  const { isAuthenticated, user, signOut } = useAuth();
+export function LogoDropdown() {
+  const { isAuthenticated, signOut } = useAuth();
   const navigate = useNavigate();
 
-  if (!isAuthenticated) {
-    return (
-      <Button asChild variant="ghost" className={cn("p-0", className)}>
-        <Link to="/" className="gap-2">
-          <img
-            src="/logo.svg"
-            alt="PureWire"
-            className="size-7 rounded-lg"
-          />
-          <span className="font-semibold tracking-tight">PureWire</span>
-        </Link>
-      </Button>
-    );
-  }
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      navigate("/");
+    } catch (error) {
+      console.error("Sign out error:", error);
+    }
+  };
+
+  const handleGoHome = () => {
+    navigate("/");
+  };
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className={cn("gap-2 p-0", className)}>
-          <UserAvatar user={user} className="size-7" />
-          <span className="hidden font-semibold tracking-tight sm:inline">
-            {user?.name ?? user?.username ?? "PureWire"}
-          </span>
+        <Button variant="ghost" size="icon" className="h-10 w-10">
+          <img
+            src={logo}
+            alt="Logo"
+            width={32}
+            height={32}
+            className="rounded-lg"
+          />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuLabel className="font-normal">
-          <p className="text-sm font-medium">
-            {user?.name ?? user?.username ?? "Member"}
-            {user?.verified ? " ✓" : ""}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            @{user?.username}
-          </p>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => navigate("/home")}>
-          Home
+      <DropdownMenuContent align="start" className="w-48">
+        <DropdownMenuItem onClick={handleGoHome} className="cursor-pointer">
+          <Home className="mr-2 h-4 w-4" />
+          Landing Page
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => navigate(`/u/${user?.username}`)}>
-          Profile
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => navigate("/settings")}>
-          Settings
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => navigate("/support")}>
-          Support
-        </DropdownMenuItem>
-        {user?.role === "admin" && (
-          <DropdownMenuItem onClick={() => navigate("/admin")}>
-            Admin
-          </DropdownMenuItem>
+        {isAuthenticated && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={handleSignOut}
+              className="cursor-pointer text-destructive focus:text-destructive"
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              Sign Out
+            </DropdownMenuItem>
+          </>
         )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => {
-            void signOut();
-            navigate("/");
-          }}
-        >
-          Sign out
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

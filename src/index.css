@@ -1,91 +1,10 @@
+/* DO NOT CHANGE */
 @import "tailwindcss";
 @import "tw-animate-css";
-
 @custom-variant dark (&:is(.dark *));
 
-/* ============================================================
-   PureWire brand system
-   Wire Black  #171918 — independence and strength
-   Paper       #F4F0E8 — openness and space
-   Oxide       #B84A32 — rebellion, expression, breaking convention
-   Moss        #465A4C — independence and grounding
-   Copper      #C97952 — secondary expressive accent
-   ============================================================ */
-
-:root {
-  --radius: 0.85rem;
-  --background: #f4f0e8;
-  --foreground: #171918;
-  --card: #fcfaf4;
-  --card-foreground: #171918;
-  --popover: #fcfaf4;
-  --popover-foreground: #171918;
-  --primary: #b84a32;
-  --primary-foreground: #f4f0e8;
-  --secondary: #e9e2d3;
-  --secondary-foreground: #171918;
-  --muted: #ebe5d8;
-  --muted-foreground: #6f6759;
-  --accent: #c97952;
-  --accent-foreground: #171918;
-  --destructive: #c0392b;
-  --border: #dcd4c3;
-  --input: #dcd4c3;
-  --ring: #b84a32;
-  --chart-1: #b84a32;
-  --chart-2: #c97952;
-  --chart-3: #465a4c;
-  --chart-4: #7c8f7f;
-  --chart-5: #a8602f;
-  --sidebar: #f4f0e8;
-  --sidebar-foreground: #171918;
-  --sidebar-primary: #b84a32;
-  --sidebar-primary-foreground: #f4f0e8;
-  --sidebar-accent: #e9e2d3;
-  --sidebar-accent-foreground: #171918;
-  --sidebar-border: #dcd4c3;
-  --sidebar-ring: #b84a32;
-}
-
-.dark {
-  --background: #171918;
-  --foreground: #f4f0e8;
-  --card: #1f221f;
-  --card-foreground: #f4f0e8;
-  --popover: #212421;
-  --popover-foreground: #f4f0e8;
-  --primary: #b84a32;
-  --primary-foreground: #f4f0e8;
-  --secondary: #2a2e2a;
-  --secondary-foreground: #f4f0e8;
-  --muted: #242824;
-  --muted-foreground: #a79d8c;
-  --accent: #c97952;
-  --accent-foreground: #171918;
-  --destructive: #c04832;
-  --border: #2e3330;
-  --input: #2e3330;
-  --ring: #b84a32;
-  --chart-1: #c97952;
-  --chart-2: #b84a32;
-  --chart-3: #7c8f7f;
-  --chart-4: #465a4c;
-  --chart-5: #a8602f;
-  --sidebar: #1a1d1a;
-  --sidebar-foreground: #f4f0e8;
-  --sidebar-primary: #b84a32;
-  --sidebar-primary-foreground: #f4f0e8;
-  --sidebar-accent: #242824;
-  --sidebar-accent-foreground: #f4f0e8;
-  --sidebar-border: #2e3330;
-  --sidebar-ring: #b84a32;
-}
-
+/* DO NOT CHANGE */
 @theme inline {
-  /* Privacy: the platform makes no third-party requests — fonts are the
-     system stack, nothing is fetched from external hosts. */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -121,83 +40,87 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  /* PureWire brand palette */
-  --color-wire: #171918;
-  --color-paper: #f4f0e8;
-  --color-oxide: #b84a32;
-  --color-oxide-light: #d4785a;
-  --color-moss: #465a4c;
-  --color-moss-light: #7c9c86;
-  --color-copper: #c97952;
+}
+
+/* CHANGE VALUES FOR THEME */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  html {
-    font-family: var(--font-sans);
-  }
   body {
-    @apply bg-background text-foreground antialiased;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    @apply bg-background text-foreground;
   }
-  ::selection {
-    background: color-mix(in oklch, var(--primary) 30%, transparent);
+  button:not([disabled]),
+  [role="button"]:not([disabled]) {
+    cursor: pointer;
   }
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: color-mix(in oklch, var(--muted-foreground) 25%, transparent);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklch, var(--muted-foreground) 40%, transparent);
-  background-clip: content-box;
-  border: 2px solid transparent;
-}
-
-/* Brand gradients — Copper → Oxide, the PureWire signal */
-.brand-gradient-text {
-  background: linear-gradient(135deg, #c97952, #d4785a);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-.brand-gradient-bg {
-  background: linear-gradient(135deg, #b84a32, #c97952);
-}
-.verified-gradient {
-  background: linear-gradient(135deg, #c97952, #b84a32);
-}
-
-/* Story ring gradient — Oxide, Copper, Moss */
-.story-ring {
-  background: conic-gradient(
-    from 180deg,
-    #b84a32,
-    #c97952,
-    #7c8f7f,
-    #465a4c,
-    #b84a32
-  );
-}
-
-@keyframes pulse-ring {
-  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 45%, transparent); }
-  70% { box-shadow: 0 0 0 10px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
-}
-.animate-pulse-ring {
-  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
