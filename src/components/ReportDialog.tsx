@@ -23,19 +23,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { standardById, STANDARD_PRINCIPLES } from "@/lib/standard";
 
-const VIOLATIONS = [
-  "AI-generated content",
-  "Deepfake or manipulated media",
-  "Bot or fake account",
-  "Copied or stolen content",
-  "Repetitive or spam content",
-  "Harassment or bullying",
-  "Impersonation or fake account",
-  "Misinformation",
-  "Inappropriate content",
-  "Other",
-];
+// Reports cite the PureWire Standard principle that was broken. "other" is
+// the only free-form option; everything else maps to a stated rule.
+const OTHER = "other";
 
 export function ReportDialog({
   open,
@@ -51,23 +43,29 @@ export function ReportDialog({
   offenderUsername: string | null;
 }) {
   const createTicket = useMutation(api.support.createTicket);
-  const [violation, setViolation] = useState<string>("");
+  // Standard principle id, or OTHER for a free-form report.
+  const [standardId, setStandardId] = useState<string>("");
   const [details, setDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async () => {
-    if (!violation) {
+    if (!standardId) {
       toast.error("Please choose what was violated.");
       return;
     }
     setSubmitting(true);
     try {
+      const principle =
+        standardId === OTHER ? undefined : standardById(standardId);
       await createTicket({
-        subject: `Report: ${violation}`,
+        subject: `Report: ${principle?.title ?? "Other"}`,
         message: details.trim() || "No additional details provided.",
         postId,
         offenderId: offenderId ?? undefined,
-        violation,
+        violation: principle?.title ?? "Other",
+        ...(principle !== undefined
+          ? { standardId: principle.id }
+          : {}),
       });
       toast.success("Report submitted. Our team will review it.");
       onOpenChange(false);
@@ -84,7 +82,7 @@ export function ReportDialog({
       onOpenChange={(next) => {
         // Reset the form each time the dialog is opened.
         if (next) {
-          setViolation("");
+          setStandardId("");
           setDetails("");
         }
         onOpenChange(next);
@@ -101,29 +99,36 @@ export function ReportDialog({
               <>
                 You&apos;re reporting a post by{" "}
                 <span className="font-medium">@{offenderUsername}</span>. Tell
-                the team what was violated and we&apos;ll review it.
+                the team which PureWire Standard principle was broken and
+                we&apos;ll review it.
               </>
             ) : (
-              <>Tell the team what was violated and we&apos;ll review it.</>
+              <>Tell the team which PureWire Standard principle was broken.</>
             )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label>What was violated?</Label>
-            <Select value={violation} onValueChange={setViolation}>
+            <Label>Which PureWire Standard principle was violated?</Label>
+            <Select value={standardId} onValueChange={setStandardId}>
               <SelectTrigger>
-                <SelectValue placeholder="Choose a reason" />
+                <SelectValue placeholder="Choose a principle" />
               </SelectTrigger>
               <SelectContent>
-                {VIOLATIONS.map((v) => (
-                  <SelectItem key={v} value={v}>
-                    {v}
+                {STANDARD_PRINCIPLES.map((p, i) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {i + 1}. {p.title}
                   </SelectItem>
                 ))}
+                <SelectItem value={OTHER}>Other</SelectItem>
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              PureWire is freedom with a reason — reports are reviewed against
+              the Standard, and the principle you choose is attached to the
+              report.
+            </p>
           </div>
           <div className="flex flex-col gap-2">
             <Label>Details (optional)</Label>

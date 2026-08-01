@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { isStandardId } from "@/lib/standard";
+
 import { publicUser } from "./privacy";
 
 import type { Doc, Id } from "./_generated/dataModel";
@@ -546,8 +548,12 @@ export const setAccountStatus = mutation({
       v.literal("restricted"),
       v.literal("banned"),
     ),
+    // The PureWire Standard principle this action cites (required for
+    // restrict/ban, so every action traces to a stated rule).
+    standardId: v.optional(v.string()),
+    note: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, status }) => {
+  handler: async (ctx, { userId, status, standardId, note }) => {
     const adminId = await getAuthUserId(ctx);
     if (adminId === null) {
       throw new Error("Not authenticated");
@@ -555,6 +561,9 @@ export const setAccountStatus = mutation({
     const admin = await ctx.db.get(adminId);
     if (admin?.role !== "admin") {
       throw new Error("Admins only");
+    }
+    if (standardId !== undefined && !isStandardId(standardId)) {
+      throw new Error("That isn't a principle of the PureWire Standard.");
     }
     const user = await ctx.db.get(userId);
     if (user === null) {
@@ -564,11 +573,22 @@ export const setAccountStatus = mutation({
       throw new Error("Cannot change an admin account");
     }
     // Approving an account is a full restore — clear any quiet shadowban.
-    const patch: { accountStatus: typeof status; shadowban?: boolean } = {
+    const patch: {
+      accountStatus: typeof status;
+      shadowban?: boolean;
+      moderationStandardId?: string;
+      moderationNote?: string;
+    } = {
       accountStatus: status,
     };
     if (status === "active") {
       patch.shadowban = false;
+    }
+    if (standardId !== undefined) {
+      patch.moderationStandardId = standardId;
+    }
+    if (note !== undefined && note.trim().length > 0) {
+      patch.moderationNote = note.trim();
     }
     await ctx.db.patch(userId, patch);
   },
@@ -581,8 +601,15 @@ export const setAccountStatus = mutation({
  */
 
 export const setShadowban = mutation({
-  args: { userId: v.id("users"), shadowban: v.boolean() },
-  handler: async (ctx, { userId, shadowban }) => {
+  args: {
+    userId: v.id("users"),
+    shadowban: v.boolean(),
+    // The PureWire Standard principle this silence cites, recorded on the
+    // account so the moderation trail names the rule.
+    standardId: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, shadowban, standardId, note }) => {
     const adminId = await getAuthUserId(ctx);
     if (adminId === null) {
       throw new Error("Not authenticated");
@@ -591,6 +618,9 @@ export const setShadowban = mutation({
     if (admin?.role !== "admin") {
       throw new Error("Admins only");
     }
+    if (standardId !== undefined && !isStandardId(standardId)) {
+      throw new Error("That isn't a principle of the PureWire Standard.");
+    }
     const user = await ctx.db.get(userId);
     if (user === null) {
       throw new Error("User not found");
@@ -598,7 +628,18 @@ export const setShadowban = mutation({
     if (user.role === "admin") {
       throw new Error("Cannot change an admin account");
     }
-    await ctx.db.patch(userId, { shadowban });
+    const patch: {
+      shadowban: boolean;
+      moderationStandardId?: string;
+      moderationNote?: string;
+    } = { shadowban };
+    if (shadowban && standardId !== undefined) {
+      patch.moderationStandardId = standardId;
+    }
+    if (shadowban && note !== undefined && note.trim().length > 0) {
+      patch.moderationNote = note.trim();
+    }
+    await ctx.db.patch(userId, patch);
     // Unsilencing restores an account fully: reconcile the follow counts so
     // phantom follows made while silenced are counted once, forever.
     if (shadowban === false && user.shadowban === true) {

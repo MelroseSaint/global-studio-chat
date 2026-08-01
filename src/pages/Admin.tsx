@@ -12,6 +12,7 @@ import {
   ScanSearch,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Trash2,
   UserCheck,
   Users,
@@ -23,6 +24,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { StandardViolationDialog } from "@/components/StandardViolationDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,6 +38,19 @@ import {
 } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
 import { timeAgo } from "@/lib/format";
+import { standardById } from "@/lib/standard";
+
+/** A small badge naming the Standard principle an account was cited under. */
+function StandardChip({ standardId }: { standardId?: string | null }) {
+  const principle = standardById(standardId);
+  if (principle === undefined) return null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-moss/15 px-2 py-0.5 text-[11px] font-medium text-moss">
+      <ShieldCheck className="size-3" />
+      {principle.title}
+    </span>
+  );
+}
 
 export function Admin() {
   const { user } = useAuth();
@@ -239,6 +254,7 @@ function TicketsPanel() {
     message: string;
     status: "open" | "in_review" | "resolved";
     violation?: string | null;
+    standardId?: string | null;
     user: { username?: string | null; name?: string | null } | null;
     post: { _id: string; content?: string } | null;
     offender: { username?: string | null; name?: string | null } | null;
@@ -284,9 +300,15 @@ function TicketsPanel() {
             From <b>@{t.user?.username ?? "unknown"}</b> ·{" "}
             {timeAgo(t._creationTime)}
           </p>
-          {t.violation ? (
-            <p className="mt-2 text-sm">
-              <span className="font-semibold">Violation:</span> {t.violation}
+          {t.standardId || t.violation ? (
+            <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-semibold">
+                {t.standardId ? "Cited principle:" : "Violation:"}
+              </span>
+              <StandardChip standardId={t.standardId} />
+              {!t.standardId && t.violation ? (
+                <span className="text-muted-foreground">{t.violation}</span>
+              ) : null}
             </p>
           ) : null}
           {t.offender ? (
@@ -369,13 +391,27 @@ function PostsPanel() {
     author: { username?: string | null; name?: string | null } | null;
   }[];
 
-  const remove = async (postId: string) => {
-    if (!window.confirm("Remove this post from the platform?")) return;
+  const [pendingRemove, setPendingRemove] = useState<{
+    postId: string;
+    author: string | null;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const confirmRemove = async (standardId: string, note: string) => {
+    if (pendingRemove === null) return;
+    setBusy(true);
     try {
-      await moderatePost({ postId: postId as Id<"posts"> });
+      await moderatePost({
+        postId: pendingRemove.postId as Id<"posts">,
+        standardId,
+        note,
+      });
       toast.success("Post removed.");
+      setPendingRemove(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not remove.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -416,7 +452,9 @@ function PostsPanel() {
               variant="ghost"
               size="icon"
               className="text-destructive"
-              onClick={() => void remove(p._id)}
+              onClick={() =>
+                setPendingRemove({ postId: p._id, author: p.author?.username ?? null })
+              }
               aria-label="Remove post"
             >
               <Trash2 className="size-4" />
@@ -427,6 +465,21 @@ function PostsPanel() {
       <div ref={ref} className="py-2 text-center text-sm text-muted-foreground">
         {status === "LoadingMore" ? "Loading more…" : ""}
       </div>
+      <StandardViolationDialog
+        open={pendingRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemove(null);
+        }}
+        title="Remove this post"
+        description={
+          pendingRemove
+            ? `Removing @${pendingRemove.author ?? "unknown"}'s post — cite the PureWire Standard principle it violates.`
+            : ""
+        }
+        confirmLabel="Remove post"
+        busy={busy}
+        onConfirm={(standardId, note) => void confirmRemove(standardId, note)}
+      />
     </div>
   );
 }
@@ -466,6 +519,8 @@ function SecurityPanel() {
     riskReasons?: string[] | null;
     shadowban?: boolean | null;
     silentFlags?: number | null;
+    moderationStandardId?: string | null;
+    moderationNote?: string | null;
   }[];
 
   const setStatus = async (userId: string, accountStatus: string) => {
@@ -477,6 +532,52 @@ function SecurityPanel() {
       toast.success(`Account ${accountStatus}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update.");
+    }
+  };
+
+  const [pendingAction, setPendingAction] = useState<{
+    userId: string;
+    kind: "restrict" | "ban" | "silence";
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Unsilencing is a restore (no citation needed); silencing opens the
+  // Standard citation dialog.
+  const handleSilence = (userId: string, shadowban: boolean | null | undefined) => {
+    if (shadowban) {
+      void setShadowban({ userId: userId as Id<"users">, shadowban: false });
+    } else {
+      setPendingAction({ userId, kind: "silence" });
+    }
+  };
+
+  const confirmAction = async (standardId: string, note: string) => {
+    if (pendingAction === null) return;
+    const { userId, kind } = pendingAction;
+    setBusy(true);
+    try {
+      if (kind === "silence") {
+        await setShadowban({
+          userId: userId as Id<"users">,
+          shadowban: true,
+          standardId,
+          note,
+        });
+        toast.success("Account silenced.");
+      } else {
+        await setAccountStatus({
+          userId: userId as Id<"users">,
+          status: kind === "restrict" ? "restricted" : "banned",
+          standardId,
+          note,
+        });
+        toast.success(kind === "restrict" ? "Account restricted." : "Account banned.");
+      }
+      setPendingAction(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -521,6 +622,19 @@ function SecurityPanel() {
                   ))}
                 </p>
               ) : null}
+              {u.moderationStandardId ? (
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  <StandardChip standardId={u.moderationStandardId} />
+                  {u.moderationNote ? (
+                    <span
+                      className="max-w-full truncate text-[11px] text-muted-foreground"
+                      title={u.moderationNote}
+                    >
+                      — {u.moderationNote}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -544,7 +658,7 @@ function SecurityPanel() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void setShadowban({ userId: u._id as Id<"users">, shadowban: !u.shadowban })}
+              onClick={() => void handleSilence(u._id, u.shadowban)}
               title={
                 u.shadowban
                   ? "Restore their content to the public feed"
@@ -557,7 +671,7 @@ function SecurityPanel() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void setStatus(u._id, "restricted")}
+              onClick={() => setPendingAction({ userId: u._id, kind: "restrict" })}
             >
               <ShieldAlert className="size-4" />
               Restrict
@@ -566,7 +680,7 @@ function SecurityPanel() {
               variant="ghost"
               size="sm"
               className="text-destructive"
-              onClick={() => void setStatus(u._id, "banned")}
+              onClick={() => setPendingAction({ userId: u._id, kind: "ban" })}
             >
               <Ban className="size-4" />
               Ban
@@ -577,6 +691,33 @@ function SecurityPanel() {
       <div ref={ref} className="py-2 text-center text-sm text-muted-foreground">
         {status === "LoadingMore" ? "Loading more…" : ""}
       </div>
+      <StandardViolationDialog
+        open={pendingAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingAction(null);
+        }}
+        title={
+          pendingAction?.kind === "silence"
+            ? "Silence this account"
+            : pendingAction?.kind === "restrict"
+              ? "Restrict this account"
+              : "Ban this account"
+        }
+        description={
+          pendingAction
+            ? "Cite the PureWire Standard principle this account violated — the citation is recorded on its moderation trail."
+            : ""
+        }
+        confirmLabel={
+          pendingAction?.kind === "silence"
+            ? "Silence account"
+            : pendingAction?.kind === "restrict"
+              ? "Restrict account"
+              : "Ban account"
+        }
+        busy={busy}
+        onConfirm={(standardId, note) => void confirmAction(standardId, note)}
+      />
     </div>
   );
 }
@@ -613,13 +754,27 @@ function AiReviewPanel() {
     }
   };
 
-  const remove = async (postId: string) => {
-    if (!window.confirm("Remove this post from the platform?")) return;
+  const [pendingRemove, setPendingRemove] = useState<{
+    postId: string;
+    author: string | null;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const confirmRemove = async (standardId: string, note: string) => {
+    if (pendingRemove === null) return;
+    setBusy(true);
     try {
-      await moderatePost({ postId: postId as Id<"posts"> });
+      await moderatePost({
+        postId: pendingRemove.postId as Id<"posts">,
+        standardId,
+        note,
+      });
       toast.success("Post removed.");
+      setPendingRemove(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not remove.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -670,7 +825,9 @@ function AiReviewPanel() {
               variant="ghost"
               size="icon"
               className="text-destructive"
-              onClick={() => void remove(p._id)}
+              onClick={() =>
+                setPendingRemove({ postId: p._id, author: p.author?.username ?? null })
+              }
               aria-label="Remove post"
             >
               <Trash2 className="size-4" />
@@ -681,6 +838,21 @@ function AiReviewPanel() {
       <div ref={ref} className="py-2 text-center text-sm text-muted-foreground">
         {status === "LoadingMore" ? "Loading more…" : ""}
       </div>
+      <StandardViolationDialog
+        open={pendingRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemove(null);
+        }}
+        title="Remove this post"
+        description={
+          pendingRemove
+            ? `Removing @${pendingRemove.author ?? "unknown"}'s post — cite the PureWire Standard principle it violates.`
+            : ""
+        }
+        confirmLabel="Remove post"
+        busy={busy}
+        onConfirm={(standardId, note) => void confirmRemove(standardId, note)}
+      />
     </div>
   );
 }

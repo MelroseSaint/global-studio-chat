@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { isStandardId } from "@/lib/standard";
+
 import { publicUser } from "./privacy";
 
 import { mutation, query } from "./_generated/server";
@@ -14,6 +16,7 @@ export const createTicket = mutation({
     postId: v.optional(v.id("posts")),
     offenderId: v.optional(v.id("users")),
     violation: v.optional(v.string()),
+    standardId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -23,6 +26,10 @@ export const createTicket = mutation({
     if (args.subject.trim().length === 0 || args.message.trim().length === 0) {
       throw new Error("Subject and message are required.");
     }
+    // A report/ticket can only cite a real PureWire Standard principle.
+    if (args.standardId !== undefined && !isStandardId(args.standardId)) {
+      throw new Error("That isn't a principle of the PureWire Standard.");
+    }
     return await ctx.db.insert("supportTickets", {
       userId,
       subject: args.subject.trim(),
@@ -30,6 +37,7 @@ export const createTicket = mutation({
       postId: args.postId,
       offenderId: args.offenderId,
       violation: args.violation,
+      standardId: args.standardId,
       status: "open",
     });
   },

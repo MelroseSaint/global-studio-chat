@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { isStandardId } from "@/lib/standard";
+
 import { publicUser } from "./privacy";
 
 import { mutation, query, type QueryCtx } from "./_generated/server";
@@ -142,16 +144,36 @@ export const listRecentPosts = query({
 });
 
 export const moderatePost = mutation({
-  args: { postId: v.id("posts") },
-  handler: async (ctx, { postId }) => {
+  args: {
+    postId: v.id("posts"),
+    // The PureWire Standard principle the removal cites, recorded on the
+    // author's moderation trail so the action names the rule.
+    standardId: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, { postId, standardId, note }) => {
     await requireAdmin(ctx);
+    if (standardId !== undefined && !isStandardId(standardId)) {
+      throw new Error("That isn't a principle of the PureWire Standard.");
+    }
     const post = await ctx.db.get(postId);
     if (post !== null) {
       const author = await ctx.db.get(post.authorId);
       if (author !== null) {
-        await ctx.db.patch(author._id, {
+        const patch: {
+          postsCount: number;
+          moderationStandardId?: string;
+          moderationNote?: string;
+        } = {
           postsCount: Math.max(0, (author.postsCount ?? 0) - 1),
-        });
+        };
+        if (standardId !== undefined) {
+          patch.moderationStandardId = standardId;
+        }
+        if (note !== undefined && note.trim().length > 0) {
+          patch.moderationNote = note.trim();
+        }
+        await ctx.db.patch(author._id, patch);
       }
       await ctx.db.delete(postId);
     }

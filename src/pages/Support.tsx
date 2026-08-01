@@ -30,8 +30,16 @@ import {
 } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { timeAgo } from "@/lib/format";
+import { standardById, STANDARD_PRINCIPLES } from "@/lib/standard";
 
 const FAQS = [
   {
@@ -113,6 +121,7 @@ export function Support() {
 
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
+  const [standardId, setStandardId] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -133,13 +142,18 @@ export function Support() {
     if (!subject.trim() || !message.trim() || submitting) return;
     setSubmitting(true);
     try {
+      const principle = standardId ? standardById(standardId) : undefined;
       await createTicket({
         subject: subject.trim(),
         message: message.trim(),
+        ...(principle !== undefined
+          ? { violation: principle.title, standardId: principle.id }
+          : {}),
       });
       toast.success("Ticket submitted. We'll get back to you.");
       setSubject("");
       setMessage("");
+      setStandardId("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not submit.");
     } finally {
@@ -232,6 +246,23 @@ export function Support() {
               rows={5}
               maxLength={2000}
             />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="standard">
+              Related Standard principle (optional)
+            </Label>
+            <Select value={standardId} onValueChange={setStandardId}>
+              <SelectTrigger id="standard">
+                <SelectValue placeholder="Choose a principle if this relates to one" />
+              </SelectTrigger>
+              <SelectContent>
+                {STANDARD_PRINCIPLES.map((p, i) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {i + 1}. {p.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Button
             className="self-end gap-1.5"

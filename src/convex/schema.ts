@@ -53,6 +53,11 @@ const schema = defineSchema({
     shadowban: v.optional(v.boolean()),
     silentFlags: v.optional(v.number()),
     silentFlagsUpdatedAt: v.optional(v.number()),
+    // Moderation trail: the PureWire Standard principle an admin action
+    // cited (and an optional note), so every restriction, ban, or silence
+    // references a stated rule.
+    moderationStandardId: v.optional(v.string()),
+    moderationNote: v.optional(v.string()),
   })
     // Keep auth's original index names — the auth library queries these.
     .index("email", ["email"])
@@ -164,6 +169,8 @@ const schema = defineSchema({
     postId: v.optional(v.id("posts")),
     offenderId: v.optional(v.id("users")),
     violation: v.optional(v.string()),
+    // The PureWire Standard principle the report or ticket cites.
+    standardId: v.optional(v.string()),
     status: v.union(v.literal("open"), v.literal("in_review"), v.literal("resolved")),
     reply: v.optional(v.string()),
   })
