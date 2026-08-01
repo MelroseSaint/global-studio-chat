@@ -40,6 +40,41 @@ export const ACCOUNT_STATUS = v.union(
   v.literal("banned"),
 );
 
+/**
+ * Human-only bot check: verifies a Cloudflare Turnstile token server-side.
+ *
+ * Paired with the email trigger so only a real browser operated by a human
+ * can request a verification code. The client renders the Turnstile widget
+ * only when VITE_TURNSTILE_SITE_KEY is set; the secret key here comes from
+ * Convex env (TURNSTILE_SECRET_KEY). When the secret is not configured the
+ * check is reported as disabled rather than failing — signups still run
+ * through email normalization, risk scoring, and rate limits.
+ */
+export const verifyBotChallenge = mutation({
+  args: { token: v.string() },
+  handler: async (_ctx, { token }) => {
+    const secret = process.env.TURNSTILE_SECRET_KEY;
+    if (!secret) {
+      return { ok: true, enabled: false };
+    }
+    const res = await fetch(
+      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret, response: token }),
+      },
+    );
+    const data = (await res.json()) as { success?: boolean };
+    if (data.success !== true) {
+      throw new Error(
+        "We couldn't confirm you're a person. Try again or contact Support.",
+      );
+    }
+    return { ok: true, enabled: true };
+  },
+});
+
 /** Domains used almost exclusively for throwaway bot signups. */
 const DISPOSABLE_DOMAINS = new Set([
   "mailinator.com",

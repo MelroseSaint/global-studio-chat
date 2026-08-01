@@ -1,8 +1,12 @@
 import { convexAuth } from "@convex-dev/auth/server";
 import { Password } from "@convex-dev/auth/providers/Password";
 
+import { normalizeEmailIdentity } from "@/lib/format";
+
 import { sha256Hex } from "./privacy";
 import { computeRiskScore } from "./security";
+
+import type { MutationCtx } from "./_generated/server";
 
 import { EmailVerification, PasswordReset } from "./auth/email";
 
@@ -16,7 +20,9 @@ interface ProfileParams {
 
 /** Build a PureWire user profile from sign-in parameters. */
 function buildProfile(params: ProfileParams) {
-  const email = String(params.email ?? "").toLowerCase().trim();
+  // Identity is decided on the canonical email: Gmail/Outlook spell the
+  // same inbox in many ways (dots, +tags), and one inbox gets one badge.
+  const email = normalizeEmailIdentity(String(params.email ?? ""));
   const username =
     String(params.username ?? "")
       .toLowerCase()
@@ -64,9 +70,38 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       }
       // Privacy: the user record carries only a SHA-256 hash of the email,
       // never plain-text. Existing accounts get backfilled on their next
-      // update through the auth library.
-      if (user.email !== undefined && user.emailHash === undefined) {
-        await ctx.db.patch(userId, { emailHash: await sha256Hex(user.email) });
+      // update through the auth library. The hash is computed from the
+      // canonical identity so user@gmail.com, u.ser@gmail.com, and
+      // user+spam1@gmail.com all resolve to one inbox — and one badge.
+      const canonicalEmail = user.email !== undefined
+        ? normalizeEmailIdentity(user.email)
+        : undefined;
+      // Backfill: converge pre-canonicalization rows to the canonical stored
+      // address so the dedupe below can never be bypassed by an old account
+      // holding a dot/plus variant.
+      if (
+        canonicalEmail !== undefined &&
+        user.email !== undefined &&
+        user.email !== canonicalEmail
+      ) {
+        await ctx.db.patch(userId, { email: canonicalEmail });
+      }
+      if (canonicalEmail !== undefined && user.emailHash === undefined) {
+        // One inbox can only ever claim one verified badge: if another
+        // account already owns this canonical identity, reject the signup.
+        // (The auth callback ctx is typed with the library's generic data
+        // model, so cast to the project's generated ctx for the email index.)
+        const typed = ctx as unknown as MutationCtx;
+        const existing = await typed.db
+          .query("users")
+          .withIndex("email", (q) => q.eq("email", canonicalEmail))
+          .first();
+        if (existing !== null && existing._id !== userId) {
+          throw new Error(
+            "An account with this email already exists. One inbox gets one badge.",
+          );
+        }
+        await ctx.db.patch(userId, { emailHash: await sha256Hex(canonicalEmail) });
       }
       // The moment the one-time email code is redeemed, the account is
       // verified — attach the verified badge token right away. The auth

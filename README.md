@@ -61,4 +61,28 @@ else's freedom away.
   (accent).
 - **Slogan** — *Say it anyway.*
 
+## Bot & identity defenses
+
+PureWire stops inbox-abuse at signup with two layered defenses:
+
+- **One inbox = one badge.** Email identity is canonicalized before it is
+  hashed — Gmail/Googlemail dots and `+tag` sub-addressing are stripped, so
+  `user@gmail.com`, `u.ser@gmail.com`, and `user+spam1@gmail.com` all resolve
+  to the same inbox and can only ever claim one verified account badge.
+- **Human-only email triggers.** Sign-up, sign-in, forgot-password, and
+  password-reset flows run through a Cloudflare Turnstile check when it is
+  configured. To enable:
+  1. Create a free Turnstile widget at
+     https://dash.cloudflare.com/?to=/:account/turnstile (one site key + one
+     secret key).
+  2. Add the **site key** to the deploy environment as `VITE_TURNSTILE_SITE_KEY`
+     (in `.env.production` or your Vercel env).
+  3. Add the **secret key** to Convex env — never to the repo:
+     `npx convex env set TURNSTILE_SECRET_KEY <secret-key>`
+
+  Until the site key is set the widget is not loaded and signups are still
+  protected by email normalization, signup risk scoring, and per-account rate
+  limits. With the keys set, the widget renders on the auth forms and the
+  server verifies each token before any verification or reset email is sent.
+
 © PureWire. Say it anyway — no ads, ever.

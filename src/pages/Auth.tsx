@@ -1,3 +1,4 @@
+import { useMutation } from "convex/react";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -14,6 +15,8 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
+import { api } from "@/convex/_generated/api";
+import { Turnstile } from "@/components/Turnstile";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -26,12 +29,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
-import { isValidUsername } from "@/lib/format";
+import { isValidUsername, normalizeEmailIdentity } from "@/lib/format";
+
+const TURNSTILE_SITE_KEY =
+  (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) ?? "";
 
 type Step = "signin" | "signup" | "verify" | "forgot" | "reset";
 
 export function Auth() {
   const { isLoading, isAuthenticated, signIn } = useAuth();
+  const verifyBotChallenge = useMutation(api.security.verifyBotChallenge);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -46,6 +53,44 @@ export function Auth() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [botToken, setBotToken] = useState<string | null>(null);
+  const [botFailed, setBotFailed] = useState(false);
+
+  /**
+   * Human-only gate: every flow that triggers an email (signup, sign-in,
+   * forgot, reset) must pass the Turnstile check when a site key is
+   * configured. When the challenge is disabled (no key set), this is a no-op
+   * so the platform keeps working until keys are added.
+   */
+  const gateBot = async (): Promise<boolean> => {
+    if (!TURNSTILE_SITE_KEY) {
+      return true;
+    }
+    if (!botToken) {
+      setBotFailed(true);
+      setError("Please complete the security check first.");
+      return false;
+    }
+    try {
+      const result = await verifyBotChallenge({ token: botToken });
+      // Fail closed on a partial setup: if the widget is shown (site key
+      // configured) but the server has no secret key, the challenge reports
+      // disabled — a silent pass would turn the defense off. Surface it.
+      if (!result.ok || (TURNSTILE_SITE_KEY && !result.enabled)) {
+        setBotFailed(true);
+        setError(
+          result.enabled === false
+            ? "The security check isn't configured yet. Please try again later."
+            : "The security check didn't pass. Please try again.",
+        );
+        return false;
+      }
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Security check failed.");
+      return false;
+    }
+  };
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
@@ -61,15 +106,18 @@ export function Auth() {
     setStep(s);
     setError(null);
     setCode("");
+    setBotToken(null);
+    setBotFailed(false);
   };
 
   const submitSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (!(await gateBot())) return;
     setSubmitting(true);
     try {
       const result = await signIn("password", {
-        email: email.trim(),
+        email: normalizeEmailIdentity(email),
         password,
         flow: "signIn",
       });
@@ -96,10 +144,11 @@ export function Auth() {
       setError("Password must be at least 8 characters.");
       return;
     }
+    if (!(await gateBot())) return;
     setSubmitting(true);
     try {
       const result = await signIn("password", {
-        email: email.trim(),
+        email: normalizeEmailIdentity(email),
         password,
         username,
         name,
@@ -121,7 +170,7 @@ export function Auth() {
     setSubmitting(true);
     try {
       await signIn("password", {
-        email: email.trim(),
+        email: normalizeEmailIdentity(email),
         code,
         flow: "email-verification",
       });
@@ -135,10 +184,11 @@ export function Auth() {
   const submitForgot = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (!(await gateBot())) return;
     setSubmitting(true);
     try {
       await signIn("password", {
-        email: email.trim(),
+        email: normalizeEmailIdentity(email),
         flow: "reset",
       });
       setStep("reset");
@@ -157,10 +207,11 @@ export function Auth() {
       setError("Password must be at least 8 characters.");
       return;
     }
+    if (!(await gateBot())) return;
     setSubmitting(true);
     try {
       await signIn("password", {
-        email: email.trim(),
+        email: normalizeEmailIdentity(email),
         code,
         newPassword: password,
         flow: "reset-verification",
@@ -341,6 +392,20 @@ export function Auth() {
                       )}
                     </div>
 
+                    {TURNSTILE_SITE_KEY ? (
+                      <div className="flex flex-col gap-1">
+                        <Turnstile
+                          onToken={setBotToken}
+                          onError={() => setBotFailed(true)}
+                        />
+                        {botFailed && !botToken ? (
+                          <p className="text-xs text-destructive">
+                            Complete the security check to continue.
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+
                     <Button type="submit" size="lg" disabled={submitting}>
                       {submitting ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -416,6 +481,12 @@ export function Auth() {
                       onChange={(e) => setEmail(e.target.value)}
                     />
                   </div>
+                  {TURNSTILE_SITE_KEY ? (
+                    <Turnstile
+                      onToken={setBotToken}
+                      onError={() => setBotFailed(true)}
+                    />
+                  ) : null}
                   <Button type="submit" size="lg" disabled={submitting}>
                     {submitting ? (
                       <Loader2 className="size-4 animate-spin" />
@@ -464,6 +535,12 @@ export function Auth() {
                       onChange={(e) => setPassword(e.target.value)}
                     />
                   </div>
+                  {TURNSTILE_SITE_KEY ? (
+                    <Turnstile
+                      onToken={setBotToken}
+                      onError={() => setBotFailed(true)}
+                    />
+                  ) : null}
                   <Button
                     type="submit"
                     size="lg"
