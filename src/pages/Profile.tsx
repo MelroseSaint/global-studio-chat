@@ -214,8 +214,8 @@ export function Profile() {
         {posts.length === 0 && status !== "LoadingFirstPage" ? (
           <p className="p-8 text-center text-sm text-muted-foreground">
             {profile.isSelf
-              ? "You haven't posted anything yet. Share something!"
-              : "No posts yet."}
+              ? "This is your space — say it anyway."
+              : "Nothing here yet. An open space."}
           </p>
         ) : (
           posts.map((post, i) => (

@@ -105,7 +105,7 @@ export function Notifications() {
           </>
         );
       case "system":
-        return <>{n.message ?? "System update"}</>;
+        return <>{n.message ?? "Update from PureWire"}</>;
     }
   };
 
@@ -115,7 +115,7 @@ export function Notifications() {
         <div>
           <h1 className="text-xl font-bold tracking-tight">Notifications</h1>
           <p className="text-sm text-muted-foreground">
-            Likes, comments, follows and more.
+            When someone responds to your words, it lands here.
           </p>
         </div>
         <Button
@@ -142,7 +142,7 @@ export function Notifications() {
           <Empty
             icon={Bell}
             title="You're all caught up"
-            description="When people interact with you, it shows up here."
+            description="When someone reacts to your words, it shows up here."
           />
         </div>
       )}

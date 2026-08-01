@@ -100,7 +100,7 @@ function AdminDashboard() {
           Admin dashboard
         </h1>
         <p className="text-sm text-muted-foreground">
-          Platform controls — users, verification, reports and content.
+          Guardians of the Standard — users, verification, reports and content.
         </p>
       </div>
 

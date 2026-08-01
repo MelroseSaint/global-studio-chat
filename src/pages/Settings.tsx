@@ -118,7 +118,7 @@ function SettingsForm({ user }: { user: Profile }) {
       <div>
         <h1 className="text-xl font-bold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Customize your profile and how others see you on PureWire.
+          Make your space yours — your name, your look, your links, your call.
         </p>
       </div>
 
@@ -126,7 +126,7 @@ function SettingsForm({ user }: { user: Profile }) {
         <CardHeader>
           <CardTitle className="text-base">Photo & banner</CardTitle>
           <CardDescription>
-            Upload your own photos — no link needed.
+            Upload real images — no URL strings, no middlemen.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
@@ -222,7 +222,7 @@ function SettingsForm({ user }: { user: Profile }) {
               id="bio"
               value={bio}
               onChange={(e) => setBio(e.target.value)}
-              placeholder="Tell people about yourself…"
+              placeholder="Say it anyway — introduce yourself…"
               rows={3}
               maxLength={200}
             />
