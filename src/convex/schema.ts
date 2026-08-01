@@ -53,6 +53,11 @@ const schema = defineSchema({
     shadowban: v.optional(v.boolean()),
     silentFlags: v.optional(v.number()),
     silentFlagsUpdatedAt: v.optional(v.number()),
+    // Lifetime total of silent-flag points ever escalated — unlike
+    // silentFlags (which decays after a week of clean behavior), this
+    // counter never resets, so admins can see an account's whole quiet
+    // history in the Silenced tab even after points have decayed away.
+    lifetimeSilentFlags: v.optional(v.number()),
     // Farm-network churn: when a follow was last undone inside the churn
     // window. Lets the churn detector escalate at most once per window so a
     // real user cleaning up mis-clicks counts once, not per unfollow.
@@ -223,6 +228,14 @@ const schema = defineSchema({
   })
     .index("by_user_action", ["userId", "action"])
     .index("by_window", ["windowStart"]),
+  // Trust & safety: every silent-flag escalation, with the reason and
+  // points, so admins can see why an account was quietly silenced and how
+  // often. Appended by escalateSilently; read by the Silenced admin tab.
+  silentFlagEvents: defineTable({
+    userId: v.id("users"),
+    reason: v.string(),
+    points: v.number(),
+  }).index("by_user", ["userId"]),
 });
 
 export default schema;

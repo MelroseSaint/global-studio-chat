@@ -171,7 +171,7 @@ export const createPost = mutation({
         // it toward a quiet shadowban. Your own recent re-posts are a gentle
         // nudge, never an escalation.
         if (blocked.kind === "stolen") {
-          await escalateSilently(ctx, userId, 3);
+          await escalateSilently(ctx, userId, 3, "duplicate");
         }
         throw new Error(
           blocked.kind === "stolen"
@@ -205,7 +205,7 @@ export const createPost = mutation({
     if (needsReview) {
       // Repeated suspicious content moves an account toward a quiet
       // shadowban instead of an abrupt ban.
-      await escalateSilently(ctx, userId, 2);
+      await escalateSilently(ctx, userId, 2, "ai");
     }
     const postId = await ctx.db.insert("posts", {
       authorId: userId,

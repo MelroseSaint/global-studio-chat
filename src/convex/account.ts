@@ -16,8 +16,9 @@ import type { Id } from "./_generated/dataModel";
  *
  * The right to erasure is absolute: `deleteAccount` permanently removes a
  * user and every trace of them — profile, posts, comments, likes, shares,
- * stories, follows, notifications, tickets, blocks, rate-limit rows, auth
- * sessions and accounts, and every file they uploaded. No soft-delete,
+ * stories, follows, notifications, tickets, blocks, rate-limit rows,
+ * silent-flag events, auth sessions and accounts, and every file they
+ * uploaded. No soft-delete,
  * no copy kept anywhere. Counts on other people's posts and profiles are
  * recomputed from the surviving rows, so erased data never leaves a drift.
  */
@@ -36,7 +37,8 @@ type ErasableId =
   | Id<"supportTickets">
   | Id<"blocks">
   | Id<"rateLimits">
-  | Id<"authRateLimits">;
+  | Id<"authRateLimits">
+  | Id<"silentFlagEvents">;
 
 interface ErasableRow {
   id: ErasableId;
@@ -356,6 +358,20 @@ export const deleteAccount = mutation({
       },
       async (c, { id }) => {
         await c.db.delete(id as Id<"rateLimits">);
+      },
+    );
+    // Silent-flag events (the quiet-moderation log) die with the account.
+    await sweep(
+      ctx,
+      async (c) => {
+        const rows = await c.db
+          .query("silentFlagEvents")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .take(SWEEP);
+        return rows.map((r) => ({ id: r._id }));
+      },
+      async (c, { id }) => {
+        await c.db.delete(id as Id<"silentFlagEvents">);
       },
     );
 

@@ -90,7 +90,7 @@ export async function detectReciprocalFollow(
   // fires, so a single burst contributes exactly RECIPROCAL_POINTS no matter
   // how large it is.
   if (mutuals === RECIPROCAL_FREE_MUTUALS + 1) {
-    await escalateSilently(ctx, followerId, RECIPROCAL_POINTS);
+    await escalateSilently(ctx, followerId, RECIPROCAL_POINTS, "farm-reciprocal");
   }
 }
 
@@ -116,5 +116,5 @@ export async function detectFollowChurn(
     return;
   }
   await ctx.db.patch(followerId, { lastFollowChurnAt: Date.now() });
-  await escalateSilently(ctx, followerId, CHURN_POINTS);
+  await escalateSilently(ctx, followerId, CHURN_POINTS, "farm-churn");
 }

@@ -218,7 +218,7 @@ export async function enforceRateLimit(
   if (recent.length >= budget.limit) {
     // Repeatedly blasting past a budget is a bot/farm signal — count it
     // toward a quiet shadowban instead of just blocking the one action.
-    await escalateSilently(ctx, userId, 1);
+    await escalateSilently(ctx, userId, 1, "rate-limit");
     throw new Error(
       "You're moving a little too fast. Slow down and try again in a moment.",
     );
@@ -250,9 +250,24 @@ export async function isSandboxed(
 }
 
 /**
- * Add points to an account's silent-infraction counter. At the threshold
- * the account is quietly shadowbanned — no error, no notice, their content
- * simply stops reaching anyone until an admin lifts it.
+ * Why an account collected silent-flag points. Each reason maps to the
+ * abuse signal that triggered it; the Silenced admin tab breaks a flag
+ * total down by these so a shadowban is never an opaque number.
+ */
+export type SilentFlagReason =
+  | "rate-limit" // breached an activity budget
+  | "duplicate" // reposted stolen/copied content
+  | "ai" // repeated AI-suspicious text or media
+  | "farm-reciprocal" // instant mutual follows (network boosting)
+  | "farm-churn"; // quick follow/unfollow churn
+
+/**
+ * Add points to an account's silent-infraction counter, record why, and
+ * bump the lifetime total. At the threshold the account is quietly
+ * shadowbanned — no error, no notice, their content simply stops reaching
+ * anyone until an admin lifts it. Every escalation is appended to the
+ * silentFlagEvents log so the admin Silenced tab can show history and a
+ * reason breakdown.
  */
 /** Flags older than this no longer count — points decay after clean behavior. */
 const FLAG_DECAY_MS = 7 * 24 * 3600_000;
@@ -261,6 +276,7 @@ export async function escalateSilently(
   ctx: MutationCtx,
   userId: Id<"users">,
   points: number,
+  reason: SilentFlagReason,
 ): Promise<void> {
   const user = await ctx.db.get(userId);
   if (user === null || user.role === "admin" || user.shadowban === true) {
@@ -278,15 +294,22 @@ export async function escalateSilently(
   const patch: {
     silentFlags: number;
     silentFlagsUpdatedAt: number;
+    lifetimeSilentFlags: number;
     shadowban?: boolean;
   } = {
     silentFlags,
     silentFlagsUpdatedAt: now,
+    lifetimeSilentFlags: (user.lifetimeSilentFlags ?? 0) + points,
   };
   if (silentFlags >= SHADOWBAN_THRESHOLD) {
     patch.shadowban = true;
   }
   await ctx.db.patch(userId, patch);
+  await ctx.db.insert("silentFlagEvents", {
+    userId,
+    reason,
+    points,
+  });
 }
 
 /** Throw unless the account is allowed to post/engage. */
@@ -517,8 +540,11 @@ export const listFlaggedAccounts = query({
       throw new Error("Admins only");
     }
     // Only accounts that actually need a decision — suspicious signups,
-    // restricted, banned, and quietly shadowbanned — not every account
-    // that was ever scored.
+    // restricted, and banned — not every account that was ever scored.
+    // Quietly shadowbanned accounts live in the dedicated Silenced tab,
+    // not here, so the two queues stay distinct. (A shadowbanned account
+    // that also carries a real accountStatus still appears here, because
+    // that status genuinely needs Security attention.)
     const result = await ctx.db
       .query("users")
       .filter((q) =>
@@ -526,7 +552,6 @@ export const listFlaggedAccounts = query({
           q.eq(q.field("accountStatus"), "suspicious"),
           q.eq(q.field("accountStatus"), "restricted"),
           q.eq(q.field("accountStatus"), "banned"),
-          q.eq(q.field("shadowban"), true),
         ),
       )
       .order("desc")
@@ -540,6 +565,118 @@ export const listFlaggedAccounts = query({
       })),
     );
     return { ...result, page };
+  },
+});
+
+/**
+ * Admin: accounts quietly shadowbanned by the silent-flag system, newest
+ * first, for the dedicated Silenced tab. Each row carries the current
+ * (decayed) flag total, the lifetime total that never resets, and a reason
+ * breakdown summed from the event log so a shadowban is never an opaque
+ * number. Suspicious/restricted/banned accounts stay in the Security tab.
+ */
+export const listSilencedAccounts = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    const me = await ctx.db.get(userId);
+    if (me?.role !== "admin") {
+      throw new Error("Admins only");
+    }
+    const result = await ctx.db
+      .query("users")
+      .filter((q) => q.eq(q.field("shadowban"), true))
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map(async (u) => {
+        const events = await ctx.db
+          .query("silentFlagEvents")
+          .withIndex("by_user", (q) => q.eq("userId", u._id))
+          .take(200);
+        const breakdown: Record<string, number> = {};
+        for (const event of events) {
+          breakdown[event.reason] = (breakdown[event.reason] ?? 0) + event.points;
+        }
+        return {
+          ...publicUser(u),
+          avatarUrl: u.avatarStorageId
+            ? await ctx.storage.getUrl(u.avatarStorageId)
+            : null,
+          silentFlags: u.silentFlags ?? 0,
+          lifetimeSilentFlags: u.lifetimeSilentFlags ?? 0,
+          silentEventCount: events.length,
+          breakdown,
+        };
+      }),
+    );
+    return { ...result, page };
+  },
+});
+
+/**
+ * Admin: a single account's full silent-flag history — every escalation
+ * with its reason, points, and timestamp, plus the lifetime total and the
+ * reason breakdown. Powers the expandable history in the Silenced tab.
+ */
+export const silentFlagHistory = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const adminId = await getAuthUserId(ctx);
+    if (adminId === null) {
+      throw new Error("Not authenticated");
+    }
+    const me = await ctx.db.get(adminId);
+    if (me?.role !== "admin") {
+      throw new Error("Admins only");
+    }
+    const user = await ctx.db.get(userId);
+    if (user === null) {
+      return null;
+    }
+    const events = await ctx.db
+      .query("silentFlagEvents")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .take(200);
+    const breakdown: Record<string, number> = {};
+    for (const event of events) {
+      breakdown[event.reason] = (breakdown[event.reason] ?? 0) + event.points;
+    }
+    return {
+      silentFlags: user.silentFlags ?? 0,
+      lifetimeSilentFlags: user.lifetimeSilentFlags ?? 0,
+      breakdown,
+      events: events
+        .sort((a, b) => b._creationTime - a._creationTime)
+        .map((e) => ({
+          reason: e.reason,
+          points: e.points,
+          createdAt: e._creationTime,
+        })),
+    };
+  },
+});
+
+/** Admin: quietly unsilence a batch of accounts in one action. */
+export const bulkUnsilence = mutation({
+  args: { userIds: v.array(v.id("users")) },
+  handler: async (ctx, { userIds }) => {
+    const adminId = await getAuthUserId(ctx);
+    if (adminId === null) {
+      throw new Error("Not authenticated");
+    }
+    const admin = await ctx.db.get(adminId);
+    if (admin?.role !== "admin") {
+      throw new Error("Admins only");
+    }
+    // Cap the batch so a large selection can't blow a single mutation's
+    // write budget — each restore can reconcile up to 100 phantom follows.
+    for (const userId of userIds.slice(0, 50)) {
+      await unsilenceAccount(ctx, userId);
+    }
   },
 });
 
@@ -633,38 +770,57 @@ export const setShadowban = mutation({
     if (user.role === "admin") {
       throw new Error("Cannot change an admin account");
     }
-    const patch: {
-      shadowban: boolean;
-      moderationStandardId?: string;
-      moderationNote?: string;
-    } = { shadowban };
-    if (shadowban && standardId !== undefined) {
-      patch.moderationStandardId = standardId;
-    }
-    if (shadowban && note !== undefined && note.trim().length > 0) {
-      patch.moderationNote = note.trim();
-    }
-    await ctx.db.patch(userId, patch);
-    // Unsilencing restores an account fully: reconcile the follow counts so
-    // phantom follows made while silenced are counted once, forever.
-    if (shadowban === false && user.shadowban === true) {
-      // Cap the reconcile so a prolific phantom follower can't blow up a
-      // single mutation's write budget.
-      const phantomFollows = await ctx.db
-        .query("follows")
-        .withIndex("by_follower", (q) => q.eq("followerId", userId))
-        .take(100);
-      for (const follow of phantomFollows) {
-        const target = await ctx.db.get(follow.followingId);
-        if (target !== null) {
-          await ctx.db.patch(target._id, {
-            followersCount: (target.followersCount ?? 0) + 1,
-          });
-        }
+    if (shadowban) {
+      const patch: {
+        shadowban: boolean;
+        moderationStandardId?: string;
+        moderationNote?: string;
+      } = { shadowban: true };
+      if (standardId !== undefined) {
+        patch.moderationStandardId = standardId;
       }
-      await ctx.db.patch(userId, {
-        followingCount: (user.followingCount ?? 0) + phantomFollows.length,
-      });
+      if (note !== undefined && note.trim().length > 0) {
+        patch.moderationNote = note.trim();
+      }
+      await ctx.db.patch(userId, patch);
+    } else {
+      // Unsilencing restores an account fully: reconcile the follow counts
+      // so phantom follows made while silenced are counted once, forever.
+      await unsilenceAccount(ctx, userId);
     }
   },
 });
+
+/**
+ * Restore a silently silenced account to the public surface and reconcile
+ * the follow counts for phantom follows made while silenced — capped so a
+ * prolific phantom follower can't blow up a single mutation's write budget.
+ */
+async function unsilenceAccount(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+): Promise<void> {
+  const user = await ctx.db.get(userId);
+  if (user === null || user.role === "admin") {
+    return;
+  }
+  await ctx.db.patch(userId, { shadowban: false });
+  if (user.shadowban !== true) {
+    return;
+  }
+  const phantomFollows = await ctx.db
+    .query("follows")
+    .withIndex("by_follower", (q) => q.eq("followerId", userId))
+    .take(100);
+  for (const follow of phantomFollows) {
+    const target = await ctx.db.get(follow.followingId);
+    if (target !== null) {
+      await ctx.db.patch(target._id, {
+        followersCount: (target.followersCount ?? 0) + 1,
+      });
+    }
+  }
+  await ctx.db.patch(userId, {
+    followingCount: (user.followingCount ?? 0) + phantomFollows.length,
+  });
+}

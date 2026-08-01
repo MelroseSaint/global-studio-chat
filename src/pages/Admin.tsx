@@ -3,9 +3,12 @@ import { motion } from "framer-motion";
 import {
   Ban,
   CheckCheck,
+  ChevronDown,
+  ChevronUp,
   EyeOff,
   Flag,
   Heart,
+  History,
   Image as ImageIcon,
   MessageCircle,
   MessagesSquare,
@@ -13,7 +16,9 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Square,
   Trash2,
+  Unlock,
   UserCheck,
   Users,
 } from "lucide-react";
@@ -121,12 +126,13 @@ function AdminDashboard() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-6">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>
           <TabsTrigger value="aiReview">AI review</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="silenced">Silenced</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -135,6 +141,7 @@ function AdminDashboard() {
       {tab === "posts" && <PostsPanel />}
       {tab === "aiReview" && <AiReviewPanel />}
       {tab === "security" && <SecurityPanel />}
+      {tab === "silenced" && <SilencedPanel />}
     </div>
   );
 }
@@ -718,6 +725,327 @@ function SecurityPanel() {
         busy={busy}
         onConfirm={(standardId, note) => void confirmAction(standardId, note)}
       />
+    </div>
+  );
+}
+
+/** Human labels for the silent-flag reasons, in the order admins should read them. */
+const REASON_LABELS: Record<string, { label: string; cls: string }> = {
+  duplicate: {
+    label: "Copied content",
+    cls: "bg-destructive/10 text-destructive",
+  },
+  ai: {
+    label: "AI-suspicious",
+    cls: "bg-oxide/10 text-oxide dark:text-oxide-light",
+  },
+  "rate-limit": {
+    label: "Rate limits",
+    cls: "bg-muted text-muted-foreground",
+  },
+  "farm-reciprocal": {
+    label: "Instant mutual follows",
+    cls: "bg-moss/10 text-moss",
+  },
+  "farm-churn": {
+    label: "Follow churn",
+    cls: "bg-moss/10 text-moss",
+  },
+};
+
+/** A single silenced account's flag history, fetched on demand when expanded. */
+function SilencedHistory({ userId }: { userId: string }) {
+  const history = useQuery(api.security.silentFlagHistory, {
+    userId: userId as Id<"users">,
+  });
+  if (history === undefined) {
+    return <Skeleton className="h-24" />;
+  }
+  if (history === null || history.events.length === 0) {
+    return (
+      <p className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+        No silent-flag events on record for this account.
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">
+          Current flags{" "}
+          <b className="text-foreground">{history.silentFlags}</b>
+        </span>
+        <span className="text-muted-foreground">
+          Lifetime{" "}
+          <b className="text-foreground">{history.lifetimeSilentFlags}</b>
+        </span>
+      </div>
+      {history.events.map((event, i) => (
+        <div
+          key={i}
+          className="flex items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5 text-xs"
+        >
+          <span className="flex items-center gap-2">
+            <span
+              className={[
+                "rounded-full px-2 py-0.5 font-medium",
+                REASON_LABELS[event.reason]?.cls ?? "bg-muted text-muted-foreground",
+              ].join(" ")}
+            >
+              {REASON_LABELS[event.reason]?.label ?? event.reason}
+            </span>
+            <span className="text-muted-foreground">
+              {timeAgo(event.createdAt)}
+            </span>
+          </span>
+          <span className="font-semibold">+{event.points}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Silenced tab: quietly shadowbanned accounts, separated from the Security
+ * queue. Shows why each account was silenced (reason breakdown), how many
+ * flags it ever collected (lifetime view), the full event history, and lets
+ * an admin unsilence one or many accounts at once.
+ */
+function SilencedPanel() {
+  const bulkUnsilence = useMutation(api.security.bulkUnsilence);
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.security.listSilencedAccounts,
+    {},
+    { initialNumItems: 15 },
+  );
+  const { ref, inView } = useInView();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (inView && status === "CanLoadMore") {
+      void loadMore(15);
+    }
+  }, [inView, status, loadMore]);
+
+  const accounts = results as unknown as {
+    _id: string;
+    _creationTime: number;
+    name?: string | null;
+    username?: string | null;
+    maskedEmail?: string | null;
+    avatarUrl?: string | null;
+    silentFlags?: number | null;
+    lifetimeSilentFlags?: number | null;
+    silentEventCount?: number | null;
+    breakdown?: Record<string, number> | null;
+    moderationStandardId?: string | null;
+    moderationNote?: string | null;
+  }[];
+
+  const toggle = (userId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) {
+        next.delete(userId);
+      } else {
+        next.add(userId);
+      }
+      return next;
+    });
+  };
+
+  const unsilenceIds = async (ids: string[], label: string) => {
+    if (ids.length === 0 || busy) return;
+    setBusy(true);
+    try {
+      await bulkUnsilence({ userIds: ids as Id<"users">[] });
+      toast.success(label);
+      // Drop the restored accounts from any selection so a bulk button never
+      // counts an account that has already left the silenced list.
+      setSelected((prev) => {
+        if (prev.size === 0) return prev;
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not unsilence.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unsilenceSelected = async () => {
+    await unsilenceIds(
+      [...selected],
+      selected.size === 1
+        ? "Account unsilenced — content is public again."
+        : `${selected.size} accounts unsilenced — content is public again.`,
+    );
+  };
+
+  const unsilenceOne = async (userId: string) => {
+    await unsilenceIds(
+      [userId],
+      "Account unsilenced — content is public again.",
+    );
+  };
+
+  const allSelected =
+    accounts.length > 0 && accounts.every((u) => selected.has(u._id));
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Quietly silenced accounts — their content is invisible to everyone
+          until a human reviews and lifts the silence.
+        </p>
+        {selected.size > 0 ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void unsilenceSelected()}
+            disabled={busy}
+          >
+            <Unlock className="size-4" />
+            Unsilence {selected.size}
+            {selected.size > 1 ? " accounts" : " account"}
+          </Button>
+        ) : null}
+      </div>
+      {status === "LoadingFirstPage" &&
+        Array.from({ length: 2 }).map((_, i) => (
+          <Skeleton key={i} className="h-20" />
+        ))}
+      {accounts.length === 0 && status !== "LoadingFirstPage" && (
+        <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+          No silenced accounts. Accounts are only silenced after repeated
+          abuse signals — no error, no notice, until a human reviews them.
+        </p>
+      )}
+      {accounts.map((u, i) => {
+        const isSelected = selected.has(u._id);
+        const isExpanded = expandedId === u._id;
+        return (
+          <motion.div
+            key={u._id}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: Math.min(i * 0.02, 0.3) }}
+            className={`rounded-xl border p-3 ${
+              isSelected ? "border-oxide/50 bg-oxide/5" : ""
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => toggle(u._id)}
+                  aria-label={isSelected ? "Deselect account" : "Select account"}
+                  className={`flex size-6 shrink-0 items-center justify-center rounded-md border transition-colors ${
+                    isSelected
+                      ? "border-oxide bg-oxide text-white"
+                      : "border-border text-transparent hover:border-oxide/50"
+                  }`}
+                >
+                  {isSelected ? <CheckCheck className="size-4" /> : <Square className="size-3.5" />}
+                </button>
+                <UserAvatar user={u} className="size-10" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">
+                    {u.name || u.username || "Unknown"}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    @{u.username} · {u.maskedEmail} · silenced{" "}
+                    {timeAgo(u._creationTime)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="destructive">
+                  <EyeOff className="mr-1 size-3" />
+                  Silenced
+                </Badge>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void unsilenceOne(u._id)}
+                  disabled={busy}
+                  title="Restore their content to the public feed"
+                >
+                  <Unlock className="size-4" />
+                  Unsilence
+                </Button>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 pl-9">
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                Current {u.silentFlags ?? 0}
+              </span>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                Lifetime {u.lifetimeSilentFlags ?? 0}
+              </span>
+              {Object.entries(u.breakdown ?? {}).map(([reason, points]) => (
+                <span
+                  key={reason}
+                  className={[
+                    "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                    REASON_LABELS[reason]?.cls ?? "bg-muted text-muted-foreground",
+                  ].join(" ")}
+                >
+                  {REASON_LABELS[reason]?.label ?? reason} +{points}
+                </span>
+              ))}
+              {u.moderationStandardId ? (
+                <StandardChip standardId={u.moderationStandardId} />
+              ) : null}
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedId(isExpanded ? null : u._id)
+                }
+                className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                <History className="size-3.5" />
+                {isExpanded ? "Hide history" : "Flag history"}
+                {isExpanded ? (
+                  <ChevronUp className="size-3.5" />
+                ) : (
+                  <ChevronDown className="size-3.5" />
+                )}
+              </button>
+            </div>
+            {isExpanded ? (
+              <div className="mt-3 pl-9">
+                <SilencedHistory userId={u._id} />
+              </div>
+            ) : null}
+          </motion.div>
+        );
+      })}
+      <div className="flex items-center justify-between py-2">
+        <div ref={ref} className="text-sm text-muted-foreground">
+          {status === "LoadingMore" ? "Loading more…" : ""}
+        </div>
+        {accounts.length > 0 ? (
+          <button
+            type="button"
+            onClick={() =>
+              setSelected(
+                allSelected
+                  ? new Set()
+                  : new Set(accounts.map((u) => u._id)),
+              )
+            }
+            className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {allSelected ? "Clear selection" : "Select all"}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
