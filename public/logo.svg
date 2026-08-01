@@ -1,12 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="PureWire">
   <title>PureWire</title>
-  <rect width="64" height="64" rx="14" fill="#171918"/>
-  <!-- The wire -->
-  <path d="M13 46H51" stroke="#F4F0E8" stroke-width="3.5" stroke-linecap="round"/>
-  <!-- The voice rising — say it anyway -->
-  <rect x="17" y="37" width="6" height="9" rx="3" fill="#B84A32"/>
-  <rect x="26" y="31" width="6" height="15" rx="3" fill="#B84A32"/>
-  <rect x="35" y="24" width="6" height="22" rx="3" fill="#B84A32"/>
-  <!-- The spark that tops the voice -->
-  <circle cx="38" cy="16.5" r="3.25" fill="#C97952"/>
+  <rect width="64" height="64" rx="15" fill="#171918"/>
+  <!-- The P-wire monogram: a single paper wire draws the letter P ... -->
+  <path d="M14 50V20" stroke="#F4F0E8" stroke-width="3.6" stroke-linecap="round"/>
+  <path d="M14 20C25 16.5 39 19 39 30C39 40 26 44 14 42.5" stroke="#F4F0E8" stroke-width="3.6" stroke-linecap="round"/>
+  <!-- ... grounded on a moss baseline. -->
+  <path d="M10 50H52" stroke="#465A4C" stroke-width="2.6" stroke-linecap="round"/>
+  <!-- The oxide voice bar rising from the ground. -->
+  <rect x="43.5" y="36" width="7" height="14" rx="3.5" fill="#B84A32"/>
+  <!-- The copper spark crowning the voice. -->
+  <circle cx="47" cy="25.5" r="3.4" fill="#C97952"/>
 </svg>
