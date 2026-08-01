@@ -58,6 +58,20 @@ const schema = defineSchema({
     // references a stated rule.
     moderationStandardId: v.optional(v.string()),
     moderationNote: v.optional(v.string()),
+    // Home location: the user's optional chosen place. Used as the fallback
+    // anchor for the Local feed when browser geolocation is unavailable, and
+    // shown as a label on their profile. Null (not just absent) means the
+    // user has explicitly removed it, and updateProfile writes null to clear.
+    location: v.optional(
+      v.union(
+        v.null(),
+        v.object({
+          latitude: v.number(),
+          longitude: v.number(),
+          label: v.optional(v.string()),
+        }),
+      ),
+    ),
   })
     // Keep auth's original index names — the auth library queries these.
     .index("email", ["email"])
@@ -88,6 +102,14 @@ const schema = defineSchema({
     likeCount: v.number(),
     commentCount: v.number(),
     shareCount: v.number(),
+    // Optional place the post was shared from — powers the Local feed.
+    location: v.optional(
+      v.object({
+        latitude: v.number(),
+        longitude: v.number(),
+        label: v.optional(v.string()),
+      }),
+    ),
   })
     .index("by_author", ["authorId"])
     .index("by_fingerprint", ["fingerprint"])

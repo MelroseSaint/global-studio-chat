@@ -1,5 +1,5 @@
 import { useAction, useMutation } from "convex/react";
-import { Loader2, Send, Sparkles } from "lucide-react";
+import { Loader2, MapPin, Send, Sparkles } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -9,6 +9,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
+import { getBrowserLocation } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 
 const MAX_LENGTH = 1000;
@@ -19,6 +20,11 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
   const scanMedia = useAction(api.aiContent.scanMediaForAi);
   const [content, setContent] = useState("");
   const [media, setMedia] = useState<MediaItem[]>([]);
+  const [location, setLocation] = useState<
+    | { latitude: number; longitude: number; label?: string }
+    | undefined
+  >(undefined);
+  const [locating, setLocating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -53,9 +59,11 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
               }))
             : undefined,
         aiMediaStatus,
+        location,
       });
       setContent("");
       setMedia([]);
+      setLocation(undefined);
       toast.success("Posted!");
       onPosted?.();
       textareaRef.current?.focus();
@@ -63,6 +71,31 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
       toast.error(err instanceof Error ? err.message : "Could not post.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const attachLocation = async () => {
+    if (locating) return;
+    // Prefer the profile home location when it exists; otherwise ask the
+    // browser (an explicit, opt-in permission prompt).
+    if (user?.location?.latitude !== undefined) {
+      setLocation({
+        latitude: user.location.latitude,
+        longitude: user.location.longitude,
+        label: user.location.label ?? undefined,
+      });
+      return;
+    }
+    setLocating(true);
+    const pos = await getBrowserLocation();
+    setLocating(false);
+    if (pos !== null) {
+      // A label makes the attached location visible on the post card too.
+      setLocation({ ...pos, label: "Nearby" });
+    } else {
+      toast.error(
+        "Couldn't get your location. Set a home location in settings to tag your posts.",
+      );
     }
   };
 
@@ -93,6 +126,30 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
               max={4}
               compact
             />
+            {location ? (
+              <button
+                type="button"
+                onClick={() => setLocation(undefined)}
+                className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+                title="Remove location"
+              >
+                <MapPin className="size-3.5" />
+                <span className="max-w-32 truncate">
+                  {location.label ?? "Nearby"}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void attachLocation()}
+                disabled={locating}
+                className="flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary disabled:opacity-60"
+                title="Add your location"
+              >
+                <MapPin className="size-3.5" />
+                {locating ? "Locating…" : "Location"}
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <span

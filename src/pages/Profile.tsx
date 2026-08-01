@@ -1,6 +1,6 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
-import { Ban, CalendarDays, Link2, Settings2 } from "lucide-react";
+import { Ban, CalendarDays, Link2, MapPin, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { Link, useNavigate, useParams } from "react-router";
@@ -162,6 +162,12 @@ export function Profile() {
               year: "numeric",
             })}
           </span>
+          {profile.location?.label ? (
+            <span className="flex items-center gap-1.5">
+              <MapPin className="size-4" />
+              {profile.location.label}
+            </span>
+          ) : null}
           {profile.links && profile.links.length > 0 ? (
             <span className="flex items-center gap-1.5">
               <Link2 className="size-4" />

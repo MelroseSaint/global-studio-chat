@@ -4,6 +4,12 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import {
+  boundingBox,
+  cleanLocationLabel,
+  isValidLocation,
+  locationValidator,
+} from "./location";
 import { publicUser } from "./privacy";
 import {
   enforceActive,
@@ -108,8 +114,10 @@ export const createPost = mutation({
     // Verdict from the client-side scan action (api.aiContent.scanMediaForAi),
     // which reads the uploaded bytes — the only place storage reads exist.
     aiMediaStatus: v.optional(AI_MEDIA_STATUS),
+    // Optional place the post was shared from (see the Local feed).
+    location: v.optional(locationValidator),
   },
-  handler: async (ctx, { content, media, aiMediaStatus }) => {
+  handler: async (ctx, { content, media, aiMediaStatus, location }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
@@ -121,6 +129,20 @@ export const createPost = mutation({
     if (text.length > 1000) {
       throw new Error("Post is too long (max 1000 characters).");
     }
+    // A location is only meaningful within valid coordinates; label is capped.
+    const postLocation =
+      location === undefined
+        ? undefined
+        : (() => {
+            if (!isValidLocation(location)) {
+              throw new Error("Invalid location coordinates.");
+            }
+            return {
+              latitude: location.latitude,
+              longitude: location.longitude,
+              label: cleanLocationLabel(location.label),
+            };
+          })();
     // Quiet sandbox: a shadowbanned or pending-review account's post is
     // accepted so nothing looks wrong to them, but silencedAuthorIds keeps
     // it invisible to everyone else until a human reviews the account.
@@ -133,6 +155,7 @@ export const createPost = mutation({
         likeCount: 0,
         commentCount: 0,
         shareCount: 0,
+        location: postLocation,
       });
       const me = await ctx.db.get(userId);
       await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
@@ -195,6 +218,7 @@ export const createPost = mutation({
       likeCount: 0,
       commentCount: 0,
       shareCount: 0,
+      location: postLocation,
     });
     const me = await ctx.db.get(userId);
     await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
@@ -274,14 +298,20 @@ export const feed = query({
     // "global" and "latest" both show the platform in time order today;
     // they stay distinct tabs so users control their view, and so a future
     // ranking layer can never be silently forced on anyone.
+    // "local" shows posts shared near the viewer's location.
     filter: v.union(
       v.literal("global"),
       v.literal("following"),
       v.literal("latest"),
       v.literal("media"),
+      v.literal("local"),
     ),
+    // Viewer location + radius (km) for the "local" filter. When omitted,
+    // the viewer's profile home location is used as the anchor.
+    location: v.optional(locationValidator),
+    radiusKm: v.optional(v.number()),
   },
-  handler: async (ctx, { paginationOpts, filter }) => {
+  handler: async (ctx, { paginationOpts, filter, location, radiusKm }) => {
     const viewerId = await getAuthUserId(ctx);
     // Pick the tab's base query first…
     let base = ctx.db.query("posts");
@@ -307,6 +337,39 @@ export const feed = query({
       base = ctx.db
         .query("posts")
         .filter((q) => q.neq(q.field("media"), undefined));
+    } else if (filter === "local") {
+      // Anchor the "nearby" search on the location the client passed, or
+      // fall back to the viewer's profile home location when they haven't
+      // granted browser geolocation yet.
+      let anchor = location;
+      if (anchor === undefined && viewerId !== null) {
+        const viewer = await ctx.db.get(viewerId);
+        if (viewer?.location !== undefined && viewer.location !== null) {
+          anchor = {
+            latitude: viewer.location.latitude,
+            longitude: viewer.location.longitude,
+            label: viewer.location.label,
+          };
+        }
+      }
+      if (anchor === undefined) {
+        // No location available — the local tab is empty until one is set.
+        return { page: [], isDone: true, continueCursor: "" };
+      }
+      const radius = Math.min(Math.max(radiusKm ?? 50, 1), 1000);
+      const box = boundingBox(anchor.latitude, anchor.longitude, radius);
+      // Posts without a location have no matching field, so the gte/lte
+      // comparisons naturally exclude them.
+      base = ctx.db
+        .query("posts")
+        .filter((q) =>
+          q.and(
+            q.gte(q.field("location.latitude"), box.minLat),
+            q.lte(q.field("location.latitude"), box.maxLat),
+            q.gte(q.field("location.longitude"), box.minLng),
+            q.lte(q.field("location.longitude"), box.maxLng),
+          ),
+        );
     }
     // …then apply the safety exclusions on every tab: accounts the viewer
     // blocked, accounts that blocked the viewer, banned accounts, accounts

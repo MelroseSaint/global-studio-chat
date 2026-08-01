@@ -5,6 +5,7 @@ import {
   Flag,
   Heart,
   Link2,
+  MapPin,
   MessageCircle,
   MoreHorizontal,
   Pencil,
@@ -62,6 +63,7 @@ export interface PostItem {
   likedByMe: boolean;
   mediaUrls?: PostMedia[] | null;
   author: PostAuthor | null;
+  location?: { latitude: number; longitude: number; label?: string } | null;
 }
 
 /** Render @mentions and URLs inside post text. */
@@ -302,6 +304,13 @@ export function PostCard({
           <PostMediaGrid media={post.mediaUrls} />
         ) : linkUrl ? (
           <LinkCard url={linkUrl} />
+        ) : null}
+
+        {post.location?.label ? (
+          <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+            <MapPin className="size-3.5" />
+            {post.location.label}
+          </p>
         ) : null}
 
         <div className="mt-3 flex max-w-sm items-center justify-between text-muted-foreground">

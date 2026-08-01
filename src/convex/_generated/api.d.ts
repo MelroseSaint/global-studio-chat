@@ -15,6 +15,7 @@ import type * as auth from "../auth.js";
 import type * as auth_email from "../auth/email.js";
 import type * as http from "../http.js";
 import type * as links from "../links.js";
+import type * as location from "../location.js";
 import type * as media from "../media.js";
 import type * as notifications from "../notifications.js";
 import type * as posts from "../posts.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   "auth/email": typeof auth_email;
   http: typeof http;
   links: typeof links;
+  location: typeof location;
   media: typeof media;
   notifications: typeof notifications;
   posts: typeof posts;

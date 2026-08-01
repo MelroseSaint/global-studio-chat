@@ -2,6 +2,8 @@ import { useMutation } from "convex/react";
 import {
   AlertTriangle,
   Loader2,
+  LocateFixed,
+  MapPin,
   Plus,
   Save,
   ShieldCheck,
@@ -38,6 +40,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { isValidUsername, PLATFORM_OPTIONS } from "@/lib/format";
+import { getBrowserLocation } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 
 interface LinkRow {
@@ -68,6 +71,11 @@ function SettingsForm({ user }: { user: Profile }) {
   const [links, setLinks] = useState<LinkRow[]>(user.links ?? []);
   const [avatar, setAvatar] = useState<MediaItem[]>([]);
   const [banner, setBanner] = useState<MediaItem[]>([]);
+  const [location, setLocation] = useState<
+    | { latitude: number; longitude: number; label?: string }
+    | null
+  >(user.location ?? null);
+  const [locating, setLocating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -100,6 +108,7 @@ function SettingsForm({ user }: { user: Profile }) {
         links: links.filter((l) => l.platform && l.url.trim()),
         avatarStorageId: avatar[0]?.storageId,
         bannerStorageId: banner[0]?.storageId,
+        location,
       });
       toast.success("Profile updated.");
     } catch (err) {
@@ -111,6 +120,24 @@ function SettingsForm({ user }: { user: Profile }) {
 
   const updateLink = (i: number, patch: Partial<LinkRow>) => {
     setLinks((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  };
+
+  const applyBrowserLocation = async () => {
+    if (locating) return;
+    setLocating(true);
+    const pos = await getBrowserLocation();
+    setLocating(false);
+    if (pos !== null) {
+      setLocation((loc) => ({
+        ...pos,
+        label: loc?.label ?? "",
+      }));
+      toast.success("Location set — save to keep it.");
+    } else {
+      toast.error(
+        "Couldn't get your location. You can still type a label and save.",
+      );
+    }
   };
 
   return (
@@ -298,6 +325,66 @@ function SettingsForm({ user }: { user: Profile }) {
           Save changes
         </Button>
       </div>
+
+      <Separator />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MapPin className="size-4 text-oxide dark:text-oxide-light" />
+            Your location
+          </CardTitle>
+          <CardDescription>
+            Set a home location so the Local feed can anchor near you — even
+            when you don't share your browser location. Only your label is
+            shown publicly; coordinates stay private.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="location-label">Label (shown on your profile)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="location-label"
+                value={location?.label ?? ""}
+                onChange={(e) =>
+                  setLocation((loc) =>
+                    loc === null
+                      ? null
+                      : { ...loc, label: e.target.value },
+                  )
+                }
+                placeholder="e.g. Brooklyn, NY"
+                maxLength={60}
+                disabled={location === null}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-1.5"
+                disabled={locating}
+                onClick={() => void applyBrowserLocation()}
+              >
+                <LocateFixed className="size-4" />
+                {locating ? "Locating…" : "Use my location"}
+              </Button>
+            </div>
+          </div>
+          {location !== null ? (
+            <p className="text-xs text-muted-foreground">
+              Coordinates set — the Local feed is anchored at your location.
+            </p>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="self-start text-destructive hover:text-destructive"
+            onClick={() => setLocation(null)}
+          >
+            Remove location
+          </Button>
+        </CardContent>
+      </Card>
 
       <Separator />
 
