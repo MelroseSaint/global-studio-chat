@@ -3,7 +3,6 @@ import { motion } from "framer-motion";
 import { Inbox, LocateFixed, MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
-import { Link } from "react-router";
 
 import { api } from "@/convex/_generated/api";
 import { Composer } from "@/components/Composer";
@@ -12,7 +11,6 @@ import { StoriesBar } from "@/components/StoriesBar";
 import { Empty } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useAuth } from "@/hooks/use-auth";
 import { getBrowserLocation } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 
@@ -30,10 +28,8 @@ const FILTERS: { value: Filter; label: string }[] = [
 const RADII_KM = [10, 25, 50, 150] as const;
 
 export function Feed() {
-  const { user } = useAuth();
   const [filter, setFilter] = useTabsState<Filter>("global");
-  // The viewer's anchor for the Local tab: browser position when granted,
-  // else their profile home location.
+  // The viewer's anchor for the Local tab: the live browser position.
   const [viewerPoint, setViewerPoint] = useState<{
     latitude: number;
     longitude: number;
@@ -41,19 +37,14 @@ export function Feed() {
   const [locating, setLocating] = useState(false);
   const [radiusKm, setRadiusKm] = useState(50);
 
-  // Try browser geolocation first; fall back to the profile home location.
+  // The Local tab is a "near me, only while browsing" mode: the anchor is
+  // the live browser position, held in memory for this request and never
+  // persisted. Home locations are label-only, so there is no stored fallback.
   const locate = async () => {
     if (locating || viewerPoint !== null) return;
     setLocating(true);
     const pos = await getBrowserLocation();
-    if (pos !== null) {
-      setViewerPoint(pos);
-    } else if (user?.location?.latitude !== undefined) {
-      setViewerPoint({
-        latitude: user.location.latitude,
-        longitude: user.location.longitude,
-      });
-    }
+    if (pos !== null) setViewerPoint(pos);
     setLocating(false);
   };
 
@@ -122,12 +113,12 @@ export function Feed() {
               ) : viewerPoint !== null ? (
                 <>
                   <MapPin className="size-3.5 shrink-0 text-primary" />
-                  Showing posts near you
+                  Showing posts near you — never saved
                 </>
               ) : (
                 <>
                   <MapPin className="size-3.5 shrink-0" />
-                  Add a location to see what's near you
+                  Allow location access to see what's near you
                 </>
               )}
             </p>
@@ -173,15 +164,15 @@ export function Feed() {
         >
           <Empty
             icon={MapPin}
-            title="Add your location"
-            description="Allow location access, or set a home location in your settings — then the Local feed shows posts shared near you."
+            title="Allow location access"
+            description="The Local feed is a 'near me, only while browsing' mode: your position is read live to find nearby posts, used for this request, and never stored."
             action={
-              <Link
-                to="/settings"
+              <button
+                onClick={() => void locate()}
                 className="inline-flex items-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
               >
-                Set home location
-              </Link>
+                Allow location access
+              </button>
             }
           />
         </motion.div>

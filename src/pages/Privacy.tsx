@@ -38,7 +38,7 @@ const neverStored = [
     icon: Database,
     title: "No location, no device data",
     detail:
-      "PureWire never stores your location, contacts, device fingerprints, browser details, or browsing history. The Local feed can use your browser location transiently to find nearby posts — it is used only to build that request and never saved. IP addresses are never written to persistent logs.",
+      "PureWire never stores your location, contacts, device fingerprints, browser details, or browsing history. Your home location is a label you choose — shown publicly on your profile — and the coordinates behind it are never saved. The Local feed is a 'near me, only while browsing' mode: your browser position is used to build that one request and never stored. Post coordinates exist server-side only to power that filter, and clients only ever receive the label. IP addresses are never written to persistent logs.",
   },
   {
     icon: Fingerprint,
@@ -58,7 +58,7 @@ const stored = [
   {
     title: "Your account",
     detail:
-      "Username, display name, bio, links, photo and banner, your email's salted one-way hash, and your verified status.",
+      "Username, display name, bio, links, photo and banner, your email's salted one-way hash, your verified status, and a home-location label you choose (never coordinates).",
   },
   {
     title: "What you post",

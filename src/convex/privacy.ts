@@ -7,6 +7,12 @@
  * user document so the platform can reason about identity without holding
  * the plain address, which only ever exists inside the auth service (it is
  * required to deliver one-time codes and to link accounts).
+ *
+ * Home-location coordinates get the same treatment as the plain-text email:
+ * they are never stored on the profile at all, so no surface can leak them.
+ * Post coordinates exist server-side only to power the Local feed and are
+ * reduced to their public label (`publicLocation`) before any response is
+ * sent to a client.
  */
 
 /** SHA-256 hex digest, via the runtime's Web Crypto. */
@@ -53,15 +59,39 @@ export function maskEmail(
 }
 
 /**
- * Shape a user document for any PureWire surface: the plain-text `email`
- * field is never sent to clients — only its hash and a masked address.
+ * Reduce any location to its public label before it leaves the server.
+ * Coordinates are sensitive — exactly like the plain-text email address —
+ * so no client response ever carries them, even from pre-migration rows
+ * that still hold them.
  */
-export function publicUser<T extends { email?: string | null }>(
+export function publicLocation(
+  location: unknown,
+): { label?: string } | null | undefined {
+  if (location === null || location === undefined) {
+    return location;
+  }
+  const loc = location as { label?: string };
+  return { label: loc.label };
+}
+
+/**
+ * Shape a user document for any PureWire surface: the plain-text `email`
+ * field is never sent to clients — only its hash and a masked address —
+ * and any location is reduced to its public label, never coordinates.
+ */
+export function publicUser<
+  T extends { email?: string | null; location?: unknown },
+>(
   user: T,
-): Omit<T, "email"> & {
+): Omit<T, "email" | "location"> & {
   emailHash?: string | null;
   maskedEmail: string | null;
+  location?: { label?: string } | null;
 } {
-  const { email, ...rest } = user;
-  return { ...rest, maskedEmail: maskEmail(email) };
+  const { email, location, ...rest } = user;
+  return {
+    ...rest,
+    ...(location !== undefined ? { location: publicLocation(location) } : {}),
+    maskedEmail: maskEmail(email),
+  };
 }

@@ -63,7 +63,8 @@ export interface PostItem {
   likedByMe: boolean;
   mediaUrls?: PostMedia[] | null;
   author: PostAuthor | null;
-  location?: { latitude: number; longitude: number; label?: string } | null;
+  // Coordinates never reach clients — only the public label ships.
+  location?: { label?: string } | null;
 }
 
 /** Render @mentions and URLs inside post text. */

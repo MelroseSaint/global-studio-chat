@@ -67,16 +67,16 @@ const schema = defineSchema({
     // references a stated rule.
     moderationStandardId: v.optional(v.string()),
     moderationNote: v.optional(v.string()),
-    // Home location: the user's optional chosen place. Used as the fallback
-    // anchor for the Local feed when browser geolocation is unavailable, and
-    // shown as a label on their profile. Null (not just absent) means the
-    // user has explicitly removed it, and updateProfile writes null to clear.
+    // Home location: a public label the user chose. The coordinates are
+    // deliberately NOT stored — they get the same treatment as the
+    // plain-text email address. The Local feed anchors on the viewer's
+    // ephemeral browser location instead, which is used to build a single
+    // request and never persisted. Null (not just absent) means the user
+    // has explicitly removed it, and updateProfile writes null to clear.
     location: v.optional(
       v.union(
         v.null(),
         v.object({
-          latitude: v.number(),
-          longitude: v.number(),
           label: v.optional(v.string()),
         }),
       ),

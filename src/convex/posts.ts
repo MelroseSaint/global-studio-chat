@@ -12,7 +12,7 @@ import {
   isValidLocation,
   locationValidator,
 } from "./location";
-import { publicUser } from "./privacy";
+import { publicLocation, publicUser } from "./privacy";
 import {
   enforceActive,
   enforceRateLimit,
@@ -412,6 +412,9 @@ async function withAuthor(
     : undefined;
   return {
     ...post,
+    // Coordinates are sensitive: clients see only the public label, even
+    // though the server keeps them to power the Local feed filter.
+    location: publicLocation(post.location),
     author,
     likedByMe,
     mediaUrls,
@@ -465,22 +468,15 @@ export const feed = query({
         .query("posts")
         .filter((q) => q.neq(q.field("media"), undefined));
     } else if (filter === "local") {
-      // Anchor the "nearby" search on the location the client passed, or
-      // fall back to the viewer's profile home location when they haven't
-      // granted browser geolocation yet.
-      let anchor = location;
-      if (anchor === undefined && viewerId !== null) {
-        const viewer = await ctx.db.get(viewerId);
-        if (viewer?.location !== undefined && viewer.location !== null) {
-          anchor = {
-            latitude: viewer.location.latitude,
-            longitude: viewer.location.longitude,
-            label: viewer.location.label,
-          };
-        }
-      }
+      // Anchor the "nearby" search on the ephemeral location the client
+      // passes — browser geolocation, held only for this one request and
+      // never persisted. There is deliberately no stored anchor: home
+      // locations are label-only (coordinates get the same treatment as
+      // plain-text email), so "near me" always comes from the live
+      // browser position, never from the database.
+      const anchor = location;
       if (anchor === undefined) {
-        // No location available — the local tab is empty until one is set.
+        // No live location — the local tab is empty until one is granted.
         return { page: [], isDone: true, continueCursor: "" };
       }
       const radius = Math.min(Math.max(radiusKm ?? 50, 1), 1000);

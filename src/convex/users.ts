@@ -4,8 +4,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import {
   cleanLocationLabel,
-  isValidLocation,
-  locationValidator,
+  homeLocationValidator,
 } from "./location";
 import { publicUser } from "./privacy";
 import {
@@ -91,10 +90,11 @@ export const updateProfile = mutation({
     ),
     avatarStorageId: v.optional(v.id("_storage")),
     bannerStorageId: v.optional(v.id("_storage")),
-    // Home location for the Local feed anchor and profile label. Pass null
-    // to remove an existing location.
+    // Home location: a public label only. Coordinates are never stored —
+    // they get the same treatment as the plain-text email address. Pass
+    // null to remove an existing label.
     location: v.optional(
-      v.union(v.null(), locationValidator),
+      v.union(v.null(), homeLocationValidator),
     ),
   },
   handler: async (ctx, args) => {
@@ -113,17 +113,10 @@ export const updateProfile = mutation({
     if (args.bannerStorageId !== undefined)
       patch.bannerStorageId = args.bannerStorageId;
     if (args.location !== undefined) {
-      if (args.location !== null && !isValidLocation(args.location)) {
-        throw new Error("Invalid location coordinates.");
-      }
       patch.location =
         args.location === null
           ? null
-          : {
-              latitude: args.location.latitude,
-              longitude: args.location.longitude,
-              label: cleanLocationLabel(args.location.label),
-            };
+          : { label: cleanLocationLabel(args.location.label) };
     }
     if (args.username !== undefined) {
       const username = args.username.toLowerCase().replace(/[^a-z0-9_]/g, "");

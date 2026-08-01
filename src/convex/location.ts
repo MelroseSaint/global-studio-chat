@@ -17,6 +17,20 @@ export type LocationDoc = {
 };
 
 /**
+ * Home-location shape: a public label only.
+ *
+ * Coordinates get the exact treatment plain-text email does: they are never
+ * stored on the profile. The Local feed anchors on the viewer's ephemeral
+ * browser location — used to build one request, never saved — so a home
+ * location needs nothing but the label the user chose to show publicly.
+ */
+export const homeLocationValidator = v.object({
+  label: v.optional(v.string()),
+});
+
+
+
+/**
  * Approximate bounding box around (lat, lng) covering `radiusKm`.
  *
  * Uses a flat-earth approximation — fine for the Local feed's range

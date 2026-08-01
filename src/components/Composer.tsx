@@ -89,16 +89,9 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
 
   const attachLocation = async () => {
     if (locating) return;
-    // Prefer the profile home location when it exists; otherwise ask the
-    // browser (an explicit, opt-in permission prompt).
-    if (user?.location?.latitude !== undefined) {
-      setLocation({
-        latitude: user.location.latitude,
-        longitude: user.location.longitude,
-        label: user.location.label ?? undefined,
-      });
-      return;
-    }
+    // Home locations are label-only by design (coordinates are never
+    // stored), so tagging a post always reads the live browser position —
+    // an explicit, opt-in permission prompt that is never persisted.
     setLocating(true);
     const pos = await getBrowserLocation();
     setLocating(false);
@@ -107,7 +100,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
       setLocation({ ...pos, label: "Nearby" });
     } else {
       toast.error(
-        "Couldn't get your location. Set a home location in settings to tag your posts.",
+        "Couldn't get your location. Allow location access to tag your posts.",
       );
     }
   };
