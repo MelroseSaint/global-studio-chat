@@ -60,6 +60,7 @@ export const dashboardStats = query({
               q.eq(q.field("accountStatus"), "suspicious"),
               q.eq(q.field("accountStatus"), "restricted"),
               q.eq(q.field("accountStatus"), "banned"),
+              q.eq(q.field("shadowban"), true),
             ),
           )
           .collect(),

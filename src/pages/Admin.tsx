@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   Ban,
   CheckCheck,
+  EyeOff,
   Flag,
   Heart,
   Image as ImageIcon,
@@ -439,6 +440,7 @@ const STATUS_VARIANTS: Record<string, string> = {
 
 function SecurityPanel() {
   const setAccountStatus = useMutation(api.security.setAccountStatus);
+  const setShadowban = useMutation(api.security.setShadowban);
   const { results, status, loadMore } = usePaginatedQuery(
     api.security.listFlaggedAccounts,
     {},
@@ -462,6 +464,8 @@ function SecurityPanel() {
     riskScore?: number | null;
     accountStatus?: string | null;
     riskReasons?: string[] | null;
+    shadowban?: boolean | null;
+    silentFlags?: number | null;
   }[];
 
   const setStatus = async (userId: string, accountStatus: string) => {
@@ -519,10 +523,16 @@ function SecurityPanel() {
               ) : null}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={STATUS_VARIANTS[u.accountStatus ?? "active"] as "default"}>
               {u.accountStatus ?? "active"}
             </Badge>
+            {u.shadowban ? (
+              <Badge variant="destructive">
+                <EyeOff className="mr-1 size-3" />
+                Silenced
+              </Badge>
+            ) : null}
             <Button
               variant="outline"
               size="sm"
@@ -530,6 +540,19 @@ function SecurityPanel() {
             >
               <UserCheck className="size-4" />
               Approve
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void setShadowban({ userId: u._id as Id<"users">, shadowban: !u.shadowban })}
+              title={
+                u.shadowban
+                  ? "Restore their content to the public feed"
+                  : "Silently stop their content from reaching anyone"
+              }
+            >
+              <EyeOff className="size-4" />
+              {u.shadowban ? "Unsilence" : "Silence"}
             </Button>
             <Button
               variant="outline"

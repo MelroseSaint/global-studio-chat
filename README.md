@@ -20,7 +20,9 @@ say it.
 - **Highest-moderation trust & safety** — new accounts are screened against
   bot and farm signals at signup, every activity runs on a rate budget, media
   is checked for deepfake and AI-generator markers, and anyone can block
-  harassers. Restricted or banned accounts are hidden platform-wide.
+  harassers. Restricted or banned accounts are hidden platform-wide, and
+  accounts that keep tripping abuse signals are quietly limited — nothing
+  errors, their content simply stops reaching anyone until a human reviews.
 - **Freedom with a reason** — PureWire isn't "no rules." The PureWire
   Standard draws the lines (no impersonation, no stealing work, no spam, no
   harassment) so one person's freedom never costs another's.

@@ -58,6 +58,10 @@ const FAQS = [
     a: "Three layers. Signup screening: every new account is checked against bot and farm signals — disposable email domains, machine-like usernames, placeholder names — and suspicious accounts are held for a human review, with their content kept off the public feed until they're approved. Activity budgets: posts, comments, likes, shares, and follows run against per-account rate limits so automated floods can't take over. Media checks: images and video are scanned for AI-generator and deepfake metadata before they go live. Scans read what's baked into the file, so nothing is treated as final on its own — anything ambiguous goes to a human review queue, and you can report a bot, farm, or deepfake at any time. Accounts confirmed as bots, farms, or manipulators are restricted or banned, and their content is hidden platform-wide.",
   },
   {
+    q: "Does PureWire quietly limit accounts?",
+    a: "Sometimes, and always for a reason. Accounts that repeatedly trip our safeguards — posting the same content, flooding the platform, or pushing manipulated media — may have their reach quietly limited instead of being confronted. Nothing is deleted without review, the account itself stays open, and a human in our team makes the final call. If you believe your account was limited, open a support ticket and we'll take a look right away.",
+  },
+  {
     q: "How do I block someone?",
     a: "Open their profile and tap Block. Blocking hides their profile, posts, and notifications from you in both directions, and unfollows them automatically. You can unblock them anytime from their profile.",
   },

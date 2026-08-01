@@ -4,7 +4,14 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
-import { enforceActive, enforceRateLimit, hiddenAuthorIds, suspiciousAuthorIds } from "./security";
+import {
+  enforceActive,
+  enforceRateLimit,
+  escalateSilently,
+  hiddenAuthorIds,
+  isSandboxed,
+  silencedAuthorIds,
+} from "./security";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -33,7 +40,7 @@ async function isDuplicate(
   ctx: MutationCtx,
   authorId: Id<"users">,
   fp: string,
-) {
+): Promise<{ kind: "stolen" } | { kind: "own-recent" } | null> {
   const recent = await ctx.db
     .query("posts")
     .withIndex("by_fingerprint", (q) => q.eq("fingerprint", fp))
@@ -44,12 +51,12 @@ async function isDuplicate(
   for (const post of recent) {
     // Prevent stealing another user's content and oversaturation.
     if (post.authorId !== authorId) {
-      return "This content already exists on PureWire. Only original posts are allowed.";
+      return { kind: "stolen" };
     }
   }
   const own = recent.find((p) => p.authorId === authorId);
   if (own && Date.now() - own._creationTime < 5 * 60_000) {
-    return "You've posted this recently. Please wait a moment.";
+    return { kind: "own-recent" };
   }
   return null;
 }
@@ -106,8 +113,6 @@ export const createPost = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
-    await enforceActive(ctx, userId);
-    await enforceRateLimit(ctx, userId, "post");
     const text = content.trim();
     if (text.length === 0 && (media === undefined || media.length === 0)) {
       throw new Error("Post must contain text or media.");
@@ -115,11 +120,40 @@ export const createPost = mutation({
     if (text.length > 1000) {
       throw new Error("Post is too long (max 1000 characters).");
     }
+    // Quiet sandbox: a shadowbanned or pending-review account's post is
+    // accepted so nothing looks wrong to them, but silencedAuthorIds keeps
+    // it invisible to everyone else until a human reviews the account.
+    if (await isSandboxed(ctx, userId)) {
+      const postId = await ctx.db.insert("posts", {
+        authorId: userId,
+        content: text,
+        media,
+        aiStatus: "clean",
+        likeCount: 0,
+        commentCount: 0,
+        shareCount: 0,
+      });
+      const me = await ctx.db.get(userId);
+      await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
+      return postId;
+    }
+    await enforceActive(ctx, userId);
+    await enforceRateLimit(ctx, userId, "post");
     const fp = text.length > 0 ? fingerprint(text) : undefined;
     if (fp !== undefined) {
       const blocked = await isDuplicate(ctx, userId, fp);
-      if (blocked) {
-        throw new Error(blocked);
+      if (blocked !== null) {
+        // Reposting someone else's content is a strong spam signal — count
+        // it toward a quiet shadowban. Your own recent re-posts are a gentle
+        // nudge, never an escalation.
+        if (blocked.kind === "stolen") {
+          await escalateSilently(ctx, userId, 3);
+        }
+        throw new Error(
+          blocked.kind === "stolen"
+            ? "This content already exists on PureWire. Only original posts are allowed."
+            : "You've posted this recently. Please wait a moment.",
+        );
       }
     }
     // Anti-AI enforcement: block clear AI content, flag suspicious text
@@ -144,6 +178,11 @@ export const createPost = mutation({
         : (aiMediaStatus ?? "clean");
     const needsReview =
       textScan.status === "review" || mediaVerdict === "review";
+    if (needsReview) {
+      // Repeated suspicious content moves an account toward a quiet
+      // shadowban instead of an abrupt ban.
+      await escalateSilently(ctx, userId, 2);
+    }
     const postId = await ctx.db.insert("posts", {
       authorId: userId,
       content: text,
@@ -269,12 +308,12 @@ export const feed = query({
         .filter((q) => q.neq(q.field("media"), undefined));
     }
     // …then apply the safety exclusions on every tab: accounts the viewer
-    // blocked, accounts that blocked the viewer, banned accounts, and
-    // accounts awaiting admin approval — in both directions. A suspicious
-    // user still sees their own posts (suspiciousAuthorIds excludes them).
+    // blocked, accounts that blocked the viewer, banned accounts, accounts
+    // awaiting admin approval, and quietly shadowbanned accounts — in both
+    // directions. A silenced user still sees their own posts.
     const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
-    const suspiciousIds = await suspiciousAuthorIds(ctx, viewerId);
-    const excludedIds = [...hiddenIds, ...suspiciousIds];
+    const silencedIds = await silencedAuthorIds(ctx, viewerId);
+    const excludedIds = [...hiddenIds, ...silencedIds];
     if (excludedIds.length > 0) {
       base = base.filter((q) =>
         q.not(q.or(...excludedIds.map((id) => q.eq(q.field("authorId"), id)))),
@@ -298,11 +337,11 @@ export const getPost = query({
     if (post === null) {
       return null;
     }
-    // Blocked, blocking, banned, and pending-review authors are invisible
-    // to the viewer.
+    // Blocked, blocking, banned, pending-review, and shadowbanned authors
+    // are invisible to the viewer.
     const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
-    const suspiciousIds = await suspiciousAuthorIds(ctx, viewerId);
-    if (hiddenIds.includes(post.authorId) || suspiciousIds.includes(post.authorId)) {
+    const silencedIds = await silencedAuthorIds(ctx, viewerId);
+    if (hiddenIds.includes(post.authorId) || silencedIds.includes(post.authorId)) {
       return null;
     }
     // Posts awaiting AI review are only visible to their author and admins.
@@ -323,6 +362,21 @@ export const likePost = mutation({
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
+    }
+    // A sandboxed account's like is silently absorbed — it counts for the
+    // liker's UI but never reaches the author or the public count.
+    if (await isSandboxed(ctx, userId)) {
+      const post = await ctx.db.get(postId);
+      if (post !== null) {
+        const absorbed = await ctx.db
+          .query("likes")
+          .withIndex("by_pair", (q) => q.eq("userId", userId).eq("postId", postId))
+          .first();
+        if (absorbed === null) {
+          await ctx.db.insert("likes", { userId, postId });
+        }
+      }
+      return;
     }
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "like");
@@ -383,12 +437,25 @@ export const addComment = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
-    await enforceActive(ctx, userId);
-    await enforceRateLimit(ctx, userId, "comment");
     const text = content.trim();
     if (text.length === 0 || text.length > 500) {
       throw new Error("Comment must be between 1 and 500 characters.");
     }
+    // A sandboxed account's comment is silently absorbed — stored for their
+    // own UI but invisible to the author and everyone else.
+    if (await isSandboxed(ctx, userId)) {
+      const post = await ctx.db.get(postId);
+      if (post !== null) {
+        await ctx.db.insert("comments", {
+          postId,
+          authorId: userId,
+          content: text,
+        });
+      }
+      return;
+    }
+    await enforceActive(ctx, userId);
+    await enforceRateLimit(ctx, userId, "comment");
     const textScan = scanText(text);
     if (textScan.status === "blocked") {
       throw new Error(
@@ -447,8 +514,8 @@ export const listComments = query({
   handler: async (ctx, { postId, paginationOpts }) => {
     const viewerId = await getAuthUserId(ctx);
     const hidden = await hiddenAuthorIds(ctx, viewerId);
-    const suspicious = await suspiciousAuthorIds(ctx, viewerId);
-    const excluded = [...hidden, ...suspicious];
+    const silenced = await silencedAuthorIds(ctx, viewerId);
+    const excluded = [...hidden, ...silenced];
     const result = await ctx.db
       .query("comments")
       .withIndex("by_post", (q) => q.eq("postId", postId))
@@ -471,6 +538,10 @@ export const sharePost = mutation({
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
+    }
+    // A sandboxed account's share is silently absorbed.
+    if (await isSandboxed(ctx, userId)) {
+      return;
     }
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "share");
@@ -504,11 +575,11 @@ export const listUserPosts = query({
   handler: async (ctx, { userId, paginationOpts }) => {
     const viewerId = await getAuthUserId(ctx);
     const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
-    // Blocked, blocking, banned, and pending-review accounts are invisible
-    // to the viewer.
+    // Blocked, blocking, banned, pending-review, and shadowbanned accounts
+    // are invisible to the viewer.
     const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
-    const suspiciousIds = await suspiciousAuthorIds(ctx, viewerId);
-    const hidden = hiddenIds.includes(userId) || suspiciousIds.includes(userId);
+    const silencedIds = await silencedAuthorIds(ctx, viewerId);
+    const hidden = hiddenIds.includes(userId) || silencedIds.includes(userId);
     if (hidden && viewer?.role !== "admin") {
       return { page: [], isDone: true, continueCursor: "" };
     }

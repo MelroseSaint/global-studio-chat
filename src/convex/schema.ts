@@ -43,6 +43,13 @@ const schema = defineSchema({
       ),
     ),
     riskReasons: v.optional(v.array(v.string())),
+    // Silent moderation: a shadowbanned account looks completely normal to
+    // its owner (no errors, no warnings) but its content and engagement
+    // never reach other members until a human reviews it. silentFlags
+    // counts abuse signals that can trigger a quiet shadowban.
+    shadowban: v.optional(v.boolean()),
+    silentFlags: v.optional(v.number()),
+    silentFlagsUpdatedAt: v.optional(v.number()),
   })
     // Keep auth's original index names — the auth library queries these.
     .index("email", ["email"])

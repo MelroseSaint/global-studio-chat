@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
-import { enforceActive, enforceRateLimit } from "./security";
+import { enforceActive, enforceRateLimit, isSandboxed } from "./security";
 
 import { mutation, query } from "./_generated/server";
 
@@ -35,6 +35,14 @@ export const getProfile = query({
       return null;
     }
     const viewerId = await getAuthUserId(ctx);
+    // A quietly shadowbanned account's profile is invisible to everyone
+    // except the account itself and admins — same silence as their posts.
+    if (user.shadowban === true) {
+      const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
+      if (viewerId !== user._id && viewer?.role !== "admin") {
+        return null;
+      }
+    }
     let isFollowing = false;
     let isSelf = false;
     if (viewerId !== null) {
@@ -114,6 +122,30 @@ export const follow = mutation({
     const followerId = await getAuthUserId(ctx);
     if (followerId === null) {
       throw new Error("Not authenticated");
+    }
+    // A sandboxed account's follow is silently absorbed — a phantom follow
+    // row keeps their UI looking normal, but it never reaches the target's
+    // counts or notifications.
+    if (await isSandboxed(ctx, followerId)) {
+      const target = await ctx.db
+        .query("users")
+        .withIndex("by_username", (q) => q.eq("username", username.toLowerCase()))
+        .first();
+      if (target !== null && target._id !== followerId) {
+        const existing = await ctx.db
+          .query("follows")
+          .withIndex("by_pair", (q) =>
+            q.eq("followerId", followerId).eq("followingId", target._id),
+          )
+          .first();
+        if (existing === null) {
+          await ctx.db.insert("follows", {
+            followerId,
+            followingId: target._id,
+          });
+        }
+      }
+      return;
     }
     await enforceActive(ctx, followerId);
     await enforceRateLimit(ctx, followerId, "follow");
@@ -226,10 +258,15 @@ export const suggestedUsers = query({
       .take(200);
     const followingIds = new Set(following.map((f) => f.followingId));
     const all = await ctx.db.query("users").take(200);
-    // Suspicious (awaiting approval), restricted, and banned accounts never
-    // appear as suggestions — they're off the public surface until cleared.
-    const visible = (u: { accountStatus?: string | undefined }) =>
-      u.accountStatus === undefined || u.accountStatus === "active";
+    // Suspicious (awaiting approval), restricted, banned, and quietly
+    // shadowbanned accounts never appear as suggestions — they're off the
+    // public surface until cleared.
+    const visible = (u: {
+      accountStatus?: string | undefined;
+      shadowban?: boolean | null | undefined;
+    }) =>
+      u.shadowban !== true &&
+      (u.accountStatus === undefined || u.accountStatus === "active");
     const candidates = all
       .filter(
         (u) =>
@@ -258,9 +295,10 @@ export const searchUsers = query({
       return [];
     }
     const all = await ctx.db.query("users").take(500);
-    // Suspicious/restricted/banned accounts are invisible in search.
+    // Suspicious/restricted/banned/shadowbanned accounts are invisible in search.
     const matches = all.filter(
       (u) =>
+        u.shadowban !== true &&
         (u.accountStatus === undefined || u.accountStatus === "active") &&
         ((u.username ?? "").includes(q) ||
           (u.name ?? "").toLowerCase().includes(q)),

@@ -6,8 +6,10 @@ import { AI_MEDIA_STATUS, scanText } from "./aiContent";
 import {
   enforceActive,
   enforceRateLimit,
+  escalateSilently,
   hiddenAuthorIds,
-  suspiciousAuthorIds,
+  isSandboxed,
+  silencedAuthorIds,
 } from "./security";
 
 import { mutation, query } from "./_generated/server";
@@ -31,6 +33,17 @@ export const createStory = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
+    // Quiet sandbox: the story is accepted so nothing looks wrong, but it
+    // stays invisible to everyone else until a human reviews the account.
+    if (await isSandboxed(ctx, userId)) {
+      return await ctx.db.insert("stories", {
+        authorId: userId,
+        media,
+        caption,
+        expiresAt: Date.now() + 24 * 3600_000,
+        aiStatus: "clean",
+      });
+    }
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "post");
     const captionScan = caption !== undefined ? scanText(caption) : null;
@@ -50,6 +63,9 @@ export const createStory = mutation({
       captionScan?.status === "review" ||
       aiMediaStatus === undefined ||
       aiMediaStatus === "review";
+    if (needsReview) {
+      await escalateSilently(ctx, userId, 2);
+    }
     const expiresAt = Date.now() + 24 * 3600_000; // 24 hours
     return await ctx.db.insert("stories", {
       authorId: userId,
@@ -92,8 +108,8 @@ export const listStories = query({
       .take(200);
     const authorIds = new Set([userId, ...follows.map((f) => f.followingId)]);
     const hidden = await hiddenAuthorIds(ctx, userId);
-    const suspicious = await suspiciousAuthorIds(ctx, userId);
-    const excluded = [...hidden, ...suspicious];
+    const silenced = await silencedAuthorIds(ctx, userId);
+    const excluded = [...hidden, ...silenced];
     const me = await ctx.db.get(userId);
     const isAdmin = me?.role === "admin";
     const now = Date.now();

@@ -26,6 +26,9 @@ import {
  * - Admin can restrict or ban accounts; restricted/banned accounts can't
  *   post or engage, and their content stops appearing publicly. Accounts
  *   flagged suspicious at signup are kept off public feeds until approved.
+ * - Silent moderation: accounts that keep tripping abuse signals are
+ *   quietly shadowbanned — nothing errors, their posts still "work" to
+ *   them, but nothing they do reaches anyone else until a human reviews.
  */
 
 export const ACCOUNT_STATUS = v.union(
@@ -169,6 +172,9 @@ export async function enforceRateLimit(
     await Promise.all(stale.map((row) => ctx.db.delete(row._id)));
   }
   if (recent.length >= budget.limit) {
+    // Repeatedly blasting past a budget is a bot/farm signal — count it
+    // toward a quiet shadowban instead of just blocking the one action.
+    await escalateSilently(ctx, userId, 1);
     throw new Error(
       "You're moving a little too fast. Slow down and try again in a moment.",
     );
@@ -178,6 +184,65 @@ export async function enforceRateLimit(
     action,
     windowStart: now,
   });
+}
+
+/** Abuse signals that add up to a quiet shadowban. */
+const SHADOWBAN_THRESHOLD = 6;
+
+/**
+ * True when an account must be silently sandboxed: their mutations still
+ * succeed client-side, but nothing they create reaches other members until
+ * a human reviews the account. Admins are never sandboxed.
+ */
+export async function isSandboxed(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const user = await ctx.db.get(userId);
+  if (user === null || user.role === "admin") {
+    return false;
+  }
+  return user.shadowban === true || user.accountStatus === "suspicious";
+}
+
+/**
+ * Add points to an account's silent-infraction counter. At the threshold
+ * the account is quietly shadowbanned — no error, no notice, their content
+ * simply stops reaching anyone until an admin lifts it.
+ */
+/** Flags older than this no longer count — points decay after clean behavior. */
+const FLAG_DECAY_MS = 7 * 24 * 3600_000;
+
+export async function escalateSilently(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  points: number,
+): Promise<void> {
+  const user = await ctx.db.get(userId);
+  if (user === null || user.role === "admin" || user.shadowban === true) {
+    return;
+  }
+  const now = Date.now();
+  // Points decay: after a week of clean behavior the counter starts over,
+  // so occasional brushes with a rate limit never snowball into a shadowban.
+  const base =
+    user.silentFlagsUpdatedAt !== undefined &&
+    now - user.silentFlagsUpdatedAt < FLAG_DECAY_MS
+      ? (user.silentFlags ?? 0)
+      : 0;
+  const silentFlags = base + points;
+  const patch: {
+    silentFlags: number;
+    silentFlagsUpdatedAt: number;
+    shadowban?: boolean;
+  } = {
+    silentFlags,
+    silentFlagsUpdatedAt: now,
+  };
+  if (silentFlags >= SHADOWBAN_THRESHOLD) {
+    patch.shadowban = true;
+  }
+  await ctx.db.patch(userId, patch);
 }
 
 /** Throw unless the account is allowed to post/engage. */
@@ -233,11 +298,13 @@ export async function hiddenAuthorIds(
 }
 
 /**
- * Accounts awaiting admin approval. Their content is kept off public
- * surfaces — feeds, profiles, notifications, stories — until a human
- * reviews them. Admins always see everything so they can act.
+ * Accounts whose content must not reach other members: accounts awaiting
+ * admin approval AND quietly shadowbanned accounts. Their posts, comments,
+ * stories, and engagement stay invisible until a human reviews them.
+ * Admins always see everything so they can act; the silenced user still
+ * sees their own content so nothing looks wrong to them.
  */
-export async function suspiciousAuthorIds(
+export async function silencedAuthorIds(
   ctx: QueryCtx,
   viewerId: Id<"users"> | null,
 ): Promise<Id<"users">[]> {
@@ -248,13 +315,18 @@ export async function suspiciousAuthorIds(
   if (viewer?.role === "admin") {
     return [];
   }
-  const suspicious = await ctx.db
+  const silenced = await ctx.db
     .query("users")
-    .withIndex("by_account_status", (q) => q.eq("accountStatus", "suspicious"))
+    .filter((q) =>
+      q.or(
+        q.eq(q.field("accountStatus"), "suspicious"),
+        q.eq(q.field("shadowban"), true),
+      ),
+    )
     .take(200);
-  // A suspicious user always sees their own content — the hiding applies
+  // The silenced user always sees their own content — the hiding applies
   // to everyone else on the platform, not to themselves.
-  return suspicious.filter((u) => u._id !== viewerId).map((u) => u._id);
+  return silenced.filter((u) => u._id !== viewerId).map((u) => u._id);
 }
 
 /** All accounts the viewer has blocked. */
@@ -401,7 +473,8 @@ export const listFlaggedAccounts = query({
       throw new Error("Admins only");
     }
     // Only accounts that actually need a decision — suspicious signups,
-    // restricted, and banned — not every account that was ever scored.
+    // restricted, banned, and quietly shadowbanned — not every account
+    // that was ever scored.
     const result = await ctx.db
       .query("users")
       .filter((q) =>
@@ -409,6 +482,7 @@ export const listFlaggedAccounts = query({
           q.eq(q.field("accountStatus"), "suspicious"),
           q.eq(q.field("accountStatus"), "restricted"),
           q.eq(q.field("accountStatus"), "banned"),
+          q.eq(q.field("shadowban"), true),
         ),
       )
       .order("desc")
@@ -452,6 +526,62 @@ export const setAccountStatus = mutation({
     if (user.role === "admin") {
       throw new Error("Cannot change an admin account");
     }
-    await ctx.db.patch(userId, { accountStatus: status });
+    // Approving an account is a full restore — clear any quiet shadowban.
+    const patch: { accountStatus: typeof status; shadowban?: boolean } = {
+      accountStatus: status,
+    };
+    if (status === "active") {
+      patch.shadowban = false;
+    }
+    await ctx.db.patch(userId, patch);
+  },
+});
+
+/**
+ * Admin: quietly silence or unsilence an account. A silenced account's
+ * content and engagement silently stop reaching anyone (no errors shown to
+ * the owner) until this is lifted.
+ */
+
+export const setShadowban = mutation({
+  args: { userId: v.id("users"), shadowban: v.boolean() },
+  handler: async (ctx, { userId, shadowban }) => {
+    const adminId = await getAuthUserId(ctx);
+    if (adminId === null) {
+      throw new Error("Not authenticated");
+    }
+    const admin = await ctx.db.get(adminId);
+    if (admin?.role !== "admin") {
+      throw new Error("Admins only");
+    }
+    const user = await ctx.db.get(userId);
+    if (user === null) {
+      throw new Error("User not found");
+    }
+    if (user.role === "admin") {
+      throw new Error("Cannot change an admin account");
+    }
+    await ctx.db.patch(userId, { shadowban });
+    // Unsilencing restores an account fully: reconcile the follow counts so
+    // phantom follows made while silenced are counted once, forever.
+    if (shadowban === false && user.shadowban === true) {
+      // Cap the reconcile so a prolific phantom follower can't blow up a
+      // single mutation's write budget.
+      const phantomFollows = await ctx.db
+        .query("follows")
+        .withIndex("by_follower", (q) => q.eq("followerId", userId))
+        .take(100);
+      for (const follow of phantomFollows) {
+        const target = await ctx.db.get(follow.followingId);
+        if (target !== null) {
+          await ctx.db.patch(target._id, {
+            followersCount: (target.followersCount ?? 0) + 1,
+          });
+        }
+      }
+      await ctx.db.patch(userId, {
+        followingCount: (user.followingCount ?? 0) + phantomFollows.length,
+      });
+    }
   },
 });
