@@ -38,7 +38,8 @@ type ErasableId =
   | Id<"blocks">
   | Id<"rateLimits">
   | Id<"authRateLimits">
-  | Id<"silentFlagEvents">;
+  | Id<"silentFlagEvents">
+  | Id<"moderationLog">;
 
 interface ErasableRow {
   id: ErasableId;
@@ -372,6 +373,21 @@ export const deleteAccount = mutation({
       },
       async (c, { id }) => {
         await c.db.delete(id as Id<"silentFlagEvents">);
+      },
+    );
+    // Moderation-log entries pointing at the account (silences, unsilences,
+    // status changes) are part of the account's data — erased with it.
+    await sweep(
+      ctx,
+      async (c) => {
+        const rows = await c.db
+          .query("moderationLog")
+          .withIndex("by_target", (q) => q.eq("targetUserId", userId))
+          .take(SWEEP);
+        return rows.map((r) => ({ id: r._id }));
+      },
+      async (c, { id }) => {
+        await c.db.delete(id as Id<"moderationLog">);
       },
     );
 

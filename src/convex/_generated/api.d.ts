@@ -25,6 +25,7 @@ import type * as security from "../security.js";
 import type * as staticHosting from "../staticHosting.js";
 import type * as stories from "../stories.js";
 import type * as support from "../support.js";
+import type * as testHarness from "../testHarness.js";
 import type * as users from "../users.js";
 
 import type {
@@ -51,6 +52,7 @@ declare const fullApi: ApiFromModules<{
   staticHosting: typeof staticHosting;
   stories: typeof stories;
   support: typeof support;
+  testHarness: typeof testHarness;
   users: typeof users;
 }>;
 

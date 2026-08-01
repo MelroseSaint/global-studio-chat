@@ -49,7 +49,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
         }
         aiMediaStatus = scan.status;
       }
-      await createPost({
+      const result = await createPost({
         content: content.trim(),
         media:
           media.length > 0
@@ -61,6 +61,13 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
         aiMediaStatus,
         location,
       });
+      // createPost rejects duplicates and rate-limit breaches with a
+      // structured result (not a thrown error) so the quiet flag on the
+      // offending account is recorded — show the reason and stop.
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
       setContent("");
       setMedia([]);
       setLocation(undefined);

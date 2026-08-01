@@ -5,10 +5,12 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { isStandardId } from "@/lib/standard";
 
+import { internal } from "./_generated/api";
 import { publicUser } from "./privacy";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  internalMutation,
   mutation,
   query,
   type MutationCtx,
@@ -182,17 +184,19 @@ const RATE_LIMITS: Record<string, { windowMs: number; limit: number }> = {
 };
 
 /**
- * Enforce an activity budget for a user. Throws when the budget is spent.
- * Uses a rolling window keyed on the user + action.
+ * Check an activity budget for a user. Returns false when the budget is
+ * spent — and schedules a quiet escalation for it, which commits in its own
+ * transaction. Unlike the throwing variant below, this never throws, so the
+ * escalation survives. Uses a rolling window keyed on the user + action.
  */
-export async function enforceRateLimit(
+async function checkRateLimit(
   ctx: MutationCtx,
   userId: Id<"users">,
   action: keyof typeof RATE_LIMITS,
-): Promise<void> {
+): Promise<boolean> {
   const budget = RATE_LIMITS[action];
   if (budget === undefined) {
-    return;
+    return true;
   }
   const now = Date.now();
   const rows = await ctx.db
@@ -216,18 +220,61 @@ export async function enforceRateLimit(
     await Promise.all(stale.map((row) => ctx.db.delete(row._id)));
   }
   if (recent.length >= budget.limit) {
-    // Repeatedly blasting past a budget is a bot/farm signal — count it
-    // toward a quiet shadowban instead of just blocking the one action.
-    await escalateSilently(ctx, userId, 1, "rate-limit");
-    throw new Error(
-      "You're moving a little too fast. Slow down and try again in a moment.",
-    );
+    // Budget spent — reject the action. The quiet flag was already recorded
+    // the moment this action filled the budget (below), so nothing is lost
+    // by the rejection. Convex mutations are atomic: a throw rolls back
+    // every write and every scheduled call made by the mutation, so a flag
+    // recorded at rejection time would silently vanish for every caller
+    // that rejects by throwing. Recording at budget-fill time keeps it for
+    // every caller, throwing or not.
+    return false;
   }
   await ctx.db.insert("rateLimits", {
     userId,
     action,
     windowStart: now,
   });
+  // This action filled the activity budget. Repeatedly filling a budget is
+  // the shape of a bot or farm — count it toward a quiet shadowban. The
+  // escalation is scheduled in its own transaction, so it survives whether
+  // this caller commits or throws afterwards.
+  if (recent.length + 1 >= budget.limit) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.security.escalateSilentlyInternal,
+      { userId, points: 1, reason: "rate-limit", source: `rateLimit:${action}` },
+    );
+  }
+  return true;
+}
+
+/**
+ * Throwing budget check for mutations that reject via errors (the default).
+ * Escalations for these callers use the scheduled internal mutation above,
+ * so the points are recorded even though the caller throws.
+ */
+export async function enforceRateLimit(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  action: keyof typeof RATE_LIMITS,
+): Promise<void> {
+  if (!(await checkRateLimit(ctx, userId, action))) {
+    throw new Error(
+      "You're moving a little too fast. Slow down and try again in a moment.",
+    );
+  }
+}
+
+/**
+ * Non-throwing budget check for mutations that reject via a structured
+ * result (createPost), so the escalation still commits with the caller.
+ */
+export async function enforceRateLimitResult(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  action: keyof typeof RATE_LIMITS,
+): Promise<boolean> {
+  return checkRateLimit(ctx, userId, action);
 }
 
 /** Abuse signals that add up to a quiet shadowban. */
@@ -272,11 +319,41 @@ export type SilentFlagReason =
 /** Flags older than this no longer count — points decay after clean behavior. */
 const FLAG_DECAY_MS = 7 * 24 * 3600_000;
 
+/** Validator for the silent-flag reasons, shared with the internal escalator. */
+const SILENT_FLAG_REASON = v.union(
+  v.literal("rate-limit"),
+  v.literal("duplicate"),
+  v.literal("ai"),
+  v.literal("farm-reciprocal"),
+  v.literal("farm-churn"),
+);
+
+/**
+ * Internal entry point that lets another mutation escalate points as a
+ * separate scheduled transaction. Needed because Convex mutations are
+ * atomic: a mutation that must reject the action (duplicate posts,
+ * rate-limit breaches) would roll back any direct escalation write — and
+ * even a `ctx.scheduler.runAfter` call — together with the error. The
+ * escalation is scheduled instead, so it commits in its own transaction.
+ */
+export const escalateSilentlyInternal = internalMutation({
+  args: {
+    userId: v.id("users"),
+    points: v.number(),
+    reason: SILENT_FLAG_REASON,
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, points, reason, source }) => {
+    await escalateSilently(ctx, userId, points, reason, source);
+  },
+});
+
 export async function escalateSilently(
   ctx: MutationCtx,
   userId: Id<"users">,
   points: number,
   reason: SilentFlagReason,
+  source?: string,
 ): Promise<void> {
   const user = await ctx.db.get(userId);
   if (user === null || user.role === "admin" || user.shadowban === true) {
@@ -309,7 +386,16 @@ export async function escalateSilently(
     userId,
     reason,
     points,
+    source,
   });
+  // The moment the account crosses the threshold is itself an audit event:
+  // the system silenced it, so the Security tab shows when and why.
+  if (silentFlags >= SHADOWBAN_THRESHOLD) {
+    await ctx.db.insert("moderationLog", {
+      targetUserId: userId,
+      action: "silence",
+    });
+  }
 }
 
 /** Throw unless the account is allowed to post/engage. */
@@ -601,6 +687,20 @@ export const listSilencedAccounts = query({
         for (const event of events) {
           breakdown[event.reason] = (breakdown[event.reason] ?? 0) + event.points;
         }
+        // When the silence began: the moderation log entry that silenced the
+        // account (system or admin), falling back to the first flag event.
+        const actions = await ctx.db
+          .query("moderationLog")
+          .withIndex("by_target", (q) => q.eq("targetUserId", u._id))
+          .take(200);
+        const silenced = actions
+          .filter((a) => a.action === "silence")
+          .sort((a, b) => b._creationTime - a._creationTime)[0];
+        const silencedAt =
+          silenced?._creationTime ??
+          (events.length > 0
+            ? Math.min(...events.map((e) => e._creationTime))
+            : undefined);
         return {
           ...publicUser(u),
           avatarUrl: u.avatarStorageId
@@ -610,6 +710,7 @@ export const listSilencedAccounts = query({
           lifetimeSilentFlags: u.lifetimeSilentFlags ?? 0,
           silentEventCount: events.length,
           breakdown,
+          silencedAt,
         };
       }),
     );
@@ -641,9 +742,28 @@ export const silentFlagHistory = query({
       .query("silentFlagEvents")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .take(200);
+    const actions = await ctx.db
+      .query("moderationLog")
+      .withIndex("by_target", (q) => q.eq("targetUserId", userId))
+      .take(200);
     const breakdown: Record<string, number> = {};
     for (const event of events) {
       breakdown[event.reason] = (breakdown[event.reason] ?? 0) + event.points;
+    }
+    // Resolve actor usernames once so the trail can name who acted.
+    const actorIds = [
+      ...new Set(
+        actions
+          .map((a) => a.actorId)
+          .filter((id): id is Id<"users"> => id !== undefined),
+      ),
+    ];
+    const actorNames = new Map<Id<"users">, string>();
+    for (const id of actorIds) {
+      const actor = await ctx.db.get(id);
+      if (actor !== null) {
+        actorNames.set(id, actor.username ?? actor.name ?? "Admin");
+      }
     }
     return {
       silentFlags: user.silentFlags ?? 0,
@@ -654,7 +774,17 @@ export const silentFlagHistory = query({
         .map((e) => ({
           reason: e.reason,
           points: e.points,
+          source: e.source ?? null,
           createdAt: e._creationTime,
+        })),
+      actions: actions
+        .sort((a, b) => b._creationTime - a._creationTime)
+        .map((a) => ({
+          action: a.action,
+          actor: a.actorId !== undefined ? (actorNames.get(a.actorId) ?? "Admin") : null,
+          standardId: a.standardId ?? null,
+          note: a.note ?? null,
+          createdAt: a._creationTime,
         })),
     };
   },
@@ -676,6 +806,11 @@ export const bulkUnsilence = mutation({
     // write budget — each restore can reconcile up to 100 phantom follows.
     for (const userId of userIds.slice(0, 50)) {
       await unsilenceAccount(ctx, userId);
+      await ctx.db.insert("moderationLog", {
+        targetUserId: userId,
+        actorId: adminId,
+        action: "unsilence",
+      });
     }
   },
 });
@@ -733,6 +868,22 @@ export const setAccountStatus = mutation({
       patch.moderationNote = note.trim();
     }
     await ctx.db.patch(userId, patch);
+    // Audit the admin action so the trail records who changed what, when.
+    const action =
+      status === "banned"
+        ? "ban"
+        : status === "restricted"
+          ? "restrict"
+          : status === "active"
+            ? "approve"
+            : "flag";
+    await ctx.db.insert("moderationLog", {
+      targetUserId: userId,
+      actorId: adminId,
+      action,
+      standardId,
+      note: note !== undefined && note.trim().length > 0 ? note.trim() : undefined,
+    });
   },
 });
 
@@ -783,10 +934,24 @@ export const setShadowban = mutation({
         patch.moderationNote = note.trim();
       }
       await ctx.db.patch(userId, patch);
+      await ctx.db.insert("moderationLog", {
+        targetUserId: userId,
+        actorId: adminId,
+        action: "silence",
+        standardId,
+        note: note !== undefined && note.trim().length > 0 ? note.trim() : undefined,
+      });
     } else {
       // Unsilencing restores an account fully: reconcile the follow counts
       // so phantom follows made while silenced are counted once, forever.
       await unsilenceAccount(ctx, userId);
+      await ctx.db.insert("moderationLog", {
+        targetUserId: userId,
+        actorId: adminId,
+        action: "unsilence",
+        standardId,
+        note: note !== undefined && note.trim().length > 0 ? note.trim() : undefined,
+      });
     }
   },
 });

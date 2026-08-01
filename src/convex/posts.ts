@@ -14,6 +14,7 @@ import { publicUser } from "./privacy";
 import {
   enforceActive,
   enforceRateLimit,
+  enforceRateLimitResult,
   escalateSilently,
   hiddenAuthorIds,
   isSandboxed,
@@ -159,25 +160,39 @@ export const createPost = mutation({
       });
       const me = await ctx.db.get(userId);
       await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
-      return postId;
+      return { ok: true, postId };
     }
     await enforceActive(ctx, userId);
-    await enforceRateLimit(ctx, userId, "post");
+    // Rate-limit breaches reject with a structured result (not a throw) so
+    // the quiet flag survives: the budget-fill escalation commits in its own
+    // transaction, and a thrown error would roll it back.
+    if (!(await enforceRateLimitResult(ctx, userId, "post"))) {
+      return {
+        ok: false,
+        error:
+          "You're moving a little too fast. Slow down and try again in a moment.",
+      };
+    }
     const fp = text.length > 0 ? fingerprint(text) : undefined;
     if (fp !== undefined) {
       const blocked = await isDuplicate(ctx, userId, fp);
       if (blocked !== null) {
         // Reposting someone else's content is a strong spam signal — count
         // it toward a quiet shadowban. Your own recent re-posts are a gentle
-        // nudge, never an escalation.
+        // nudge, never an escalation. This returns a structured rejection
+        // instead of throwing: Convex mutations are atomic, so a throw would
+        // roll back the escalation write and silently lose the flag. A
+        // structured result commits both the flag and the rejection.
         if (blocked.kind === "stolen") {
-          await escalateSilently(ctx, userId, 3, "duplicate");
+          await escalateSilently(ctx, userId, 3, "duplicate", "duplicate-post");
         }
-        throw new Error(
-          blocked.kind === "stolen"
-            ? "This content already exists on PureWire. Only original posts are allowed."
-            : "You've posted this recently. Please wait a moment.",
-        );
+        return {
+          ok: false,
+          error:
+            blocked.kind === "stolen"
+              ? "This content already exists on PureWire. Only original posts are allowed."
+              : "You've posted this recently. Please wait a moment.",
+        };
       }
     }
     // Anti-AI enforcement: block clear AI content, flag suspicious text
@@ -205,7 +220,7 @@ export const createPost = mutation({
     if (needsReview) {
       // Repeated suspicious content moves an account toward a quiet
       // shadowban instead of an abrupt ban.
-      await escalateSilently(ctx, userId, 2, "ai");
+      await escalateSilently(ctx, userId, 2, "ai", "ai-review");
     }
     const postId = await ctx.db.insert("posts", {
       authorId: userId,
@@ -225,7 +240,7 @@ export const createPost = mutation({
     if (text.length > 0) {
       await notifyMentions(ctx, text, userId, postId);
     }
-    return postId;
+    return { ok: true, postId };
   },
 });
 

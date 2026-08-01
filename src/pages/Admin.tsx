@@ -546,6 +546,7 @@ function SecurityPanel() {
     userId: string;
     kind: "restrict" | "ban" | "silence";
   } | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Unsilencing is a restore (no citation needed); silencing opens the
@@ -640,6 +641,24 @@ function SecurityPanel() {
                       — {u.moderationNote}
                     </span>
                   ) : null}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setExpandedId(expandedId === u._id ? null : u._id)}
+                className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                <History className="size-3.5" />
+                {expandedId === u._id ? "Hide audit trail" : "Audit trail"}
+                {expandedId === u._id ? (
+                  <ChevronUp className="size-3.5" />
+                ) : (
+                  <ChevronDown className="size-3.5" />
+                )}
+              </button>
+              {expandedId === u._id ? (
+                <div className="mt-2">
+                  <AuditTrail userId={u._id} />
                 </div>
               ) : null}
             </div>
@@ -753,18 +772,49 @@ const REASON_LABELS: Record<string, { label: string; cls: string }> = {
   },
 };
 
-/** A single silenced account's flag history, fetched on demand when expanded. */
-function SilencedHistory({ userId }: { userId: string }) {
+/** Where a silent flag came from — the surface that tripped the signal. */
+const SOURCE_LABELS: Record<string, string> = {
+  "duplicate-post": "Rejected duplicate post",
+  "ai-review": "AI-suspicious content",
+  "rateLimit:post": "Posting budget",
+  "rateLimit:comment": "Commenting budget",
+  "rateLimit:like": "Liking budget",
+  "rateLimit:follow": "Following budget",
+  "rateLimit:share": "Sharing budget",
+  "rateLimit:upload": "Upload budget",
+  "follow-reciprocal": "Instant mutual follow",
+  "follow-churn": "Follow churn",
+};
+
+/** Human labels for admin moderation actions on the audit trail. */
+const ACTION_LABELS: Record<string, string> = {
+  silence: "Silenced",
+  unsilence: "Unsilenced",
+  restrict: "Restricted",
+  ban: "Banned",
+  approve: "Approved",
+  flag: "Flagged",
+};
+
+/**
+ * A single account's full audit trail: every silent-flag event (trigger,
+ * points, source, when) and every admin action (who silenced/restored,
+ * when, and the cited Standard principle). Fetched on demand when expanded.
+ */
+function AuditTrail({ userId }: { userId: string }) {
   const history = useQuery(api.security.silentFlagHistory, {
     userId: userId as Id<"users">,
   });
   if (history === undefined) {
     return <Skeleton className="h-24" />;
   }
-  if (history === null || history.events.length === 0) {
+  const empty =
+    history === null ||
+    (history.events.length === 0 && history.actions.length === 0);
+  if (empty) {
     return (
       <p className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
-        No silent-flag events on record for this account.
+        No moderation history on record for this account.
       </p>
     );
   }
@@ -773,32 +823,59 @@ function SilencedHistory({ userId }: { userId: string }) {
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">
           Current flags{" "}
-          <b className="text-foreground">{history.silentFlags}</b>
+          <b className="text-foreground">{history?.silentFlags}</b>
         </span>
         <span className="text-muted-foreground">
           Lifetime{" "}
-          <b className="text-foreground">{history.lifetimeSilentFlags}</b>
+          <b className="text-foreground">{history?.lifetimeSilentFlags}</b>
         </span>
       </div>
-      {history.events.map((event, i) => (
+      {history?.events.map((event, i) => (
         <div
-          key={i}
+          key={`e${i}`}
           className="flex items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5 text-xs"
         >
-          <span className="flex items-center gap-2">
+          <span className="flex min-w-0 items-center gap-2">
             <span
               className={[
-                "rounded-full px-2 py-0.5 font-medium",
+                "shrink-0 rounded-full px-2 py-0.5 font-medium",
                 REASON_LABELS[event.reason]?.cls ?? "bg-muted text-muted-foreground",
               ].join(" ")}
             >
               {REASON_LABELS[event.reason]?.label ?? event.reason}
             </span>
-            <span className="text-muted-foreground">
+            {event.source ? (
+              <span className="truncate text-muted-foreground">
+                {SOURCE_LABELS[event.source] ?? event.source}
+              </span>
+            ) : null}
+            <span className="shrink-0 text-muted-foreground">
               {timeAgo(event.createdAt)}
             </span>
           </span>
-          <span className="font-semibold">+{event.points}</span>
+          <span className="shrink-0 font-semibold">+{event.points}</span>
+        </div>
+      ))}
+      {history?.actions.map((action, i) => (
+        <div
+          key={`a${i}`}
+          className="flex items-center justify-between gap-2 rounded-lg bg-primary/5 px-3 py-1.5 text-xs"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 font-medium text-primary">
+              {ACTION_LABELS[action.action] ?? action.action}
+            </span>
+            <span className="truncate text-muted-foreground">
+              {action.actor === null
+                ? "automatically"
+                : `by @${action.actor}`}
+              {action.note ? ` — ${action.note}` : ""}
+            </span>
+            <span className="shrink-0 text-muted-foreground">
+              {timeAgo(action.createdAt)}
+            </span>
+          </span>
+          {action.standardId ? <StandardChip standardId={action.standardId} /> : null}
         </div>
       ))}
     </div>
@@ -840,6 +917,7 @@ function SilencedPanel() {
     lifetimeSilentFlags?: number | null;
     silentEventCount?: number | null;
     breakdown?: Record<string, number> | null;
+    silencedAt?: number | null;
     moderationStandardId?: string | null;
     moderationNote?: string | null;
   }[];
@@ -960,7 +1038,7 @@ function SilencedPanel() {
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
                     @{u.username} · {u.maskedEmail} · silenced{" "}
-                    {timeAgo(u._creationTime)}
+                    {timeAgo(u.silencedAt ?? u._creationTime)}
                   </p>
                 </div>
               </div>
@@ -1020,7 +1098,7 @@ function SilencedPanel() {
             </div>
             {isExpanded ? (
               <div className="mt-3 pl-9">
-                <SilencedHistory userId={u._id} />
+                <AuditTrail userId={u._id} />
               </div>
             ) : null}
           </motion.div>

@@ -228,14 +228,35 @@ const schema = defineSchema({
   })
     .index("by_user_action", ["userId", "action"])
     .index("by_window", ["windowStart"]),
-  // Trust & safety: every silent-flag escalation, with the reason and
-  // points, so admins can see why an account was quietly silenced and how
-  // often. Appended by escalateSilently; read by the Silenced admin tab.
+  // Trust & safety: every silent-flag escalation, with the reason (trigger),
+  // points, source (which surface tripped it), and timestamp, so admins can
+  // see exactly why an account was quietly silenced and when. Appended by
+  // escalateSilently; read by the Security and Silenced admin tabs.
   silentFlagEvents: defineTable({
     userId: v.id("users"),
     reason: v.string(),
     points: v.number(),
+    source: v.optional(v.string()),
   }).index("by_user", ["userId"]),
+  // Admin audit trail for quiet moderation: every silence / unsilence (and
+  // status change) with who acted, when, and the cited Standard principle,
+  // so the Security tab shows exactly why each account is silenced.
+  moderationLog: defineTable({
+    targetUserId: v.id("users"),
+    actorId: v.optional(v.id("users")), // the admin who acted; absent = system
+    action: v.union(
+      v.literal("silence"),
+      v.literal("unsilence"),
+      v.literal("restrict"),
+      v.literal("ban"),
+      v.literal("approve"),
+      v.literal("flag"),
+    ),
+    standardId: v.optional(v.string()),
+    note: v.optional(v.string()),
+  })
+    .index("by_target", ["targetUserId"])
+    .index("by_actor", ["actorId"]),
 });
 
 export default schema;

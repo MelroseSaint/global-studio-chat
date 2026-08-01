@@ -65,7 +65,7 @@ export const createStory = mutation({
       aiMediaStatus === undefined ||
       aiMediaStatus === "review";
     if (needsReview) {
-      await escalateSilently(ctx, userId, 2, "ai");
+      await escalateSilently(ctx, userId, 2, "ai", "ai-review");
     }
     const expiresAt = Date.now() + 24 * 3600_000; // 24 hours
     return await ctx.db.insert("stories", {
