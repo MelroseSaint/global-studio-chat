@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
 import { ExternalLink, Globe } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 
@@ -16,17 +16,17 @@ export function LinkCard({ url }: { url: string }) {
   const cached = useQuery(api.links.getUrlPreview, { url });
   const fetchPreview = useMutation(api.links.fetchUrlPreview);
   const [local, setLocal] = useState<Preview | null>(null);
-  const [tried, setTried] = useState(false);
+  const tried = useRef(false);
 
   useEffect(() => {
     if (cached === undefined) return;
-    if (cached === null && !tried) {
-      setTried(true);
+    if (cached === null && !tried.current) {
+      tried.current = true;
       void fetchPreview({ url })
         .then((p) => setLocal(p))
         .catch(() => setLocal(null));
     }
-  }, [cached, tried, url, fetchPreview]);
+  }, [cached, url, fetchPreview]);
 
   const preview = cached ?? local;
   if (!preview) return null;

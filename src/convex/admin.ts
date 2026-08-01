@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./_generated/server";
 
 const ADMIN_EMAIL = "monreodoses@gmail.com";
 
@@ -24,7 +24,7 @@ export const ensureAdminStatus = mutation({
   },
 });
 
-async function requireAdmin(ctx: any) {
+async function requireAdmin(ctx: QueryCtx) {
   const userId = await getAuthUserId(ctx);
   if (userId === null) {
     throw new Error("Not authenticated");
@@ -53,7 +53,7 @@ export const dashboardStats = query({
       posts: posts.length,
       stories: stories.length,
       tickets: tickets.length,
-      openTickets: tickets.filter((t: any) => t.status === "open").length,
+      openTickets: tickets.filter((t) => t.status === "open").length,
       follows: follows.length,
       comments: comments.length,
       likes: (await ctx.db.query("likes").collect()).length,

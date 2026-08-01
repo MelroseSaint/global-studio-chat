@@ -21,7 +21,7 @@ export interface MediaItem {
   url: string;
 }
 
-export function kindFromMime(type: string): MediaKind {
+function kindFromMime(type: string): MediaKind {
   if (type.startsWith("video/")) return "video";
   if (type.startsWith("audio/")) return "audio";
   return "image";

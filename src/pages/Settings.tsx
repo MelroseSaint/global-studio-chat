@@ -1,6 +1,6 @@
 import { useMutation } from "convex/react";
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
@@ -26,28 +26,27 @@ interface LinkRow {
   url: string;
 }
 
+type Profile = NonNullable<ReturnType<typeof useAuth>["user"]>;
+
 export function Settings() {
   const { user } = useAuth();
+
+  if (!user) return null;
+  // Remount the form when the user changes so its state is initialized from
+  // the profile directly — no sync-from-effect needed.
+  return <SettingsForm key={user._id} user={user} />;
+}
+
+function SettingsForm({ user }: { user: Profile }) {
   const updateProfile = useMutation(api.users.updateProfile);
 
-  const [name, setName] = useState("");
-  const [username, setUsername] = useState("");
-  const [bio, setBio] = useState("");
-  const [links, setLinks] = useState<LinkRow[]>([]);
+  const [name, setName] = useState(user.name ?? "");
+  const [username, setUsername] = useState(user.username ?? "");
+  const [bio, setBio] = useState(user.bio ?? "");
+  const [links, setLinks] = useState<LinkRow[]>(user.links ?? []);
   const [avatar, setAvatar] = useState<MediaItem[]>([]);
   const [banner, setBanner] = useState<MediaItem[]>([]);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (user) {
-      setName(user.name ?? "");
-      setUsername(user.username ?? "");
-      setBio(user.bio ?? "");
-      setLinks(user.links ?? []);
-    }
-  }, [user]);
-
-  if (!user) return null;
 
   const save = async () => {
     setSaving(true);

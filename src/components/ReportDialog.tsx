@@ -1,6 +1,6 @@
 import { useMutation } from "convex/react";
 import { Flag, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
@@ -52,13 +52,6 @@ export function ReportDialog({
   const [details, setDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (open) {
-      setViolation("");
-      setDetails("");
-    }
-  }, [open]);
-
   const submit = async () => {
     if (!violation) {
       toast.error("Please choose what was violated.");
@@ -83,7 +76,17 @@ export function ReportDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Reset the form each time the dialog is opened.
+        if (next) {
+          setViolation("");
+          setDetails("");
+        }
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

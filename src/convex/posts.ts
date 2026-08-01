@@ -3,7 +3,13 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
-import { mutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 
 /**
  * Simple FNV-1a fingerprint used to verify content originality.
@@ -20,11 +26,17 @@ function fingerprint(content: string): string {
   return (hash >>> 0).toString(36);
 }
 
-async function isDuplicate(ctx: any, authorId: any, fp: string) {
+async function isDuplicate(
+  ctx: MutationCtx,
+  authorId: Id<"users">,
+  fp: string,
+) {
   const recent = await ctx.db
     .query("posts")
-    .withIndex("by_fingerprint", (q: any) => q.eq("fingerprint", fp))
-    .filter((row: any) => row.gte(row.field("_creationTime"), Date.now() - 7 * 24 * 3600_000))
+    .withIndex("by_fingerprint", (q) => q.eq("fingerprint", fp))
+    .filter((row) =>
+      row.gte(row.field("_creationTime"), Date.now() - 7 * 24 * 3600_000),
+    )
     .take(5);
   for (const post of recent) {
     // Prevent stealing another user's content and oversaturation.
@@ -32,7 +44,7 @@ async function isDuplicate(ctx: any, authorId: any, fp: string) {
       return "This content already exists on PureWire. Only original posts are allowed.";
     }
   }
-  const own = recent.find((p: any) => p.authorId === authorId);
+  const own = recent.find((p) => p.authorId === authorId);
   if (own && Date.now() - own._creationTime < 5 * 60_000) {
     return "You've posted this recently. Please wait a moment.";
   }
@@ -40,14 +52,20 @@ async function isDuplicate(ctx: any, authorId: any, fp: string) {
 }
 
 /** Resolve @username mentions in content to user ids and notify them. */
-async function notifyMentions(ctx: any, content: string, authorId: any, postId: any) {
-  const mentions = [...content.matchAll(/@([a-z0-9_]{3,24})/gi)]
-    .map((m) => m[1].toLowerCase());
+async function notifyMentions(
+  ctx: MutationCtx,
+  content: string,
+  authorId: Id<"users">,
+  postId: Id<"posts">,
+) {
+  const mentions = [...content.matchAll(/@([a-z0-9_]{3,24})/gi)].map((m) =>
+    m[1].toLowerCase(),
+  );
   const unique = [...new Set(mentions)];
   for (const username of unique) {
     const target = await ctx.db
       .query("users")
-      .withIndex("by_username", (q: any) => q.eq("username", username))
+      .withIndex("by_username", (q) => q.eq("username", username))
       .first();
     if (target !== null && target._id !== authorId) {
       await ctx.db.insert("notifications", {
@@ -135,7 +153,7 @@ export const deletePost = mutation({
   },
 });
 
-async function withMedia(ctx: any, user: any) {
+async function withMedia(ctx: QueryCtx, user: Doc<"users"> | null) {
   if (user === null) {
     return null;
   }
@@ -146,13 +164,17 @@ async function withMedia(ctx: any, user: any) {
   return { ...user, avatarUrl, bannerUrl };
 }
 
-async function withAuthor(ctx: any, post: any, viewerId: any) {
+async function withAuthor(
+  ctx: QueryCtx,
+  post: Doc<"posts">,
+  viewerId: Id<"users"> | null,
+) {
   const author = await withMedia(ctx, await ctx.db.get(post.authorId));
   let likedByMe = false;
   if (viewerId !== null) {
     const like = await ctx.db
       .query("likes")
-      .withIndex("by_pair", (q: any) =>
+      .withIndex("by_pair", (q) =>
         q.eq("userId", viewerId).eq("postId", post._id),
       )
       .first();
@@ -160,7 +182,7 @@ async function withAuthor(ctx: any, post: any, viewerId: any) {
   }
   const mediaUrls = post.media
     ? await Promise.all(
-        post.media.map(async (m: any) => ({
+        post.media.map(async (m) => ({
           ...m,
           url: await ctx.storage.getUrl(m.storageId),
         })),
@@ -190,7 +212,7 @@ export const feed = query({
   },
   handler: async (ctx, { paginationOpts, filter }) => {
     const viewerId = await getAuthUserId(ctx);
-    let base: any = ctx.db.query("posts");
+    let base = ctx.db.query("posts");
     if (filter === "following" && viewerId !== null) {
       const follows = await ctx.db
         .query("follows")
@@ -218,7 +240,7 @@ export const feed = query({
     }
     const result = await base.order("desc").paginate(paginationOpts);
     const page = await Promise.all(
-      result.page.map((p: any) => withAuthor(ctx, p, viewerId)),
+      result.page.map((p) => withAuthor(ctx, p, viewerId)),
     );
     return { ...result, page };
   },
