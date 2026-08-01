@@ -57,7 +57,7 @@ export function Feed() {
             location: viewerPoint,
             radiusKm,
           }
-        : "skip"
+        : { filter, radiusKm }
       : { filter },
     { initialNumItems: 10 },
   );
@@ -69,13 +69,21 @@ export function Feed() {
     }
   }, [inView, status, loadMore]);
 
-  // results is undefined while the query is skipped (Local tab before a
-  // location is known) — default to an empty array so the map below is safe.
+  // results is undefined only before the first page loads — default to an
+  // empty array so the map below is safe.
   const posts = (results ?? []) as unknown as PostItem[];
 
-  const localReady = filter !== "local" || viewerPoint !== null;
+  // When the viewer hasn't granted live location, the Local tab still runs
+  // (the server falls back to their stored home anchor — a coarsened
+  // ~1 km cell, never exact). The prompt is only a hint, not a blocker, and
+  // only shows when the fallback produced nothing (no anchor, or an empty
+  // area) — not while home-anchor posts are actually rendering.
   const localEmpty =
-    filter === "local" && !locating && viewerPoint === null;
+    filter === "local" &&
+    !locating &&
+    viewerPoint === null &&
+    posts.length === 0 &&
+    status !== "LoadingFirstPage";
 
   return (
     <div className="pb-20 lg:pb-0">
@@ -118,7 +126,7 @@ export function Feed() {
               ) : (
                 <>
                   <MapPin className="size-3.5 shrink-0" />
-                  Allow location access to see what's near you
+                  Showing posts near your home area — coarsened, never exact
                 </>
               )}
             </p>
@@ -164,8 +172,8 @@ export function Feed() {
         >
           <Empty
             icon={MapPin}
-            title="Allow location access"
-            description="The Local feed is a 'near me, only while browsing' mode: your position is read live to find nearby posts, used for this request, and never stored."
+            title="Nothing nearby yet"
+            description="The Local tab centers on your home location — a coarsened ~1 km area, never your exact point — when you're not granting live access. Allow location access for a truer 'near me', or add a home location in Settings."
             action={
               <button
                 onClick={() => void locate()}
@@ -178,7 +186,7 @@ export function Feed() {
         </motion.div>
       )}
 
-      {localReady && posts.length === 0 && status !== "LoadingFirstPage" && (
+      {posts.length === 0 && status !== "LoadingFirstPage" && !localEmpty && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -197,7 +205,7 @@ export function Feed() {
               filter === "following"
                 ? "Follow some creators and their posts will show up here."
                 : filter === "local"
-                  ? "Posts shared near you will show up here. Share something from your own corner of the world."
+                  ? "Posts shared near your home area will show up here. Share something from your own corner of the world."
                   : "Be the first to share something with the community."
             }
           />

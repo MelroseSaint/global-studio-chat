@@ -4,6 +4,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import {
   cleanLocationLabel,
+  coarsenLocation,
   homeLocationValidator,
 } from "./location";
 import { publicUser } from "./privacy";
@@ -90,9 +91,12 @@ export const updateProfile = mutation({
     ),
     avatarStorageId: v.optional(v.id("_storage")),
     bannerStorageId: v.optional(v.id("_storage")),
-    // Home location: a public label only. Coordinates are never stored —
-    // they get the same treatment as the plain-text email address. Pass
-    // null to remove an existing label.
+    // Home location: a public label plus coordinates. The coordinates are
+    // never stored precisely — they are coarsened to a ~1 km cell on write
+    // (never the point) and stripped from every client response, matching
+    // the plain-text email treatment. They exist server-side only so the
+    // Local feed can center itself when live browser geolocation isn't
+    // granted. Pass null to remove the location entirely.
     location: v.optional(
       v.union(v.null(), homeLocationValidator),
     ),
@@ -104,6 +108,7 @@ export const updateProfile = mutation({
     }
     // Banned/restricted accounts can't keep changing their identity.
     await enforceActive(ctx, userId);
+    const current = await ctx.db.get(userId);
     const patch: Record<string, unknown> = {};
     if (args.name !== undefined) patch.name = args.name;
     if (args.bio !== undefined) patch.bio = args.bio;
@@ -116,7 +121,27 @@ export const updateProfile = mutation({
       patch.location =
         args.location === null
           ? null
-          : { label: cleanLocationLabel(args.location.label) };
+          : coarsenLocation({
+              // Clients never receive coordinates (publicUser strips
+              // them). Preserve the stored anchor only when the label is
+              // UNCHANGED (a plain re-save of an existing place); a
+              // changed label without fresh coordinates is a new place,
+              // so the old neighborhood anchor must not carry over — the
+              // Local feed would stay centered on a stale area.
+              latitude:
+                args.location.latitude ??
+                (cleanLocationLabel(args.location.label) ===
+                  current?.location?.label
+                  ? current?.location?.latitude
+                  : undefined),
+              longitude:
+                args.location.longitude ??
+                (cleanLocationLabel(args.location.label) ===
+                  current?.location?.label
+                  ? current?.location?.longitude
+                  : undefined),
+              label: cleanLocationLabel(args.location.label),
+            });
     }
     if (args.username !== undefined) {
       const username = args.username.toLowerCase().replace(/[^a-z0-9_]/g, "");

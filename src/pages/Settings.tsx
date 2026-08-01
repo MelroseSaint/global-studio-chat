@@ -13,6 +13,7 @@ import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import { LocationPicker, type PickedLocation } from "@/components/LocationPicker";
 import { MediaUpload, type MediaItem } from "@/components/MediaUpload";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
@@ -69,7 +70,7 @@ function SettingsForm({ user }: { user: Profile }) {
   const [links, setLinks] = useState<LinkRow[]>(user.links ?? []);
   const [avatar, setAvatar] = useState<MediaItem[]>([]);
   const [banner, setBanner] = useState<MediaItem[]>([]);
-  const [location, setLocation] = useState<{ label: string } | null>(
+  const [location, setLocation] = useState<PickedLocation | null>(
     user.location?.label ? { label: user.location.label } : null,
   );
   const [saving, setSaving] = useState(false);
@@ -105,7 +106,7 @@ function SettingsForm({ user }: { user: Profile }) {
         avatarStorageId: avatar[0]?.storageId,
         bannerStorageId: banner[0]?.storageId,
         // An empty label is the same as none — null clears it.
-        location: location?.label.trim() ? location : null,
+        location: location?.label?.trim() ? location : null,
       });
       toast.success("Profile updated.");
     } catch (err) {
@@ -314,34 +315,26 @@ function SettingsForm({ user }: { user: Profile }) {
             Your location
           </CardTitle>
           <CardDescription>
-            A place label to show on your profile. The coordinates are never
-            stored — the Local feed reads your live browser location only
-            while you're browsing, and never saves it.
+            A place you call home — search for it or use your current
+            location. The label shows on your profile; the coordinates are
+            stored only as a coarsened ~1 km area, never the precise point,
+            so the Local feed can find what's near you without live tracking.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="location-label">Label (shown on your profile)</Label>
-            <Input
-              id="location-label"
-              value={location?.label ?? ""}
-              onChange={(e) => setLocation({ label: e.target.value })}
-              placeholder="e.g. Brooklyn, NY"
-              maxLength={60}
+            <Label htmlFor="location-picker">Home location</Label>
+            <LocationPicker
+              id="location-picker"
+              value={location}
+              onChange={setLocation}
             />
           </div>
           <p className="text-xs text-muted-foreground">
-            Only the label is kept and shown publicly. Exact coordinates are
-            never saved anywhere on PureWire.
+            Search or type a place name. Only a coarsened ~1 km anchor is
+            ever stored — never your exact coordinates — and other members
+            only ever see the label you choose.
           </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="self-start text-destructive hover:text-destructive"
-            onClick={() => setLocation(null)}
-          >
-            Remove location
-          </Button>
         </CardContent>
       </Card>
 

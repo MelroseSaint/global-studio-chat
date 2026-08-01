@@ -147,7 +147,7 @@ const sections: TermsSection[] = [
       },
       {
         heading: "Zero Log Retention",
-        body: "PureWire is built with privacy-first infrastructure. Server proxies discard IP addresses and metadata in memory. EXIF location metadata is automatically stripped from media uploads.",
+        body: "PureWire is built with privacy-first infrastructure. Server proxies discard IP addresses and metadata in memory. EXIF location metadata is automatically stripped from media uploads — and videos are remuxed on PureWire's servers so GPS and device atoms are removed before they are ever served.",
       },
       {
         heading: "Subpoenas & Records",

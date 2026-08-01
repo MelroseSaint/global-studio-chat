@@ -14,6 +14,7 @@ import {
 } from "./security";
 
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 export const createStory = mutation({
   args: {
@@ -37,13 +38,21 @@ export const createStory = mutation({
     // Quiet sandbox: the story is accepted so nothing looks wrong, but it
     // stays invisible to everyone else until a human reviews the account.
     if (await isSandboxed(ctx, userId)) {
-      return await ctx.db.insert("stories", {
+      const storyId = await ctx.db.insert("stories", {
         authorId: userId,
         media,
         caption,
         expiresAt: Date.now() + 24 * 3600_000,
         aiStatus: "clean",
       });
+      if (media.kind === "video") {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.videoStrip.stripVideoMetadataInternal,
+          { storyId, media: [media] },
+        );
+      }
+      return storyId;
     }
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "post");
@@ -68,13 +77,21 @@ export const createStory = mutation({
       await escalateSilently(ctx, userId, 2, "ai", "ai-review");
     }
     const expiresAt = Date.now() + 24 * 3600_000; // 24 hours
-    return await ctx.db.insert("stories", {
+    const storyId = await ctx.db.insert("stories", {
       authorId: userId,
       media,
       caption,
       expiresAt,
       aiStatus: needsReview ? "review" : "clean",
     });
+    if (media.kind === "video") {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.videoStrip.stripVideoMetadataInternal,
+        { storyId, media: [media] },
+      );
+    }
+    return storyId;
   },
 });
 

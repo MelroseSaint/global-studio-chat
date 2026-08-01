@@ -1,15 +1,15 @@
 import { useAction, useMutation } from "convex/react";
 import { Loader2, MapPin, Send, Sparkles } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import { LocationPicker, type PickedLocation } from "@/components/LocationPicker";
 import { MediaUpload, type MediaItem } from "@/components/MediaUpload";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
-import { getBrowserLocation } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 
 const MAX_LENGTH = 1000;
@@ -18,15 +18,30 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
   const { user } = useAuth();
   const createPost = useMutation(api.posts.createPost);
   const scanMedia = useAction(api.aiContent.scanMediaForAi);
+  const stripMedia = useAction(api.media.stripVideoMetadata);
   const [content, setContent] = useState("");
   const [media, setMedia] = useState<MediaItem[]>([]);
-  const [location, setLocation] = useState<
-    | { latitude: number; longitude: number; label?: string }
-    | undefined
-  >(undefined);
-  const [locating, setLocating] = useState(false);
+  const [location, setLocation] = useState<PickedLocation | undefined>(undefined);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  // Close the location picker on outside click / touch.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+    };
+  }, [pickerOpen]);
 
   const canPost = content.trim().length > 0 || media.length > 0;
   const overLimit = content.length > MAX_LENGTH;
@@ -37,6 +52,9 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
     try {
       // Scan uploaded media bytes for AI-generator metadata before posting.
       let aiMediaStatus: "clean" | "review" | "blocked" = "clean";
+      // The server-side strip may swap video storageIds, so the list passed
+      // to createPost is the cleaned one, not the original uploads.
+      let postMedia: Pick<MediaItem, "storageId" | "kind">[] | undefined;
       if (media.length > 0) {
         const scan = await scanMedia({
           media: media.map((m) => ({ storageId: m.storageId, kind: m.kind })),
@@ -48,16 +66,18 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
           return;
         }
         aiMediaStatus = scan.status;
+        // Server-side remux: strip GPS/device metadata atoms from video
+        // containers BEFORE the post exists, so the document never
+        // references a clip that still carries them. Runs after the AI scan
+        // above, which must read the original bytes first — stripping must
+        // never remove the evidence that media was machine-made.
+        postMedia = await stripMedia({
+          media: media.map((m) => ({ storageId: m.storageId, kind: m.kind })),
+        });
       }
       const result = await createPost({
         content: content.trim(),
-        media:
-          media.length > 0
-            ? media.map((m) => ({
-                storageId: m.storageId,
-                kind: m.kind,
-              }))
-            : undefined,
+        media: postMedia,
         // Perceptual hashes computed during upload — the server uses them
         // to catch flipped/cropped/re-encoded copies of existing media.
         mediaHashes:
@@ -65,7 +85,20 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
             ? media.map((m) => m.hashes ?? []).filter((h) => h.length > 0)
             : undefined,
         aiMediaStatus,
-        location,
+        // A label-only tag (typed place without picked coordinates) can't
+        // power the Local feed filter, so only coords-tagged posts attach a
+        // location. The picker's search and "use my current location" both
+        // supply coordinates.
+        location:
+          location !== undefined &&
+          location.latitude !== undefined &&
+          location.longitude !== undefined
+            ? {
+                label: location.label,
+                latitude: location.latitude,
+                longitude: location.longitude,
+              }
+            : undefined,
       });
       // createPost rejects duplicates and rate-limit breaches with a
       // structured result (not a thrown error) so the quiet flag on the
@@ -77,6 +110,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
       setContent("");
       setMedia([]);
       setLocation(undefined);
+      setPickerOpen(false);
       toast.success("Posted!");
       onPosted?.();
       textareaRef.current?.focus();
@@ -84,24 +118,6 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
       toast.error(err instanceof Error ? err.message : "Could not post.");
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const attachLocation = async () => {
-    if (locating) return;
-    // Home locations are label-only by design (coordinates are never
-    // stored), so tagging a post always reads the live browser position —
-    // an explicit, opt-in permission prompt that is never persisted.
-    setLocating(true);
-    const pos = await getBrowserLocation();
-    setLocating(false);
-    if (pos !== null) {
-      // A label makes the attached location visible on the post card too.
-      setLocation({ ...pos, label: "Nearby" });
-    } else {
-      toast.error(
-        "Couldn't get your location. Allow location access to tag your posts.",
-      );
     }
   };
 
@@ -132,30 +148,47 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
               max={4}
               compact
             />
-            {location ? (
-              <button
-                type="button"
-                onClick={() => setLocation(undefined)}
-                className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
-                title="Remove location"
-              >
-                <MapPin className="size-3.5" />
-                <span className="max-w-32 truncate">
-                  {location.label ?? "Nearby"}
-                </span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void attachLocation()}
-                disabled={locating}
-                className="flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary disabled:opacity-60"
-                title="Add your location"
-              >
-                <MapPin className="size-3.5" />
-                {locating ? "Locating…" : "Location"}
-              </button>
-            )}
+            <div className="relative" ref={pickerRef}>
+              {location ? (
+                <button
+                  type="button"
+                  onClick={() => setLocation(undefined)}
+                  className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+                  title="Remove location"
+                >
+                  <MapPin className="size-3.5" />
+                  <span className="max-w-32 truncate">
+                    {location.label ?? "Nearby"}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen((o) => !o)}
+                  className="flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                  title="Add your location"
+                >
+                  <MapPin className="size-3.5" />
+                  Location
+                </button>
+              )}
+              {pickerOpen && (
+                <div className="absolute left-0 top-full z-30 mt-2 w-72 rounded-xl border bg-background p-2 shadow-lg">
+                  <LocationPicker
+                    value={location ?? null}
+                    onChange={(loc) => {
+                      setLocation(loc ?? undefined);
+                      if (loc) setPickerOpen(false);
+                    }}
+                    placeholder="Search a place…"
+                    // Post tags need coordinates for the Local feed, so
+                    // free-typed labels are dropped at submit — only real
+                    // picks should count here.
+                    allowLabelOnly={false}
+                  />
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <span

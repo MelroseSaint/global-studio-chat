@@ -36,9 +36,9 @@ const neverStored = [
   },
   {
     icon: Database,
-    title: "No location, no device data",
+    title: "No exact location, no device data",
     detail:
-      "PureWire never stores your location, contacts, device fingerprints, browser details, or browsing history. Your home location is a label you choose — shown publicly on your profile — and the coordinates behind it are never saved. The Local feed is a 'near me, only while browsing' mode: your browser position is used to build that one request and never stored. Post coordinates exist server-side only to power that filter, and clients only ever receive the label. IP addresses are never written to persistent logs.",
+      "PureWire never stores your exact location, contacts, device fingerprints, browser details, or browsing history. If you add a home location, it is stored only as a coarsened ~1 km area — never the precise point — and only the label you choose is shown publicly. The Local feed's live 'near me' mode reads your browser position to build that one request and never stores it. Place search runs on PureWire's own servers, so your browser never talks to a third-party geocoder. IP addresses are never written to persistent logs.",
   },
   {
     icon: Fingerprint,
@@ -50,7 +50,7 @@ const neverStored = [
     icon: ShieldCheck,
     title: "Your media is scrubbed",
     detail:
-      "Photos are processed in your own browser before upload: hidden EXIF metadata — GPS coordinates, camera serials, device info — is stripped, and images are resized and compressed. Raw camera files with embedded location data never reach PureWire's servers.",
+      "Photos are processed in your own browser before upload: hidden EXIF metadata — GPS coordinates, camera serials, device info — is stripped, and images are resized and compressed. Raw camera files with embedded location data never reach PureWire's servers. Videos get the same treatment twice: most clips are re-encoded in your browser, and every video is remuxed again on PureWire's servers — GPS, camera, and device atoms are stripped from the container before it is ever served. A video can never leak where or on what it was filmed.",
   },
 ];
 
@@ -58,12 +58,12 @@ const stored = [
   {
     title: "Your account",
     detail:
-      "Username, display name, bio, links, photo and banner, your email's salted one-way hash, your verified status, and a home-location label you choose (never coordinates).",
+      "Username, display name, bio, links, photo and banner, your email's salted one-way hash, your verified status, and a home-location label you choose — stored with a coarsened ~1 km anchor (never your exact coordinates) so the Local feed can center itself when you're not granting live location.",
   },
   {
     title: "What you post",
     detail:
-      "Your posts, stories, comments, and the files you upload. Photos are stored after metadata stripping and compression, so the stored copy contains no GPS or device data. Stories expire and are deleted automatically after 24 hours.",
+      "Your posts, stories, comments, and the files you upload. Photos are stored after metadata stripping and compression, so the stored copy contains no GPS or device data. Videos are remuxed on PureWire's servers so the stored copy carries no GPS or device atoms either. Stories expire and are deleted automatically after 24 hours.",
   },
   {
     title: "Your activity",

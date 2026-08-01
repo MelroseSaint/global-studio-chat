@@ -24,6 +24,7 @@ import {
 } from "./security";
 
 import type { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import {
   mutation,
   query,
@@ -237,7 +238,12 @@ export const createPost = mutation({
     if (text.length > 1000) {
       throw new Error("Post is too long (max 1000 characters).");
     }
-    // A location is only meaningful within valid coordinates; label is capped.
+    // A location is only meaningful within valid coordinates; label is
+    // capped, and the stored point is coarsened to a ~1 km cell — the same
+    // privacy treatment as home anchors, so no precise position is ever
+    // persisted (the feed filter only needs neighborhood resolution). The
+    // object is built explicitly (rather than via coarsenLocation, whose
+    // coords are optional) because the posts schema requires them.
     const postLocation =
       location === undefined
         ? undefined
@@ -246,8 +252,8 @@ export const createPost = mutation({
               throw new Error("Invalid location coordinates.");
             }
             return {
-              latitude: location.latitude,
-              longitude: location.longitude,
+              latitude: Number(location.latitude.toFixed(2)),
+              longitude: Number(location.longitude.toFixed(2)),
               label: cleanLocationLabel(location.label),
             };
           })();
@@ -265,6 +271,17 @@ export const createPost = mutation({
         shareCount: 0,
         location: postLocation,
       });
+      // Server-side video privacy safety net: a client that skipped the
+      // strip action (old build, API caller) still gets GPS/device atoms
+      // removed moments after the post exists.
+      const videoMedia = (media ?? []).filter((m) => m.kind === "video");
+      if (videoMedia.length > 0) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.videoStrip.stripVideoMetadataInternal,
+          { postId, media: videoMedia },
+        );
+      }
       const me = await ctx.db.get(userId);
       await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
       return { ok: true, postId };
@@ -349,6 +366,16 @@ export const createPost = mutation({
     });
     const me = await ctx.db.get(userId);
     await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
+    // Server-side video privacy safety net, same as the sandboxed path:
+    // anything the client didn't already strip gets cleaned here.
+    const videoMedia = (media ?? []).filter((m) => m.kind === "video");
+    if (videoMedia.length > 0) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.videoStrip.stripVideoMetadataInternal,
+        { postId, media: videoMedia },
+      );
+    }
     if (text.length > 0) {
       await notifyMentions(ctx, text, userId, postId);
     }
@@ -470,13 +497,26 @@ export const feed = query({
     } else if (filter === "local") {
       // Anchor the "nearby" search on the ephemeral location the client
       // passes — browser geolocation, held only for this one request and
-      // never persisted. There is deliberately no stored anchor: home
-      // locations are label-only (coordinates get the same treatment as
-      // plain-text email), so "near me" always comes from the live
-      // browser position, never from the database.
-      const anchor = location;
+      // never persisted. When the viewer hasn't granted live location,
+      // fall back to their stored home anchor: a coarsened ~1 km cell
+      // (never the precise point, and never sent to clients) read
+      // server-side so the Local feed still works from their profile.
+      let anchor = location;
+      if (anchor === undefined && viewerId !== null) {
+        const viewer = await ctx.db.get(viewerId);
+        const home = viewer?.location;
+        if (
+          home !== null &&
+          home !== undefined &&
+          typeof home.latitude === "number" &&
+          typeof home.longitude === "number"
+        ) {
+          anchor = { latitude: home.latitude, longitude: home.longitude };
+        }
+      }
       if (anchor === undefined) {
-        // No live location — the local tab is empty until one is granted.
+        // No live location and no stored anchor — the local tab is empty
+        // until the viewer grants location or adds a home location.
         return { page: [], isDone: true, continueCursor: "" };
       }
       const radius = Math.min(Math.max(radiusKm ?? 50, 1), 1000);

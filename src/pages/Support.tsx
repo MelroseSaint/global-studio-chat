@@ -64,7 +64,7 @@ const FAQS = [
   },
   {
     q: "How does PureWire protect against bots, farms, and deepfakes?",
-    a: "Three layers. Signup screening: every new account is checked against bot and farm signals — disposable email domains, machine-like usernames, placeholder names — and suspicious accounts are held for a human review, with their content kept off the public feed until they're approved. Activity budgets: posts, comments, likes, shares, and follows run against per-account rate limits so automated floods can't take over. Media checks: images and video are scanned for AI-generator and deepfake metadata before they go live. Scans read what's baked into the file, so nothing is treated as final on its own — anything ambiguous goes to a human review queue, and you can report a bot, farm, or deepfake at any time. Accounts confirmed as bots, farms, or manipulators are restricted or banned, and their content is hidden platform-wide.",
+    a: "Three layers. Signup screening: every new account is checked against bot and farm signals — disposable email domains, machine-like usernames, placeholder names — and suspicious accounts are held for a human review, with their content kept off the public feed until they're approved. Activity budgets: posts, comments, likes, shares, and follows run against per-account rate limits so automated floods can't take over. Media checks: images and video are scanned for AI-generator and deepfake metadata before they go live, and every video is remuxed on PureWire's servers so GPS and device metadata are stripped before it's ever served. Scans read what's baked into the file, so nothing is treated as final on its own — anything ambiguous goes to a human review queue, and you can report a bot, farm, or deepfake at any time. Accounts confirmed as bots, farms, or manipulators are restricted or banned, and their content is hidden platform-wide.",
   },
   {
     q: "Does PureWire quietly limit accounts?",
@@ -92,15 +92,19 @@ const FAQS = [
   },
   {
     q: "What data does PureWire store about me?",
-    a: "Very little, and only what you create: your username, display name, bio, links, photo and banner, a salted one-way SHA-256 hash of your email (never the plain-text address), your posts and stories, your comments, likes, shares and follows, notifications, and support tickets. Stories are deleted automatically after 24 hours. There is no tracking, no analytics, no cookies, no location data, and no advertising profile of any kind.",
+    a: "Very little, and only what you create: your username, display name, bio, links, photo and banner, a salted one-way SHA-256 hash of your email (never the plain-text address), your posts and stories, your comments, likes, shares and follows, notifications, and support tickets. Stories are deleted automatically after 24 hours. Photos and videos are stored with GPS and device metadata stripped — images in your browser, videos on PureWire's servers too. If you add a home location, only a coarsened ~1 km area is stored — never your exact coordinates — and only its label is public. There is no tracking, no analytics, no cookies, and no advertising profile of any kind.",
   },
   {
     q: "How do I delete my account and all my data?",
     a: "Settings → Your data & privacy → Delete account and all data. One confirmation permanently removes your profile, posts, comments, likes, shares, stories, follows, notifications, tickets, blocks, and every file you uploaded. No soft-delete, no copy kept anywhere. The full plain-language inventory is on the Privacy page.",
   },
   {
+    q: "How does the Local feed know where I am?",
+    a: "The Local tab uses your live browser position — read only while you're browsing and never stored — to find posts shared near you. If you add a home location in Settings (search a place or use your current location), it's kept only as a coarsened ~1 km area, so the Local feed still works when you haven't granted live location. Place search runs on PureWire's own servers, and other members only ever see the label you choose.",
+  },
+  {
     q: "Where can I read PureWire's full transparency statement?",
-    a: "On the Privacy page — it lists exactly what we store and why, what we never store (tracking, analytics, cookies, location, plain-text email), how long data lives, and the one-action right to erasure.",
+    a: "On the Privacy page — it lists exactly what we store and why, what we never store (tracking, analytics, cookies, exact location, plain-text email), how long data lives, and the one-action right to erasure.",
   },
 ]
 

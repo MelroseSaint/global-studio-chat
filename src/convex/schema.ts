@@ -67,16 +67,20 @@ const schema = defineSchema({
     // references a stated rule.
     moderationStandardId: v.optional(v.string()),
     moderationNote: v.optional(v.string()),
-    // Home location: a public label the user chose. The coordinates are
-    // deliberately NOT stored — they get the same treatment as the
-    // plain-text email address. The Local feed anchors on the viewer's
-    // ephemeral browser location instead, which is used to build a single
-    // request and never persisted. Null (not just absent) means the user
-    // has explicitly removed it, and updateProfile writes null to clear.
+    // Home location: the user's optional chosen place — a public label,
+    // optionally with a coarsened anchor. Coordinates are rounded to a
+    // ~1 km grid on every write (never the precise point) and stripped
+    // from all client responses; they exist server-side only so the Local
+    // feed can center itself when live browser geolocation isn't granted.
+    // Label-only rows (typed places without coordinates) stay valid. Null
+    // (not just absent) means the user has explicitly removed it, and
+    // updateProfile writes null to clear.
     location: v.optional(
       v.union(
         v.null(),
         v.object({
+          latitude: v.optional(v.number()),
+          longitude: v.optional(v.number()),
           label: v.optional(v.string()),
         }),
       ),
@@ -163,6 +167,22 @@ const schema = defineSchema({
     image: v.optional(v.string()),
     domain: v.string(),
   }).index("by_url", ["url"]),
+  // Server-side place search cache for the location picker. Queries run
+  // against Nominatim inside PureWire's backend (the browser never talks to
+  // a third party), and results are cached per normalized query for a week
+  // so repeated lookups never hit the geocoder. Reverse-geocoded "my
+  // current location" labels are cached under their coarsened cell key.
+  placeCache: defineTable({
+    query: v.string(),
+    results: v.array(
+      v.object({
+        label: v.string(),
+        latitude: v.number(),
+        longitude: v.number(),
+      }),
+    ),
+    fetchedAt: v.number(),
+  }).index("by_query", ["query"]),
   follows: defineTable({
     followerId: v.id("users"),
     followingId: v.id("users"),

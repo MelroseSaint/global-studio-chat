@@ -22,6 +22,7 @@ export function StoriesBar() {
   const stories = useQuery(api.stories.listStories);
   const createStory = useMutation(api.stories.createStory);
   const scanMedia = useAction(api.aiContent.scanMediaForAi);
+  const stripMedia = useAction(api.media.stripVideoMetadata);
   const [addOpen, setAddOpen] = useState(false);
   const [viewing, setViewing] = useState<number>(0);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -47,11 +48,14 @@ export function StoriesBar() {
         );
         return;
       }
+      // Server-side remux: strip GPS/device metadata from a video story
+      // before it exists, so it never references a dirty clip. Runs after
+      // the AI scan, which must read the original bytes first.
+      const cleaned = await stripMedia({
+        media: [{ storageId: media[0].storageId, kind: media[0].kind }],
+      });
       await createStory({
-        media: {
-          storageId: media[0].storageId,
-          kind: media[0].kind,
-        },
+        media: cleaned[0],
         caption: caption.trim() || undefined,
         aiMediaStatus: scan.status,
       });

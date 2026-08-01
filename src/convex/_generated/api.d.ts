@@ -19,6 +19,7 @@ import type * as links from "../links.js";
 import type * as location from "../location.js";
 import type * as media from "../media.js";
 import type * as notifications from "../notifications.js";
+import type * as places from "../places.js";
 import type * as posts from "../posts.js";
 import type * as privacy from "../privacy.js";
 import type * as security from "../security.js";
@@ -27,6 +28,7 @@ import type * as stories from "../stories.js";
 import type * as support from "../support.js";
 import type * as testHarness from "../testHarness.js";
 import type * as users from "../users.js";
+import type * as videoStrip from "../videoStrip.js";
 
 import type {
   ApiFromModules,
@@ -46,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   location: typeof location;
   media: typeof media;
   notifications: typeof notifications;
+  places: typeof places;
   posts: typeof posts;
   privacy: typeof privacy;
   security: typeof security;
@@ -54,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   support: typeof support;
   testHarness: typeof testHarness;
   users: typeof users;
+  videoStrip: typeof videoStrip;
 }>;
 
 /**

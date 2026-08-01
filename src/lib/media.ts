@@ -27,6 +27,13 @@
  * Audio passes through untouched here: it is small by nature and carries no
  * surface metadata PureWire uses. It is still scanned server-side for
  * AI-generator markers. See `src/convex/aiContent.ts`.
+ *
+ * Server-side safety net: the browser is not the last line of defense.
+ * Videos that pass through the client unchanged (longer than the re-encode
+ * budget, already small, or undecodable) are remuxed again on PureWire's
+ * servers — GPS/device atoms like `©xyz`, `©mak`, and `©mod` are dropped
+ * before the clip is ever served. See `src/lib/mp4-strip.ts` and
+ * `src/convex/videoStrip.ts`.
  */
 
 export const MAX_DIMENSION = 2048;

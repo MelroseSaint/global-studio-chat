@@ -9,10 +9,12 @@
  * required to deliver one-time codes and to link accounts).
  *
  * Home-location coordinates get the same treatment as the plain-text email:
- * they are never stored on the profile at all, so no surface can leak them.
- * Post coordinates exist server-side only to power the Local feed and are
- * reduced to their public label (`publicLocation`) before any response is
- * sent to a client.
+ * if stored at all, they are only a coarsened ~1 km anchor (rounded by
+ * `coarsenLocation` on every write, never the precise point) and
+ * `publicLocation` strips them from every response — no surface ever
+ * receives or displays them. Post coordinates exist server-side only to
+ * power the Local feed and are reduced to their public label
+ * (`publicLocation`) before any response is sent to a client.
  */
 
 /** SHA-256 hex digest, via the runtime's Web Crypto. */

@@ -17,17 +17,50 @@ export type LocationDoc = {
 };
 
 /**
- * Home-location shape: a public label only.
+ * Home-location shape: a public label, optionally with coordinates.
  *
- * Coordinates get the exact treatment plain-text email does: they are never
- * stored on the profile. The Local feed anchors on the viewer's ephemeral
- * browser location — used to build one request, never saved — so a home
- * location needs nothing but the label the user chose to show publicly.
+ * The coordinates are never the precise point: `updateProfile` runs them
+ * through `coarsenLocation` (rounded to a ~1 km grid) before storing, and
+ * `publicLocation` strips them from every client response — no surface
+ * ever displays or receives them. The coarsened anchor exists only so the
+ * Local feed can center itself server-side when live browser geolocation
+ * isn't granted. A label-only home location (user typed a place without
+ * picking coordinates) is still valid — the feed just can't center on it.
  */
 export const homeLocationValidator = v.object({
+  latitude: v.optional(v.number()),
+  longitude: v.optional(v.number()),
   label: v.optional(v.string()),
 });
 
+/** A location whose coordinates may or may not be present. */
+export type CoarsenableLocation = {
+  latitude?: number;
+  longitude?: number;
+  label?: string;
+};
+
+/**
+ * Round coordinates to a ~1 km grid. A stored home anchor is therefore a
+ * neighborhood-scale cell — enough to power the Local feed, never enough
+ * to point at a door. Applied server-side on every write. Passes through
+ * unchanged when coordinates are absent (label-only home location).
+ */
+export function coarsenLocation(
+  location: CoarsenableLocation,
+): CoarsenableLocation {
+  if (
+    typeof location.latitude !== "number" ||
+    typeof location.longitude !== "number"
+  ) {
+    return { label: location.label };
+  }
+  return {
+    latitude: Number(location.latitude.toFixed(2)),
+    longitude: Number(location.longitude.toFixed(2)),
+    label: location.label,
+  };
+}
 
 
 /**
