@@ -85,4 +85,76 @@ PureWire stops inbox-abuse at signup with two layered defenses:
   limits. With the keys set, the widget renders on the auth forms and the
   server verifies each token before any verification or reset email is sent.
 
+## Privacy, safety & network security
+
+PureWire treats privacy and safety as architecture, not add-ons. How each
+layer works:
+
+### Data privacy
+
+- **Salted email hashes.** An address is stored only as `SHA-256(salt + email)`.
+  The salt is a random server-side secret from Convex env, never sent to
+  clients, so a leaked database is useless against lookup tables. Configure it:
+
+      npx convex env set EMAIL_HASH_SALT <long random hex>
+
+  Without a salt the hash degrades to plain SHA-256 so local dev keeps working
+  — production must set one.
+
+- **No persistent identifying logs.** The application never writes IP
+  addresses, browser headers, or connection metadata to storage. Edge-level
+  logging (if any) is configured at the hosting layer, not in the app.
+
+- **Ephemeral auth state.** Sign-in sessions and one-time codes are short-lived
+  and scoped to the auth service; nothing user-identifying is persisted beyond
+  what the platform needs to function.
+
+### Media privacy (anti-doxing)
+
+- **Client-side processing before upload.** Photos are re-encoded in the user's
+  own browser (`src/lib/media.ts`): EXIF/GPS/device metadata is stripped, the
+  image is downscaled to at most 2048px and compressed.  Raw camera files with
+  hidden location data never reach PureWire's servers.
+- **Scan-before-strip.** The original bytes are scanned for AI-generator and
+  deepfake markers *before* stripping (`src/lib/ai-media-scan.ts`, shared with
+  the server action), so removing metadata can never also remove the evidence
+  that media was machine-made.
+- **Videos/audio** pass through client-side (no heavy browser transcoding) and
+  are scanned server-side for AI-generator markers before going live. Video
+  container metadata (e.g. MP4 GPS atoms) is not stripped in the browser — a
+  known, documented limitation of client-only processing.
+
+### Anti-scraping & creator protection
+
+- **Per-account rate limits** on posts, comments, likes, follows, shares, and
+  media uploads (`src/convex/security.ts`) blunt automated floods.
+- **Human-only bot checks** — Cloudflare Turnstile on every email trigger
+  (signup, sign-in, forgot/reset password).
+- **Signup risk scoring** flags bot/farm signals (disposable domains, pattern
+  usernames, placeholder names) for human review; suspicious accounts are kept
+  off public feeds until approved.
+- **IP reputation and headless-crawler defenses** require edge/hosting
+  configuration (Cloudflare or Vercel Firewall bot/IP rules) where the network
+  signals live. That config lives at the hosting provider, not in this repo;
+  in-app protections cover the write path (Turnstile, risk scoring, rate
+  limits), while read-side scraping defense is a hosting-edge item.
+
+### Storage isolation & delivery
+
+- **Media lives in isolated storage, not the database.** The DB holds only
+  `storageId` references; files are stored separately and delivered through
+  read-only signed CDN URLs (`ctx.storage.getUrl`). Users never touch the core
+  database when viewing media.
+
+### Network hardening
+
+- **TLS 1.3 end-to-end** and **DDoS scrubbing** are provided by the hosting
+  edge (Vercel/Convex).
+- **Security headers** are set in `vercel.json` (Vercel host): HSTS
+  (`max-age=63072000; includeSubDomains; preload`), `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a
+  `Permissions-Policy` that denies camera/microphone and interest cohort.
+  The `convex.site` static-hosting host is a preview surface and does not
+  carry custom headers.
+
 © PureWire. Say it anyway — no ads, ever.

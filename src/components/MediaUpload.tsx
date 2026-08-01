@@ -12,6 +12,8 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
+import { scanImageBytes } from "@/lib/ai-media-scan";
+import { processImageFile } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
 export type MediaKind = "image" | "video" | "audio";
@@ -52,18 +54,39 @@ export function MediaUpload({
     try {
       const items: MediaItem[] = [];
       for (const file of Array.from(files)) {
+        const kind = kindFromMime(file.type);
+        // Privacy-first pipeline, run entirely in the user's browser:
+        // 1. Scan the ORIGINAL bytes for AI-generator/deepfake markers
+        //    BEFORE any stripping, so removing metadata never also removes
+        //    the evidence that media was machine-made.
+        // 2. For images, re-encode locally (EXIF/GPS/device metadata
+        //    stripped, downscaled, compressed) so raw camera files with
+        //    hidden location data never reach PureWire's servers.
+        let uploadFile = file;
+        if (kind === "image") {
+          // Metadata lives at the head of the file — only read the header
+          // the scanner actually inspects, not the whole image.
+          const head = await file.slice(0, 256 * 1024).arrayBuffer();
+          const verdict = scanImageBytes(head);
+          if (verdict.status === "blocked") {
+            toast.error(verdict.reason);
+            continue;
+          }
+          const processed = await processImageFile(file);
+          uploadFile = processed.processed ? processed.file : file;
+        }
         const url = await generateUploadUrl();
         const response = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": file.type },
-          body: file,
+          headers: { "Content-Type": uploadFile.type },
+          body: uploadFile,
         });
         if (!response.ok) throw new Error("Upload failed");
         const { storageId } = (await response.json()) as { storageId: string };
         items.push({
           storageId: storageId as Id<"_storage">,
-          kind: kindFromMime(file.type),
-          url: URL.createObjectURL(file),
+          kind: kindFromMime(uploadFile.type),
+          url: URL.createObjectURL(uploadFile),
         });
       }
       onChange([...value, ...items]);

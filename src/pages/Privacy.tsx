@@ -30,21 +30,27 @@ const neverStored = [
   },
   {
     icon: Lock,
-    title: "No plain-text email",
+    title: "No plain-text email on any surface",
     detail:
-      "Your address is stored only as a one-way SHA-256 hash — the raw value exists solely inside the sign-in service long enough to deliver your one-time code, and never appears on any page, query, or export.",
+      "Every page, query, and export shows only a salted one-way SHA-256 hash — a random server-side secret is mixed in before hashing, so even a stolen database can't be run against lookup tables. The raw address exists only inside the sign-in service, where it is required to deliver your one-time code and let you sign in; it never appears on any page, query, or export.",
   },
   {
     icon: Database,
     title: "No location, no device data",
     detail:
-      "PureWire never asks for or stores your location, contacts, device fingerprints, browser details, or browsing history.",
+      "PureWire never stores your location, contacts, device fingerprints, browser details, or browsing history. The Local feed can use your browser location transiently to find nearby posts — it is used only to build that request and never saved. IP addresses are never written to persistent logs.",
   },
   {
     icon: Fingerprint,
     title: "No advertising profiles",
     detail:
       "There are no ads and no sponsorships, so there is nothing to profile you for. Your attention is not a product.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Your media is scrubbed",
+    detail:
+      "Photos are processed in your own browser before upload: hidden EXIF metadata — GPS coordinates, camera serials, device info — is stripped, and images are resized and compressed. Raw camera files with embedded location data never reach PureWire's servers.",
   },
 ];
 
@@ -57,7 +63,7 @@ const stored = [
   {
     title: "What you post",
     detail:
-      "Your posts, stories, comments, and the files you upload. Stories expire and are deleted automatically after 24 hours.",
+      "Your posts, stories, comments, and the files you upload. Photos are stored after metadata stripping and compression, so the stored copy contains no GPS or device data. Stories expire and are deleted automatically after 24 hours.",
   },
   {
     title: "Your activity",
@@ -108,7 +114,7 @@ const rights = [
     icon: ShieldCheck,
     title: "The highest-tier safeguards",
     detail:
-      "Verified email badges, one-way hashes, rate limits, and human moderation against bots, farms, deepfakes, and AI-generated content — protecting you and your original work.",
+      "Salted email hashes, bot checks at signup, per-account rate limits, EXIF-stripped media, isolated storage, encrypted transport, and human moderation against bots, farms, deepfakes, and AI-generated content — protecting you and your original work.",
   },
 ];
 

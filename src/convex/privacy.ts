@@ -18,6 +18,23 @@ export async function sha256Hex(input: string): Promise<string> {
     .join("");
 }
 
+/**
+ * Salted one-way hash of an email identity: SHA-256(email + server salt).
+ *
+ * The salt comes from the Convex deployment env (EMAIL_HASH_SALT) and is
+ * never sent to clients, so a leaked database exposes only salted hashes —
+ * unusable for lookup-table or rainbow-table attacks. Set it with:
+ *
+ *   npx convex env set EMAIL_HASH_SALT <long random hex>
+ *
+ * When no salt is configured the hash degrades to plain SHA-256 so the
+ * platform keeps working (e.g. in local dev) — production must set it.
+ */
+export async function saltedEmailHash(email: string): Promise<string> {
+  const salt = process.env.EMAIL_HASH_SALT ?? "";
+  return sha256Hex(`${salt}:${email}`);
+}
+
 /** Mask an address for display: jo••••@gmail.com → jo••••@gmail.com */
 export function maskEmail(
   email: string | null | undefined,

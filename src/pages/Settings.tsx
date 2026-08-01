@@ -414,7 +414,7 @@ function SettingsForm({ user }: { user: Profile }) {
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Stored email form
               </p>
-              <p className="mt-0.5">One-way SHA-256 hash only</p>
+              <p className="mt-0.5">Salted one-way SHA-256 hash only</p>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">

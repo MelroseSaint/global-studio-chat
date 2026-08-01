@@ -174,6 +174,11 @@ const RATE_LIMITS: Record<string, { windowMs: number; limit: number }> = {
   like: { windowMs: 60 * 60_000, limit: 120 }, // 120 likes/hour
   follow: { windowMs: 60 * 60_000, limit: 30 }, // 30 follows/hour
   share: { windowMs: 60 * 60_000, limit: 60 }, // 60 shares/hour
+  // Upload URL generation is a public-ish surface used for bulk media
+  // collection — budget it so scraping tools can't mint unlimited signed
+  // URLs to fill PureWire's storage, while still allowing a photo-heavy
+  // poster (4 media × 30 posts/hour) to work without hitting the wall.
+  upload: { windowMs: 60 * 60_000, limit: 200 }, // 200 uploads/hour
 };
 
 /**
