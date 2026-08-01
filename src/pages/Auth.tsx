@@ -615,8 +615,21 @@ export function Auth() {
               )}
 
               <p className="text-center text-xs text-muted-foreground">
-                By continuing, you agree to PureWire&apos;s Terms of Service and
-                the PureWire Standard.
+                By continuing, you agree to{" "}
+                <Link
+                  to="/terms"
+                  className="font-medium text-primary hover:underline"
+                >
+                  PureWire&apos;s Terms of Service
+                </Link>
+                , the{" "}
+                <Link
+                  to="/privacy"
+                  className="font-medium text-primary hover:underline"
+                >
+                  Privacy Policy
+                </Link>
+                , and the PureWire Standard.
               </p>
             </CardContent>
           </Card>

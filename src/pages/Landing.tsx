@@ -461,6 +461,9 @@ export function Landing() {
             <Link to="/privacy" className="hover:text-foreground hover:underline">
               Privacy
             </Link>
+            <Link to="/terms" className="hover:text-foreground hover:underline">
+              Terms
+            </Link>
             <Link to="/auth" className="hover:text-foreground hover:underline">
               Sign in
             </Link>

@@ -298,6 +298,9 @@ export function Privacy() {
             <Link to="/support" className="hover:text-foreground hover:underline">
               Support
             </Link>
+            <Link to="/terms" className="hover:text-foreground hover:underline">
+              Terms
+            </Link>
             <Link to="/" className="hover:text-foreground hover:underline">
               Home
             </Link>

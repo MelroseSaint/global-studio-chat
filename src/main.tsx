@@ -23,6 +23,7 @@ import { Privacy } from "@/pages/Privacy";
 import { Profile } from "@/pages/Profile";
 import { Settings } from "@/pages/Settings";
 import { Support } from "@/pages/Support";
+import { Terms } from "@/pages/Terms";
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
@@ -46,6 +47,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
             <Route
               element={
                 <RequireAuth>
