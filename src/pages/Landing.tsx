@@ -6,6 +6,8 @@ import {
   Ban,
   Compass,
   Heart,
+  KeyRound,
+  Mail,
   MessageCircle,
   Quote,
   Repeat2,
@@ -212,6 +214,78 @@ export function Landing() {
                   : "Sign up with just an email. Takes less than a minute."}
               </p>
             </motion.div>
+          </div>
+        </section>
+
+        {/* Join PureWire — the two ways in, and the no-guest promise */}
+        <section
+          id="join"
+          className="border-y bg-muted/30"
+        >
+          <div className="mx-auto w-full max-w-6xl px-4 py-14">
+            <div className="mb-8 text-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-moss/40 bg-moss/10 px-3 py-1 text-xs font-medium text-moss">
+                <BadgeCheck className="size-3" />
+                Real people only
+              </span>
+              <h2 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
+                Two ways to join. Both verified.
+              </h2>
+              <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground sm:text-base">
+                Every account belongs to a real person who verified a real
+                email — so you always know who you&apos;re talking to.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-60px" }}
+                transition={{ duration: 0.4 }}
+              >
+                <Card className="h-full transition-transform hover:-translate-y-0.5">
+                  <CardContent className="flex flex-col gap-3 p-6">
+                    <div className="flex size-10 items-center justify-center rounded-xl brand-gradient-bg text-white">
+                      <KeyRound className="size-5" />
+                    </div>
+                    <h3 className="font-semibold tracking-tight">
+                      Your password
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Join with a password you choose. No third-party logins,
+                      no social accounts, no one else in your account.
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-60px" }}
+                transition={{ duration: 0.4, delay: 0.1 }}
+              >
+                <Card className="h-full transition-transform hover:-translate-y-0.5">
+                  <CardContent className="flex flex-col gap-3 p-6">
+                    <div className="flex size-10 items-center justify-center rounded-xl brand-gradient-bg text-white">
+                      <Mail className="size-5" />
+                    </div>
+                    <h3 className="font-semibold tracking-tight">
+                      A one-time email code
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      A single-use code lands in your inbox to confirm the
+                      account is really yours — and it&apos;s what earns your
+                      verified badge.
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </div>
+            <p className="mt-8 text-center text-xs text-muted-foreground">
+              No guest accounts, no throwaway signups — one inbox gets one
+              verified badge. If an email isn&apos;t yours, it can&apos;t become an
+              account.
+            </p>
           </div>
         </section>
 
