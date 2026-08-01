@@ -34,6 +34,9 @@ import { isValidUsername, normalizeEmailIdentity } from "@/lib/format";
 const TURNSTILE_SITE_KEY =
   (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) ?? "";
 
+/** How long a user must wait before requesting another code. */
+const RESEND_COOLDOWN_SECONDS = 30;
+
 type Step = "signin" | "signup" | "verify" | "forgot" | "reset";
 
 export function Auth() {
@@ -55,6 +58,16 @@ export function Auth() {
   const [error, setError] = useState<string | null>(null);
   const [botToken, setBotToken] = useState<string | null>(null);
   const [botFailed, setBotFailed] = useState(false);
+  // Seconds left before "Send it again" unlocks. Started at 30 whenever a
+  // code is sent, so codes can't be spammed by hammering the resend button.
+  const [resendIn, setResendIn] = useState(0);
+
+  // Tick the resend countdown down once per second; stops at zero.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
 
   /**
    * Human-only gate: every flow that triggers an email (signup, sign-in,
@@ -123,6 +136,7 @@ export function Auth() {
       });
       if (result && "signingIn" in result && !result.signingIn) {
         setStep("verify");
+        setResendIn(RESEND_COOLDOWN_SECONDS);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid credentials.");
@@ -156,6 +170,7 @@ export function Auth() {
       });
       if (result && "signingIn" in result && !result.signingIn) {
         setStep("verify");
+        setResendIn(RESEND_COOLDOWN_SECONDS);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create account.");
@@ -195,6 +210,32 @@ export function Auth() {
       toast.success("Reset code sent. Check your inbox.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send reset code.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * "Send it again": re-request a verification code for the same address.
+   * The account already exists at this point (created at signup or present
+   * at sign-in) and isn't verified yet, so re-running the sign-in flow sends
+   * a fresh code to the same email. Gated by a 30-second cooldown so codes
+   * can't be spammed; the first code already passed the bot check.
+   */
+  const resendCode = async () => {
+    if (resendIn > 0 || submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await signIn("password", {
+        email: normalizeEmailIdentity(email),
+        password,
+        flow: "signIn",
+      });
+      setResendIn(RESEND_COOLDOWN_SECONDS);
+      toast.success("A new code is on its way — check your inbox.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't send a new code.");
     } finally {
       setSubmitting(false);
     }
@@ -450,20 +491,38 @@ export function Auth() {
                       </>
                     )}
                   </Button>
-                  <p className="text-center text-xs text-muted-foreground">
-                    Didn&apos;t get the code? Check your spam folder or{" "}
+                  <div className="flex flex-col items-center gap-1 text-center text-xs text-muted-foreground">
+                    <p>Didn&apos;t get the code? Check your spam folder.</p>
+                    {resendIn > 0 ? (
+                      <p className="font-medium tabular-nums text-foreground">
+                        Send it again in {Math.floor(resendIn / 60)}:
+                        {String(resendIn % 60).padStart(2, "0")}
+                      </p>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={resendCode}
+                        className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {submitting ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          "Send it again"
+                        )}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      className="font-medium text-primary hover:underline"
+                      className="text-muted-foreground hover:underline"
                       onClick={() => {
                         setStep("signin");
                         setCode("");
                       }}
                     >
-                      try again
+                      Used a different email? Go back
                     </button>
-                    .
-                  </p>
+                  </div>
                 </form>
               )}
 
