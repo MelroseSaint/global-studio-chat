@@ -1,6 +1,3 @@
 {
-  "functions": "src/convex/",
-  "aiFiles": {
-    "enabled": false
-  }
+  "functions": "src/convex/"
 }

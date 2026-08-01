@@ -1,4 +1,4 @@
-import { createVlyIntegrations } from "@vly-ai/integrations";
+import { createVlyIntegrations as createEmailClient } from "@vly-ai/integrations";
 
 /**
  * PureWire's email service client.
@@ -7,6 +7,6 @@ import { createVlyIntegrations } from "@vly-ai/integrations";
  * integration using a single deployment token. Used only inside Convex
  * actions ("use node" files).
  */
-export const integrations = createVlyIntegrations({
+export const integrations = createEmailClient({
   deploymentToken: process.env.VLY_INTEGRATION_KEY,
 });

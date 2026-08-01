@@ -4,7 +4,7 @@ import { integrations } from "@/lib/email-service";
 
 /**
  * Shared email code provider used for email verification and password reset.
- * Sends a 6-digit code via the VLY email integration.
+ * Sends a 6-digit code through PureWire's email service.
  */
 function codeEmail(id: string, subject: string) {
   return Email({
