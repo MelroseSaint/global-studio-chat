@@ -20,7 +20,8 @@ say it.
 - **No algorithm, your choice** — the feed is Global, Following, Latest, and
   Photos & videos. You choose what you see.
 - **Real people** — email verification at signup, verified badges for notable
-  accounts, and no guest accounts.
+  accounts, and no guest accounts. Sign in with your password or with a
+  one-time email code.
 - **Your profile, your way** — upload your photo and banner, write a bio, and
   link your other socials.
 
