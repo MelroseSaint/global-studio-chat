@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="PureWire">
+  <title>PureWire</title>
+  <rect width="64" height="64" rx="14" fill="#171918"/>
+  <!-- The wire -->
+  <path d="M12 46H52" stroke="#F4F0E8" stroke-width="5" stroke-linecap="round"/>
+  <!-- The voice rising — say it anyway -->
+  <rect x="16" y="36" width="8" height="10" rx="4" fill="#B84A32"/>
+  <rect x="27" y="29" width="8" height="17" rx="4" fill="#B84A32"/>
+  <rect x="38" y="21" width="8" height="25" rx="4" fill="#B84A32"/>
+  <!-- The spark that tops the voice -->
+  <circle cx="42" cy="13" r="3.5" fill="#C97952"/>
+</svg>
