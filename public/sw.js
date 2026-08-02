@@ -2,7 +2,11 @@
  * PureWire service worker — offline-capable PWA, no external dependencies.
  *
  * Strategy:
- * - Precaches the app shell (index, manifest, icons) at install time.
+ * - Precaches the app shell (index, manifest, icons) at install time, plus
+ *   every hashed JS/CSS chunk listed in /precache-manifest.json (written by
+ *   a build-time Vite plugin). That includes the lazy-loaded Admin route, so
+ *   the whole app — admin dashboard included — opens without a connection
+ *   after install, not only after each route has been visited once.
  * - Navigations are network-first with an offline fallback to the cached
  *   shell, so a fresh deployment is always served when online while the app
  *   still opens without a connection.
@@ -50,7 +54,28 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(SHELL))
+      .then(async (cache) => {
+        // Precache the shell one file at a time: a single missing asset must
+        // never fail the whole install and silently disable offline support.
+        await Promise.all(
+          SHELL.map((url) => cache.add(url).catch(() => {})),
+        );
+        // Precache every hashed chunk the build emitted (the lazy Admin
+        // route included) from the manifest the Vite plugin wrote.
+        try {
+          const manifest = await fetch("./precache-manifest.json").then((r) =>
+            r.json(),
+          );
+          await Promise.all(
+            (manifest.assets ?? []).map((url) =>
+              cache.add(url).catch(() => {}),
+            ),
+          );
+        } catch {
+          // No manifest (e.g. dev server) — the shell alone is still
+          // precached, so offline support degrades rather than breaking.
+        }
+      })
       .then(() => self.skipWaiting()),
   );
 });

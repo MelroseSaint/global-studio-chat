@@ -103,8 +103,13 @@ function SettingsForm({ user }: { user: Profile }) {
         username: username.trim() || undefined,
         bio: bio.trim() || undefined,
         links: links.filter((l) => l.platform && l.url.trim()),
+        // Dual-mode artwork: an uploaded picture is either a Convex storage
+        // id (fallback) or an external Cloudinary URL (primary path) — pass
+        // whichever the upload produced; the mutation clears the other.
         avatarStorageId: avatar[0]?.storageId,
+        avatarUrl: avatar[0]?.externalUrl,
         bannerStorageId: banner[0]?.storageId,
+        bannerUrl: banner[0]?.externalUrl,
         // An empty label is the same as none — null clears it.
         location: location?.label?.trim() ? location : null,
       });
@@ -204,6 +209,8 @@ function SettingsForm({ user }: { user: Profile }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               maxLength={50}
+              disabled={user.isOwner}
+              title={user.isOwner ? "The owner identity is fixed." : undefined}
             />
           </div>
           <div className="flex flex-col gap-2">
@@ -215,13 +222,24 @@ function SettingsForm({ user }: { user: Profile }) {
                 setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))
               }
               maxLength={24}
-              className={isValidUsername(username) ? "" : "border-destructive"}
+              disabled={user.isOwner}
+              title={user.isOwner ? "The owner handle is fixed." : undefined}
+              className={cn(
+                isValidUsername(username) ? "" : "border-destructive",
+                user.isOwner ? "cursor-not-allowed opacity-60" : "",
+              )}
             />
             {!isValidUsername(username) && (
               <p className="text-xs text-destructive">
                 3-24 chars: lowercase letters, numbers, underscores.
               </p>
             )}
+            {user.isOwner ? (
+              <p className="flex items-center gap-1.5 text-xs text-oxide dark:text-oxide-light">
+                <ShieldCheck className="size-3.5" />
+                The owner identity is fixed — name and handle can never change.
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="bio">Bio</Label>
@@ -250,11 +268,14 @@ function SettingsForm({ user }: { user: Profile }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {links.map((link, i) => (
-            <div key={i} className="flex items-center gap-2">
+            <div
+              key={i}
+              className="flex flex-col gap-2 sm:flex-row sm:items-center"
+            >
               <select
                 value={link.platform}
                 onChange={(e) => updateLink(i, { platform: e.target.value })}
-                className="h-10 rounded-md border bg-transparent px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-10 w-full rounded-md border bg-transparent px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-40 sm:shrink-0"
               >
                 {PLATFORM_OPTIONS.map((p) => (
                   <option key={p} value={p}>
@@ -271,7 +292,7 @@ function SettingsForm({ user }: { user: Profile }) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="shrink-0 text-muted-foreground hover:text-destructive"
+                className="shrink-0 self-end text-muted-foreground hover:text-destructive sm:self-auto"
                 onClick={() =>
                   setLinks((ls) => ls.filter((_, idx) => idx !== i))
                 }
@@ -295,12 +316,16 @@ function SettingsForm({ user }: { user: Profile }) {
 
       <Separator />
 
-      <div className="flex items-center justify-end gap-3">
-        <p className="text-xs text-muted-foreground">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+        <p className="text-center text-xs text-muted-foreground sm:text-right">
           {user.emailVerificationTime ? "Email verified" : "Email unverified"} ·{" "}
           {user.maskedEmail}
         </p>
-        <Button onClick={() => void save()} disabled={saving}>
+        <Button
+          onClick={() => void save()}
+          disabled={saving}
+          className="w-full sm:w-auto"
+        >
           {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
           Save changes
         </Button>
@@ -396,7 +421,17 @@ function SettingsForm({ user }: { user: Profile }) {
             </div>
             <Dialog>
               <DialogTrigger asChild>
-                <Button variant="destructive" size="sm" className="gap-1.5">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={user.isOwner}
+                  title={
+                    user.isOwner
+                      ? "The owner account cannot be deleted — the platform is not self-destructible."
+                      : undefined
+                  }
+                >
                   <Trash2 className="size-4" />
                   Delete my account
                 </Button>

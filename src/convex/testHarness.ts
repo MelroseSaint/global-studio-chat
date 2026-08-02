@@ -227,3 +227,153 @@ export const getTestUserState = query({
     };
   },
 });
+
+/**
+ * Full post-erasure state for a QA account: whether the users row still
+ * exists, how many rows remain in every table keyed by userId that the
+ * erasure sweep touches (posts, comments, likes, shares, stories, follows
+ * both ways, notifications inbox + triggered, tickets, blocks both ways,
+ * rate limits, silent-flag events, moderation log, auth
+ * sessions/accounts/tokens/codes/verifiers), whether given storage files
+ * still exist, and the private removal-log record (the one deliberate
+ * survivor of an admin removal). The remove-account QA asserts every count
+ * is zero, every probed file is gone, and the removal log kept its one-way
+ * identity snapshot.
+ *
+ * authRateLimits is deliberately not counted here: eraseAccount sweeps it
+ * by the account's EMAIL identifier (not userId), and harness users are
+ * created without an email — so no such rows can ever exist for them.
+ *
+ * Gated by the same two env gates as the rest of the harness.
+ */
+export const getTestUserTraces = query({
+  args: {
+    userId: v.id("users"),
+    secret: v.string(),
+    // Storage ids to probe for existence (deleted = gone). Strings so the
+    // script can pass them back verbatim from its upload response.
+    storageIds: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, { userId, secret, storageIds }) => {
+    requireHarness(secret);
+    const user = await ctx.db.get(userId);
+
+    const sessions = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q) => q.eq("userId", userId))
+      .take(1000);
+    const accounts = await ctx.db
+      .query("authAccounts")
+      .withIndex("userIdAndProvider", (q) => q.eq("userId", userId))
+      .take(1000);
+    const sessionIds = new Set(sessions.map((s) => s._id));
+    const accountIds = new Set(accounts.map((a) => a._id));
+    let authRefreshTokens = 0;
+    for (const sid of sessionIds) {
+      authRefreshTokens += (
+        await ctx.db
+          .query("authRefreshTokens")
+          .withIndex("sessionId", (q) => q.eq("sessionId", sid))
+          .take(1000)
+      ).length;
+    }
+    let authVerificationCodes = 0;
+    for (const aid of accountIds) {
+      authVerificationCodes += (
+        await ctx.db
+          .query("authVerificationCodes")
+          .withIndex("accountId", (q) => q.eq("accountId", aid))
+          .take(1000)
+      ).length;
+    }
+    // authVerifiers has no sessionId index — scan and filter, matching the
+    // erasure sweep's approach.
+    const verifiers = (await ctx.db.query("authVerifiers").take(1000)).filter(
+      (v) => v.sessionId !== undefined && sessionIds.has(v.sessionId),
+    ).length;
+
+    const [followsOut, followsIn, blocksOut, blocksIn, inboxNotifs] =
+      await Promise.all([
+        ctx.db
+          .query("follows")
+          .withIndex("by_follower", (q) => q.eq("followerId", userId))
+          .take(1000),
+        ctx.db
+          .query("follows")
+          .withIndex("by_following", (q) => q.eq("followingId", userId))
+          .take(1000),
+        ctx.db
+          .query("blocks")
+          .withIndex("by_blocker", (q) => q.eq("blockerId", userId))
+          .take(1000),
+        ctx.db
+          .query("blocks")
+          .withIndex("by_blocked", (q) => q.eq("blockedId", userId))
+          .take(1000),
+        ctx.db
+          .query("notifications")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .take(1000),
+      ]);
+    // Notifications the account triggered (actorId) — the sweep removes
+    // these too, so count them as well.
+    const triggeredNotifs = (
+      await ctx.db
+        .query("notifications")
+        .filter((q) => q.eq(q.field("actorId"), userId))
+        .take(1000)
+    ).length;
+
+    // Storage probes: a file that was deleted returns null from getUrl.
+    const storage = await Promise.all(
+      (storageIds ?? []).map(async (id) => ({
+        storageId: id,
+        exists: (await ctx.storage.getUrl(id as Id<"_storage">)) !== null,
+      })),
+    );
+
+    // The private removal log: the one deliberate survivor of an admin
+    // removal (never swept, one-way). Before removal it is absent; after
+    // an admin removal it holds the snapshotted identity.
+    const removals = await ctx.db
+      .query("removalLog")
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .take(10);
+    const removalLog = removals[0] ?? null;
+
+    return {
+      userExists: user !== null,
+      counts: {
+        posts: (await ctx.db.query("posts").withIndex("by_author", (q) => q.eq("authorId", userId)).take(1000)).length,
+        comments: (await ctx.db.query("comments").withIndex("by_author", (q) => q.eq("authorId", userId)).take(1000)).length,
+        likes: (await ctx.db.query("likes").withIndex("by_user", (q) => q.eq("userId", userId)).take(1000)).length,
+        shares: (await ctx.db.query("shares").withIndex("by_user", (q) => q.eq("userId", userId)).take(1000)).length,
+        stories: (await ctx.db.query("stories").withIndex("by_author", (q) => q.eq("authorId", userId)).take(1000)).length,
+        follows: followsOut.length + followsIn.length,
+        notifications: inboxNotifs.length + triggeredNotifs,
+        supportTickets: (await ctx.db.query("supportTickets").withIndex("by_user", (q) => q.eq("userId", userId)).take(1000)).length,
+        blocks: blocksOut.length + blocksIn.length,
+        rateLimits: (await ctx.db.query("rateLimits").withIndex("by_user_action", (q) => q.eq("userId", userId)).take(1000)).length,
+        silentFlagEvents: (await ctx.db.query("silentFlagEvents").withIndex("by_user", (q) => q.eq("userId", userId)).take(1000)).length,
+        moderationLog: (await ctx.db.query("moderationLog").withIndex("by_target", (q) => q.eq("targetUserId", userId)).take(1000)).length,
+        authSessions: sessions.length,
+        authAccounts: accounts.length,
+        authRefreshTokens,
+        authVerificationCodes,
+        authVerifiers: verifiers,
+      },
+      storage,
+      removalLog: removalLog
+        ? {
+            username: removalLog.username ?? null,
+            name: removalLog.name ?? null,
+            emailHash: removalLog.emailHash ?? null,
+            actorId: removalLog.actorId ?? null,
+            standardId: removalLog.standardId ?? null,
+            note: removalLog.note ?? null,
+            createdAt: removalLog._creationTime,
+          }
+        : null,
+    };
+  },
+});

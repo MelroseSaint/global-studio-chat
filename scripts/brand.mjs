@@ -73,18 +73,6 @@ export function distToStroke(px, py, pts, radius) {
   return min - radius;
 }
 
-/** Is a point inside a rounded rectangle? (true rounded corners, rx = ry) */
-export function inRoundedRect(px, py, x, y, w, h, r) {
-  const rad = Math.min(r, w / 2, h / 2);
-  const cx = Math.min(Math.max(px, x + rad), x + w - rad);
-  const cy = Math.min(Math.max(py, y + rad), y + h - rad);
-  const dx = px - cx;
-  const dy = py - cy;
-  // Clamp the point to the inner rectangle; the corner is a quarter circle
-  // of radius `rad` (rx = ry), matching the SVG's true `rx` rounding.
-  return dx * dx + dy * dy <= rad * rad;
-}
-
 /** Is a point inside a circle? */
 export function inCircle(px, py, cx, cy, r) {
   const dx = px - cx;
@@ -95,15 +83,37 @@ export function inCircle(px, py, cx, cy, r) {
 // ---- The mark --------------------------------------------------------------
 
 // Defined in a 64×64 design space, matching public/logo.svg.
-const GROUND = { x1: 10, y1: 50, x2: 52, y2: 50, r: 1.3 }; // moss baseline
-const STEM = { x1: 14, y1: 50, x2: 14, y2: 20, r: 1.8 }; // paper stem
-// The bowl: one open loop drawn in two cubics, ends back on the stem.
-const BOWL_PTS = cubicPoints(14, 20, 25, 16.5, 39, 19, 39, 30).concat(
-  cubicPoints(39, 30, 39, 40, 26, 44, 14, 42.5).slice(1),
+//
+// The mark — the "open wire P". A paper wire draws the letter P, but its
+// bowl never closes: the loop stays open, and an oxide spark sits in the
+// opening — the voice that completes the letter, PureWire's "say it anyway".
+// A copper broadcast arc carries the signal outward, and the whole mark
+// stands on a moss grounding line. Every palette color has a role.
+const GROUND = { x1: 11, y1: 51, x2: 52, y2: 51, r: 1.3 }; // moss baseline
+const STEM = { x1: 16, y1: 50, x2: 16, y2: 17, r: 2.1 }; // paper stem
+// The bowl: one open loop drawn in two cubics; its free end floats away
+// from the stem instead of closing the letter.
+const BOWL_PTS = cubicPoints(16, 25, 24, 17, 38, 18.5, 40, 29).concat(
+  cubicPoints(40, 29, 40, 39, 29, 44, 28, 44.5).slice(1),
 );
-const BOWL_R = 1.8;
-const BAR = { x: 43.5, y: 36, w: 7, h: 14, r: 3.5 }; // oxide voice bar
-const SPARK = { cx: 47, cy: 25.5, r: 3.4 }; // copper spark
+const BOWL_R = 2.1;
+// The oxide spark completes the open loop — the voice that says it anyway.
+const SPARK = { cx: 21, cy: 44, r: 3.4 };
+// The copper broadcast arc: a thin ring segment arcing away from the bowl's
+// shoulder — the signal going out. Sampled as a polyline so the SVG and the
+// raster stay pixel-identical.
+const ARC_PTS = (() => {
+  const cx = 37;
+  const cy = 22;
+  const r = 10;
+  const pts = [];
+  for (const deg of [-70, -55, -40, -25, -10, 5, 20]) {
+    const rad = (deg * Math.PI) / 180;
+    pts.push([cx + r * Math.cos(rad), cy + r * Math.sin(rad)]);
+  }
+  return pts;
+})();
+const ARC_R = 1.3;
 
 /**
  * Sample the mark at normalized 0..1 coordinates over the 64-space.
@@ -114,12 +124,12 @@ const SPARK = { cx: 47, cy: 25.5, r: 3.4 }; // copper spark
 export function sampleMark(u, v) {
   const px = u * 64;
   const py = v * 64;
-  if (inCircle(px, py, SPARK.cx, SPARK.cy, SPARK.r)) return PALETTE.copper;
-  if (inRoundedRect(px, py, BAR.x, BAR.y, BAR.w, BAR.h, BAR.r)) {
-    return PALETTE.oxide;
-  }
+  if (distToStroke(px, py, ARC_PTS, ARC_R) <= 0) return PALETTE.copper;
+  if (inCircle(px, py, SPARK.cx, SPARK.cy, SPARK.r)) return PALETTE.oxide;
   if (distToStroke(px, py, BOWL_PTS, BOWL_R) <= 0) return PALETTE.paper;
-  if (distToStroke(px, py, [[STEM.x1, STEM.y1], [STEM.x2, STEM.y2]], STEM.r) <= 0) {
+  if (
+    distToStroke(px, py, [[STEM.x1, STEM.y1], [STEM.x2, STEM.y2]], STEM.r) <= 0
+  ) {
     return PALETTE.paper;
   }
   if (

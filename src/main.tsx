@@ -6,6 +6,7 @@ import { ConvexReactClient } from "convex/react";
 import { UpdateBanner } from "@convex-dev/static-hosting/react";
 
 import { AppLayout } from "@/components/AppLayout";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { PageLoader } from "@/components/PageLoader";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Toaster } from "@/components/ui/sonner";
@@ -61,9 +62,12 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ConvexAuthProvider client={convex}>
-      <TooltipProvider delayDuration={200}>
-        <BrowserRouter>
+    {/* A failing query (e.g. backend drift) must never blank the app — the
+        boundary renders a reload fallback instead. */}
+    <ErrorBoundary>
+      <ConvexAuthProvider client={convex}>
+        <TooltipProvider delayDuration={200}>
+          <BrowserRouter>
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/" element={<Landing />} />
@@ -104,6 +108,7 @@ createRoot(document.getElementById("root")!).render(
           <Toaster />
         </BrowserRouter>
       </TooltipProvider>
-    </ConvexAuthProvider>
+      </ConvexAuthProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

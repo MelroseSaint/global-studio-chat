@@ -145,7 +145,10 @@ export const scanMediaForAi = action({
   args: {
     media: v.array(
       v.object({
-        storageId: v.id("_storage"),
+        // Dual-mode: a Convex storage id (legacy/fallback) OR an external
+        // Cloudinary URL (primary path once CLOUDINARY_* is configured).
+        storageId: v.optional(v.id("_storage")),
+        url: v.optional(v.string()),
         kind: v.string(),
       }),
     ),
@@ -157,11 +160,24 @@ export const scanMediaForAi = action({
   ),
   handler: async (ctx, { media }): Promise<AiScanResult> => {
     for (const item of media) {
-      const blob = await ctx.storage.get(item.storageId);
-      if (blob === null) {
+      let bytes: ArrayBuffer | null = null;
+      if (item.url !== undefined) {
+        // Cloudinary-backed media: fetch the stored object (actions can fetch;
+        // this is the same scan the browser ran pre-upload, re-checked
+        // against the exact stored bytes).
+        const res = await fetch(item.url);
+        if (res.ok) {
+          bytes = await res.arrayBuffer();
+        }
+      } else if (item.storageId !== undefined) {
+        const blob = await ctx.storage.get(item.storageId);
+        if (blob !== null) {
+          bytes = await blob.arrayBuffer();
+        }
+      }
+      if (bytes === null) {
         continue;
       }
-      const bytes = await blob.arrayBuffer();
       const result: AiScanResult =
         item.kind === "image"
           ? scanImageBytes(bytes)

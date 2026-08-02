@@ -16,13 +16,15 @@ import { cn } from "@/lib/utils";
 
 type Filter = "global" | "following" | "latest" | "local" | "media";
 
-// No algorithms on PureWire — you choose what you see.
-const FILTERS: { value: Filter; label: string }[] = [
+// No algorithms on PureWire — you choose what you see. On phones the
+// "Photos & videos" tab shortens to "Media" so all five tabs fit without
+// truncating (a full label would cram the strip on a narrow screen).
+const FILTERS: { value: Filter; label: string; short?: string }[] = [
   { value: "global", label: "Global" },
   { value: "following", label: "Following" },
   { value: "latest", label: "Latest" },
   { value: "local", label: "Local" },
-  { value: "media", label: "Photos & videos" },
+  { value: "media", label: "Photos & videos", short: "Media" },
 ];
 
 const RADII_KM = [10, 25, 50, 150] as const;
@@ -102,10 +104,11 @@ export function Feed() {
                 key={f.value}
                 value={f.value}
                 className={cn(
-                  "min-w-0 flex-1 rounded-none border-b-2 border-transparent px-2 py-3 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none",
+                  "min-w-0 flex-1 rounded-none border-b-2 border-transparent px-1.5 py-3 sm:px-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none",
                 )}
               >
-                <span className="truncate">{f.label}</span>
+                <span className="truncate sm:hidden">{f.short ?? f.label}</span>
+                <span className="hidden truncate sm:inline">{f.label}</span>
               </TabsTrigger>
             ))}
           </TabsList>

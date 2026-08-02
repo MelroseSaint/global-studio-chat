@@ -1,13 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="PureWire">
   <title>PureWire</title>
   <rect width="64" height="64" rx="15" fill="#171918"/>
-  <!-- The P-wire monogram: a single paper wire draws the letter P ... -->
-  <path d="M14 50V20" stroke="#F4F0E8" stroke-width="3.6" stroke-linecap="round"/>
-  <path d="M14 20C25 16.5 39 19 39 30C39 40 26 44 14 42.5" stroke="#F4F0E8" stroke-width="3.6" stroke-linecap="round"/>
-  <!-- ... grounded on a moss baseline. -->
-  <path d="M10 50H52" stroke="#465A4C" stroke-width="2.6" stroke-linecap="round"/>
-  <!-- The oxide voice bar rising from the ground. -->
-  <rect x="43.5" y="36" width="7" height="14" rx="3.5" fill="#B84A32"/>
-  <!-- The copper spark crowning the voice. -->
-  <circle cx="47" cy="25.5" r="3.4" fill="#C97952"/>
+  <!-- The open wire P: a paper wire draws the letter, but its bowl never
+       closes — the loop stays open, freedom with a reason. -->
+  <path d="M16 50V17" stroke="#F4F0E8" stroke-width="4.2" stroke-linecap="round"/>
+  <path d="M16 25C24 17 38 18.5 40 29C40 39 29 44 28 44.5" stroke="#F4F0E8" stroke-width="4.2" stroke-linecap="round"/>
+  <!-- The oxide spark completes the letter — the voice that says it anyway. -->
+  <circle cx="21" cy="44" r="3.4" fill="#B84A32"/>
+  <!-- The copper broadcast arc — the signal going out. -->
+  <path d="M40.42 12.6 L42.74 13.81 L44.66 15.57 L46.06 17.77 L46.85 20.26 L46.96 22.87 L46.4 25.42" stroke="#C97952" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- The moss grounding line. -->
+  <path d="M11 51H52" stroke="#465A4C" stroke-width="2.6" stroke-linecap="round"/>
 </svg>

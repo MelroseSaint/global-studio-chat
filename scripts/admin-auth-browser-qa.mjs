@@ -14,9 +14,12 @@
  * form fill, Turnstile gate, redirect, dashboard render, sign-out — in a
  * genuine browser.
  *
- * Run (the password comes from the environment, never from this file):
+ * Run (the password never lives in this file — see lib/qa-secrets.mjs):
  *
  *   ADMIN_PASSWORD=<admin password> npm run qa:admin-auth-browser
+ *   # or, to keep the secret out of shell history and chat entirely:
+ *   printf '%s' '<admin password>' > .freebuff/.admin-password   # gitignored
+ *   npm run qa:admin-auth-browser
  *
  * Overrides: SITE_URL (default https://outgoing-seal-727.convex.site),
  * ADMIN_EMAIL (default monroedoses@gmail.com), HEADED=1 to watch the
@@ -25,9 +28,11 @@
  */
 import { chromium } from "playwright";
 
+import { passwordHint, resolveAdminPassword } from "./lib/qa-secrets.mjs";
+
 const SITE_URL = process.env.SITE_URL ?? "https://outgoing-seal-727.convex.site";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "monroedoses@gmail.com";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ADMIN_PASSWORD = resolveAdminPassword();
 const HEADED = process.env.HEADED === "1";
 const TIMEOUT = Number(process.env.BROWSER_TIMEOUT_MS ?? 20000);
 const NAV_TIMEOUT = 45000;
@@ -84,8 +89,7 @@ async function detectTurnstile(page) {
 
 async function main() {
   if (!ADMIN_PASSWORD) {
-    console.log("ADMIN_PASSWORD is not set. Run with:");
-    console.log("  ADMIN_PASSWORD=<admin password> npm run qa:admin-auth-browser");
+    console.log(passwordHint());
     process.exit(2);
   }
   console.log(`\nPureWire production browser E2E auth QA (${SITE_URL})\n`);

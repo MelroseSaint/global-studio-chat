@@ -24,7 +24,11 @@ export const stripVideoMetadataInternal = internalAction({
     storyId: v.optional(v.id("stories")),
     media: v.array(
       v.object({
-        storageId: v.id("_storage"),
+        // Dual-mode: a Convex storage id (legacy/fallback) OR an external
+        // Cloudinary url + key (primary path once CLOUDINARY_* is configured).
+        storageId: v.optional(v.id("_storage")),
+        url: v.optional(v.string()),
+        key: v.optional(v.string()),
         kind: v.union(
           v.literal("image"),
           v.literal("video"),
@@ -35,12 +39,13 @@ export const stripVideoMetadataInternal = internalAction({
     ),
   },
   handler: async (ctx, { postId, storyId, media }) => {
-    const { replacements } = await stripVideos(ctx, media);
-    if (replacements.length > 0) {
+    const { replacements, strippedKeys } = await stripVideos(ctx, media);
+    if (replacements.length > 0 || strippedKeys.length > 0) {
       await ctx.runMutation(internal.media.applyVideoStrip, {
         postId,
         storyId,
         replacements,
+        strippedKeys,
       });
     }
   },

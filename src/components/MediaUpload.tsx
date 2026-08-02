@@ -1,4 +1,4 @@
-import { useMutation } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import {
   AudioLines,
   Film,
@@ -19,8 +19,16 @@ import { cn } from "@/lib/utils";
 
 export type MediaKind = "image" | "video" | "audio";
 export interface MediaItem {
-  storageId: Id<"_storage">;
+  // Dual-mode: a Convex storage id (legacy/fallback) OR an external
+  // Cloudinary url + key (primary path once CLOUDINARY_* is configured).
+  // Exactly one mode is set per item.
+  storageId?: Id<"_storage">;
+  // The final external Cloudinary URL. Client-side preview uses `url`.
+  externalUrl?: string;
+  // The Cloudinary public_id, kept so deletions know the asset.
+  key?: string;
   kind: MediaKind;
+  // Blob preview URL, client-side only — never sent to the server.
   url: string;
   // Perceptual hash variants of this item, computed here in the browser
   // (original + mirrored + center-crop for images, sampled frames for
@@ -50,7 +58,8 @@ export function MediaUpload({
   max?: number;
   compact?: boolean;
 }) {
-  const generateUploadUrl = useMutation(api.media.generateUploadUrl);
+  const prepareUpload = useAction(api.media.prepareUpload);
+  const discardUploads = useMutation(api.media.discardUploads);
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   // "optimizing" shows while a video is being re-encoded client-side — a
@@ -111,30 +120,86 @@ export function MediaUpload({
             setOptimizing(false);
           }
         }
-        const url = await generateUploadUrl();
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": uploadFile.type },
-          body: uploadFile,
-        });
-        if (!response.ok) throw new Error("Upload failed");
-        const { storageId } = (await response.json()) as { storageId: string };
-        // Fingerprint the exact bytes that are stored (the processed file
-        // for images), so server-side duplicate matching sees the same
-        // pixels. Hashing is best-effort — a failure never blocks upload.
-        let hashes: string[] | undefined;
-        if (kind === "image") {
-          hashes = await computeImageHashes(uploadFile);
-        } else if (kind === "video") {
-          hashes = await computeVideoHashes(uploadFile);
+        // One ticket per file — it carries the rate-limit check plus either
+        // a Convex POST URL (fallback) or a Cloudinary upload URL + unsigned
+        // preset (primary path).
+        const ticket = await prepareUpload({ contentType: uploadFile.type });
+        if (ticket.mode === "convex") {
+          const response = await fetch(ticket.uploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": uploadFile.type },
+            body: uploadFile,
+          });
+          if (!response.ok) throw new Error("Upload failed");
+          const { storageId } = (await response.json()) as { storageId: string };
+          items.push({
+            storageId: storageId as Id<"_storage">,
+            kind: kindFromMime(uploadFile.type),
+            url: URL.createObjectURL(uploadFile),
+            hashes: await hashesFor(uploadFile, kind),
+            stripped: stripped || undefined,
+          });
+        } else {
+          // Cloudinary mode: POST the file + unsigned preset straight to the
+          // upload API. The bytes never pass through Convex — only the tiny
+          // secure_url + public_id are stored.
+          const form = new FormData();
+          form.append("file", uploadFile);
+          form.append("upload_preset", ticket.uploadPreset);
+          const response = await fetch(ticket.uploadUrl, {
+            method: "POST",
+            body: form,
+          });
+          if (response.ok) {
+            const parsed = (await response.json()) as {
+              secure_url?: string;
+              public_id?: string;
+            };
+            if (!parsed.secure_url || !parsed.public_id) {
+              throw new Error("Upload failed");
+            }
+            items.push({
+              externalUrl: parsed.secure_url,
+              key: parsed.public_id,
+              kind: kindFromMime(uploadFile.type),
+              url: URL.createObjectURL(uploadFile),
+              hashes: await hashesFor(uploadFile, kind),
+              stripped: stripped || undefined,
+            });
+          } else {
+            // Resilience: a Cloudinary failure — a missing/renamed unsigned
+            // preset, a restricted key, a quota block — must never break
+            // uploads for users. The ticket always carries a Convex upload
+            // URL (minted alongside it), so the same bytes are re-posted to
+            // Convex storage instead and the upload succeeds exactly as the
+            // fallback path would. The user notices nothing; only the
+            // console notes the detour.
+            console.warn(
+              "PureWire: Cloudinary upload failed (HTTP " +
+                response.status +
+                "), falling back to Convex storage.",
+            );
+            if (typeof ticket.fallbackUrl !== "string") {
+              throw new Error("Upload failed");
+            }
+            const fallback = await fetch(ticket.fallbackUrl, {
+              method: "POST",
+              headers: { "Content-Type": uploadFile.type },
+              body: uploadFile,
+            });
+            if (!fallback.ok) throw new Error("Upload failed");
+            const { storageId } = (await fallback.json()) as {
+              storageId: string;
+            };
+            items.push({
+              storageId: storageId as Id<"_storage">,
+              kind: kindFromMime(uploadFile.type),
+              url: URL.createObjectURL(uploadFile),
+              hashes: await hashesFor(uploadFile, kind),
+              stripped: stripped || undefined,
+            });
+          }
         }
-        items.push({
-          storageId: storageId as Id<"_storage">,
-          kind: kindFromMime(uploadFile.type),
-          url: URL.createObjectURL(uploadFile),
-          hashes,
-          stripped: stripped || undefined,
-        });
       }
       onChange([...value, ...items]);
     } catch {
@@ -145,17 +210,42 @@ export function MediaUpload({
     }
   };
 
-  const remove = (storageId: string) => {
-    const item = value.find((i) => i.storageId === storageId);
+  const remove = (id: string) => {
+    const item = value.find(
+      (i) => (i.key ?? i.storageId) === id || i.url === id,
+    );
     if (item?.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
-    onChange(value.filter((i) => i.storageId !== storageId));
+    onChange(value.filter((i) => (i.key ?? i.storageId) !== id && i.url !== id));
+    // Items that never made it into a post/story are orphans: no document
+    // references them, so no deletion path ever fires. Release the object
+    // immediately — best-effort, never blocks the UI. Both modes are
+    // covered: Cloudinary public_ids and Convex storage ids (the fallback
+    // path when Cloudinary is misconfigured).
+    if (item?.key) {
+      void discardUploads({
+        items: [
+          {
+            key: item.key,
+            resourceType: item.kind === "image" ? "image" : "video",
+          },
+        ],
+      }).catch(() => {
+        // Best-effort: a failed delete just leaves a cheap orphan.
+      });
+    } else if (item?.storageId) {
+      void discardUploads({
+        items: [{ storageId: item.storageId }],
+      }).catch(() => {
+        // Best-effort: a failed delete just leaves a cheap orphan.
+      });
+    }
   };
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       {value.map((item) => (
         <div
-          key={item.storageId}
+          key={item.key ?? item.storageId}
           className={cn(
             "group relative overflow-hidden rounded-lg border bg-muted",
             compact ? "size-16" : "size-20",
@@ -180,7 +270,7 @@ export function MediaUpload({
           )}
           <button
             type="button"
-            onClick={() => remove(item.storageId)}
+            onClick={() => remove(item.key ?? item.storageId ?? item.url)}
             className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
             aria-label="Remove media"
           >
@@ -220,4 +310,18 @@ export function MediaUpload({
       />
     </div>
   );
+}
+
+/** Best-effort perceptual hashes of the exact stored bytes. */
+async function hashesFor(
+  file: File,
+  kind: MediaKind,
+): Promise<string[] | undefined> {
+  try {
+    if (kind === "image") return await computeImageHashes(file);
+    if (kind === "video") return await computeVideoHashes(file);
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }

@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import { cleanupMediaItems } from "./mediaCleanup";
 import { publicUser } from "./privacy";
 import {
   enforceActive,
@@ -19,7 +20,11 @@ import { internal } from "./_generated/api";
 export const createStory = mutation({
   args: {
     media: v.object({
-      storageId: v.id("_storage"),
+      // Dual-mode: a Convex storage id (legacy/fallback) OR an external
+      // Cloudinary url + key (primary path once CLOUDINARY_* is set).
+      storageId: v.optional(v.id("_storage")),
+      url: v.optional(v.string()),
+      key: v.optional(v.string()),
       kind: v.union(
         v.literal("image"),
         v.literal("video"),
@@ -111,6 +116,9 @@ export const deleteStory = mutation({
     if (story.authorId !== userId && user?.role !== "admin") {
       throw new Error("You can only delete your own stories.");
     }
+    // The file dies with the story — Convex storage id inline, external
+    // Cloudinary key through the fire-and-forget batch delete.
+    await cleanupMediaItems(ctx, [story.media]);
     await ctx.db.delete(storyId);
   },
 });
@@ -152,12 +160,18 @@ export const listStories = query({
           author: author
             ? {
                 ...publicUser(author),
-                avatarUrl: author.avatarStorageId
-                  ? await ctx.storage.getUrl(author.avatarStorageId)
-                  : null,
+                avatarUrl:
+                  author.avatarUrl ??
+                  (author.avatarStorageId
+                    ? await ctx.storage.getUrl(author.avatarStorageId)
+                    : null),
               }
             : null,
-          mediaUrl: await ctx.storage.getUrl(s.media.storageId),
+          mediaUrl:
+            s.media.url ??
+            (s.media.storageId
+              ? await ctx.storage.getUrl(s.media.storageId)
+              : null),
           mediaKind: s.media.kind,
         };
       }),

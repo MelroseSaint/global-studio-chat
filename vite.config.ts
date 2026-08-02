@@ -1,10 +1,34 @@
 import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+
+/**
+ * Writes precache-manifest.json listing every hashed JS/CSS asset the build
+ * emitted. The service worker (public/sw.js) fetches it at install time and
+ * precaches each chunk — so lazy routes like the Admin dashboard open
+ * offline without a connection, not only after being visited once.
+ */
+function precacheManifest(): Plugin {
+  return {
+    name: "purewire-precache-manifest",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const assets = Object.keys(bundle)
+        .filter((name) => /^assets\/.*\.(js|css)$/.test(name))
+        .map((name) => `/${name}`)
+        .sort();
+      this.emitFile({
+        type: "asset",
+        fileName: "precache-manifest.json",
+        source: JSON.stringify({ assets }, null, 2),
+      });
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), precacheManifest()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

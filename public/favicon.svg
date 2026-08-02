@@ -1,10 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="PureWire">
   <title>PureWire</title>
   <rect width="64" height="64" rx="15" fill="#171918"/>
-  <!-- Bold P-wire monogram, simplified for small favicon rendering. -->
-  <path d="M14 50V20" stroke="#F4F0E8" stroke-width="4.6" stroke-linecap="round"/>
-  <path d="M14 20C25 16 39 19 39 30C39 40 26 44.5 14 43" stroke="#F4F0E8" stroke-width="4.6" stroke-linecap="round"/>
-  <path d="M10 50H52" stroke="#465A4C" stroke-width="3.2" stroke-linecap="round"/>
-  <rect x="42.5" y="35" width="8.5" height="15" rx="4.25" fill="#B84A32"/>
-  <circle cx="47" cy="24" r="4" fill="#C97952"/>
+  <!-- Bold open-wire P, simplified for small favicon rendering. -->
+  <path d="M16 50V16" stroke="#F4F0E8" stroke-width="5" stroke-linecap="round"/>
+  <path d="M16 24C25 16.5 38 18 40 29C40 39 29 44 28 44.5" stroke="#F4F0E8" stroke-width="5" stroke-linecap="round"/>
+  <!-- The oxide spark — the voice that completes the letter. -->
+  <circle cx="21" cy="44" r="3.9" fill="#B84A32"/>
+  <!-- The copper broadcast arc, kept bold enough to survive small sizes. -->
+  <path d="M40.42 12.6 L42.74 13.81 L44.66 15.57 L46.06 17.77 L46.85 20.26 L46.96 22.87 L46.4 25.42" stroke="#C97952" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M11 51H52" stroke="#465A4C" stroke-width="3" stroke-linecap="round"/>
 </svg>

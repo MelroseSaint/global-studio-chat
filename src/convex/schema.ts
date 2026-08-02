@@ -24,8 +24,13 @@ const schema = defineSchema({
     // PureWire custom profile fields
     username: v.optional(v.string()),
     bio: v.optional(v.string()),
-    avatarStorageId: v.optional(v.id("_storage")),
-    bannerStorageId: v.optional(v.id("_storage")),
+    // Profile artwork. Dual-mode: a Convex storage id (legacy/fallback) OR
+    // an external Cloudinary URL once CLOUDINARY_* is configured. Null (not
+    // just absent) means explicitly cleared, matching the location field.
+    avatarStorageId: v.optional(v.union(v.null(), v.id("_storage"))),
+    bannerStorageId: v.optional(v.union(v.null(), v.id("_storage"))),
+    avatarUrl: v.optional(v.union(v.null(), v.string())),
+    bannerUrl: v.optional(v.union(v.null(), v.string())),
     links: v.optional(
       v.array(
         v.object({
@@ -102,7 +107,11 @@ const schema = defineSchema({
     media: v.optional(
       v.array(
         v.object({
-          storageId: v.id("_storage"),
+          // Dual-mode: a Convex storage id (legacy/fallback) OR an external
+          // Cloudinary `url` + `key` (primary path once CLOUDINARY_* is set).
+          storageId: v.optional(v.id("_storage")),
+          url: v.optional(v.string()),
+          key: v.optional(v.string()),
           kind: v.union(
             v.literal("image"),
             v.literal("video"),
@@ -153,7 +162,11 @@ const schema = defineSchema({
   stories: defineTable({
     authorId: v.id("users"),
     media: v.object({
-      storageId: v.id("_storage"),
+      // Dual-mode: a Convex storage id (legacy/fallback) OR an external
+      // Cloudinary `url` + `key` (primary path once CLOUDINARY_* is set).
+      storageId: v.optional(v.id("_storage")),
+      url: v.optional(v.string()),
+      key: v.optional(v.string()),
       kind: v.union(
         v.literal("image"),
         v.literal("video"),
@@ -301,6 +314,23 @@ const schema = defineSchema({
   })
     .index("by_target", ["targetUserId"])
     .index("by_actor", ["actorId"]),
+  // Private, one-way removal log. When an admin permanently removes an
+  // account, this record snapshots the removed user's public identity —
+  // handle, display name, and the salted one-way email hash (never the
+  // plain address) — together with who acted and the cited Standard
+  // principle, BEFORE the erasure sweep starts. The table is deliberately
+  // never swept (see eraseAccount), so "who was removed, when, and by
+  // whom" is always knowable. It is strictly one-way: no restore path
+  // exists, and nothing in this record can recreate the account or its data.
+  removalLog: defineTable({
+    userId: v.id("users"),
+    username: v.optional(v.string()),
+    name: v.optional(v.string()),
+    emailHash: v.optional(v.string()),
+    actorId: v.optional(v.id("users")), // the admin who acted; absent = system
+    standardId: v.optional(v.string()),
+    note: v.optional(v.string()),
+  }),
 });
 
 export default schema;

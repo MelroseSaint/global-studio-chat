@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { LocationPicker, type PickedLocation } from "@/components/LocationPicker";
-import { MediaUpload, type MediaItem } from "@/components/MediaUpload";
+import { MediaUpload, type MediaItem, type MediaKind } from "@/components/MediaUpload";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -52,14 +53,28 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
     try {
       // Scan uploaded media bytes for AI-generator metadata before posting.
       let aiMediaStatus: "clean" | "review" | "blocked" = "clean";
-      // The server-side strip may swap video storageIds, so the list passed
-      // to createPost is the cleaned one, not the original uploads. The
-      // `stripped` flag rides along so the post knows which media had GPS/
-      // device metadata removed before upload.
-      let postMedia: Pick<MediaItem, "storageId" | "kind" | "stripped">[] | undefined;
+      // The server-side strip may swap video storage ids (or overwrite a
+      // Cloudinary object), so the list passed to createPost is the cleaned one,
+      // not the original uploads. The `stripped` flag rides along so the
+      // post knows which media had GPS/device metadata removed before
+      // upload. Dual-mode: each item carries either a Convex storageId or an
+      // external Cloudinary url+key (stripMedia returns server-shape items).
+      let postMedia:
+        | {
+            storageId?: Id<"_storage">;
+            url?: string;
+            key?: string;
+            kind: MediaKind;
+            stripped?: boolean;
+          }[]
+        | undefined;
       if (media.length > 0) {
         const scan = await scanMedia({
-          media: media.map((m) => ({ storageId: m.storageId, kind: m.kind })),
+          media: media.map((m) => ({
+            storageId: m.storageId,
+            url: m.externalUrl,
+            kind: m.kind,
+          })),
         });
         if (scan.status === "blocked") {
           toast.error(
@@ -76,6 +91,8 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
         postMedia = await stripMedia({
           media: media.map((m) => ({
             storageId: m.storageId,
+            url: m.externalUrl,
+            key: m.key,
             kind: m.kind,
             stripped: m.stripped,
           })),
@@ -179,7 +196,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
                 </button>
               )}
               {pickerOpen && (
-                <div className="absolute left-0 top-full z-30 mt-2 w-72 rounded-xl border bg-background p-2 shadow-lg">
+                <div className="absolute left-0 top-full z-30 mt-2 w-72 max-w-[min(18rem,calc(100vw-3rem))] rounded-xl border bg-background p-2 shadow-lg">
                   <LocationPicker
                     value={location ?? null}
                     onChange={(loc) => {

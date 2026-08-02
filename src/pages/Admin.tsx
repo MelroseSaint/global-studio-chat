@@ -1,4 +1,4 @@
-import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
   Ban,
@@ -11,6 +11,7 @@ import {
   History,
   Image as ImageIcon,
   Loader2,
+  Lock,
   MessageCircle,
   MessagesSquare,
   ScanSearch,
@@ -30,11 +31,29 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { AdminOfflineBanner } from "@/components/AdminOfflineBanner";
 import { StandardViolationDialog } from "@/components/StandardViolationDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -43,8 +62,9 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
+import { useOfflineMutation } from "@/hooks/use-offline-mutation";
 import { timeAgo } from "@/lib/format";
-import { standardById } from "@/lib/standard";
+import { STANDARD_PRINCIPLES, standardById } from "@/lib/standard";
 
 /** A small badge naming the Standard principle an account was cited under. */
 function StandardChip({ standardId }: { standardId?: string | null }) {
@@ -55,6 +75,124 @@ function StandardChip({ standardId }: { standardId?: string | null }) {
       <ShieldCheck className="size-3" />
       {principle.title}
     </span>
+  );
+}
+
+/**
+ * Confirm-and-remove dialog for permanently erasing an account. Removal is
+ * irreversible — the full erasure sweep (profile, posts, comments, likes,
+ * stories, follows, files) — so two gates protect it: the admin must type
+ * the account's username, AND cite the PureWire Standard principle the
+ * removal is taken under. The citation is recorded in the audit trail
+ * before the erasure starts, so even a permanent removal leaves a reason.
+ */
+function RemoveAccountDialog({
+  open,
+  onOpenChange,
+  user,
+  onConfirm,
+  busy = false,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  user: { _id: string; username?: string | null; name?: string | null } | null;
+  onConfirm: (userId: string, standardId: string, note: string) => void;
+  busy?: boolean;
+}) {
+  const [typed, setTyped] = useState("");
+  const [standardId, setStandardId] = useState("");
+  const [note, setNote] = useState("");
+  const expected = (user?.username ?? user?.name ?? "").trim();
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Reset the form each time the dialog is opened.
+        if (next) {
+          setTyped("");
+          setStandardId("");
+          setNote("");
+        }
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-destructive">
+            <Trash2 className="size-4" />
+            Remove account permanently
+          </DialogTitle>
+          <DialogDescription>
+            This erases <b>@{user?.username ?? "this user"}</b> and every
+            trace of them — profile, posts, comments, likes, stories,
+            follows, notifications, and uploaded files. It cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="remove-confirm">
+              Type <b>@{expected}</b> to confirm
+            </Label>
+            <Input
+              id="remove-confirm"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={`@${expected}`}
+              autoComplete="off"
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label>PureWire Standard principle violated</Label>
+            <Select value={standardId} onValueChange={setStandardId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a principle" />
+              </SelectTrigger>
+              <SelectContent>
+                {STANDARD_PRINCIPLES.map((p, i) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {i + 1}. {p.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              The citation is recorded in the audit trail before the erasure
+              starts, so this removal always leaves a reason.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label>Note (optional)</Label>
+            <Textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Anything the team should know about this removal…"
+              rows={3}
+              maxLength={500}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={
+              typed.trim() !== expected || standardId.length === 0 || busy
+            }
+            onClick={() => {
+              if (user) onConfirm(user._id, standardId, note.trim());
+            }}
+          >
+            {busy ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              "Remove account"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -79,7 +217,7 @@ export function Admin() {
 
   if (!user) return null;
 
-  return <AdminDashboard />;
+  return <AdminDashboard meId={user._id} />;
 }
 
 const STAT_CARDS = [
@@ -94,12 +232,13 @@ const STAT_CARDS = [
   { key: "security", label: "Security", icon: ShieldAlert },
 ] as const;
 
-function AdminDashboard() {
+function AdminDashboard({ meId }: { meId: string }) {
   const stats = useQuery(api.admin.dashboardStats);
   const [tab, setTab] = useState("users");
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4 pb-24 sm:p-6">
+      <AdminOfflineBanner />
       <div>
         <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight">
           <Shield className="size-5 text-primary" />
@@ -137,7 +276,7 @@ function AdminDashboard() {
         </TabsList>
       </Tabs>
 
-      {tab === "users" && <UsersPanel />}
+      {tab === "users" && <UsersPanel meId={meId} />}
       {tab === "tickets" && <TicketsPanel />}
       {tab === "posts" && <PostsPanel />}
       {tab === "aiReview" && <AiReviewPanel />}
@@ -147,9 +286,10 @@ function AdminDashboard() {
   );
 }
 
-function UsersPanel() {
-  const setVerified = useMutation(api.admin.setVerified);
-  const setRole = useMutation(api.admin.setRole);
+function UsersPanel({ meId }: { meId: string }) {
+  const setVerified = useOfflineMutation(api.admin.setVerified, "admin.setVerified");
+  const setRole = useOfflineMutation(api.admin.setRole, "admin.setRole");
+  const removeAccount = useOfflineMutation(api.admin.removeAccount, "admin.removeAccount");
   const { results, status, loadMore } = usePaginatedQuery(
     api.admin.listUsers,
     {},
@@ -163,6 +303,27 @@ function UsersPanel() {
     }
   }, [inView, status, loadMore]);
 
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  const confirmRemove = async (userId: string, standardId: string, note: string) => {
+    setRemoving(true);
+    try {
+      const res = await removeAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+      });
+      setPendingRemove(null);
+      if (res) return;
+      toast.success("Account removed — every trace of them is gone.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not remove.");
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   const users = results as unknown as {
     _id: string;
     name?: string | null;
@@ -171,6 +332,7 @@ function UsersPanel() {
     avatarUrl?: string | null;
     verified?: boolean | null;
     role?: string | null;
+    isOwner?: boolean;
     _creationTime: number;
   }[];
 
@@ -202,9 +364,25 @@ function UsersPanel() {
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline">{u.role ?? "user"}</Badge>
+            {u.isOwner ? (
+              <Badge
+                variant="outline"
+                className="gap-1 border-oxide/40 bg-oxide/5 text-oxide"
+                title="The owner account is fixed — it can never be changed, demoted, or removed."
+              >
+                <Lock className="size-3" />
+                Owner
+              </Badge>
+            ) : null}
             <Button
               variant={u.verified ? "outline" : "default"}
               size="sm"
+              disabled={u.isOwner}
+              title={
+                u.isOwner
+                  ? "The owner account is fixed — its badge cannot be changed."
+                  : undefined
+              }
               onClick={() =>
                 void setVerified({
                   userId: u._id as Id<"users">,
@@ -216,30 +394,138 @@ function UsersPanel() {
             </Button>
             <select
               value={u.role ?? "user"}
+              disabled={u.isOwner}
+              title={
+                u.isOwner
+                  ? "The owner account is fixed — its role cannot be changed."
+                  : undefined
+              }
               onChange={(e) =>
                 void setRole({
                   userId: u._id as Id<"users">,
                   role: e.target.value as "user" | "creator" | "admin",
                 })
               }
-              className="h-8 rounded-md border bg-transparent px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-8 rounded-md border bg-transparent px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="user">User</option>
               <option value="creator">Creator</option>
               <option value="admin">Admin</option>
             </select>
+            {u._id !== meId && !u.isOwner ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive"
+                onClick={() => setPendingRemove(u._id)}
+                title="Permanently remove this account and all of its content"
+              >
+                <Trash2 className="size-4" />
+                Remove
+              </Button>
+            ) : null}
           </div>
         </motion.div>
       ))}
       <div ref={ref} className="py-2 text-center text-sm text-muted-foreground">
         {status === "LoadingMore" ? "Loading more…" : ""}
       </div>
+      <RecentRemovals />
+      <RemoveAccountDialog
+        open={pendingRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemove(null);
+        }}
+        user={users.find((u) => u._id === pendingRemove) ?? null}
+        busy={removing}
+        onConfirm={(userId, standardId, note) =>
+          void confirmRemove(userId, standardId, note)
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * The private removal log — a permanent, one-way record of every admin
+ * removal. Written before the erasure sweep into a dedicated table the
+ * sweep never touches, so it is complete even for accounts whose data is
+ * long gone: each row names who was removed (handle, display name, and
+ * the salted email hash — never the address), who acted, the cited
+ * Standard principle, and when. Nothing here can restore the account.
+ */
+function RecentRemovals() {
+  const { results, status } = usePaginatedQuery(
+    api.admin.listRemovals,
+    {},
+    { initialNumItems: 10 },
+  );
+  const removals = results as unknown as {
+    username: string | null;
+    name: string | null;
+    emailHash: string | null;
+    actorUsername: string | null;
+    standardId: string | null;
+    note: string | null;
+    createdAt: number;
+  }[];
+  if (status === "LoadingFirstPage") {
+    return <Skeleton className="h-16" />;
+  }
+  if (removals.length === 0) {
+    return null;
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-dashed p-3">
+      <p className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+        <Lock className="size-3.5" />
+        Removal log — who was removed, when, by whom. One-way: it can never
+        restore the account.
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {removals.map((r, i) => (
+          <div
+            key={`${r.username}-${r.createdAt}-${i}`}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5 text-xs"
+          >
+            <span className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 font-medium text-destructive">
+                @{r.username ?? "removed account"}
+              </span>
+              {r.name ? (
+                <span className="truncate font-medium">{r.name}</span>
+              ) : null}
+              {r.emailHash ? (
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+                  title="Salted one-way hash of their email — stored instead of the address, never reversible"
+                >
+                  <Lock className="size-2.5" />
+                  {r.emailHash.slice(0, 10)}…
+                </span>
+              ) : null}
+              <span className="truncate text-muted-foreground">
+                {r.actorUsername
+                  ? `removed by @${r.actorUsername}`
+                  : "removed by an admin"}
+                {r.note ? ` — ${r.note}` : ""}
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-2">
+              {r.standardId ? <StandardChip standardId={r.standardId} /> : null}
+              <span className="shrink-0 text-muted-foreground">
+                {timeAgo(r.createdAt)}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 function TicketsPanel() {
-  const respond = useMutation(api.support.respondToTicket);
+  const respond = useOfflineMutation(api.support.respondToTicket, "support.respondToTicket");
   const { results, status, loadMore } = usePaginatedQuery(
     api.support.listTickets,
     {},
@@ -270,11 +556,12 @@ function TicketsPanel() {
 
   const submit = async (ticketId: string, status: string) => {
     try {
-      await respond({
+      const res = await respond({
         ticketId: ticketId as Id<"supportTickets">,
         reply: reply[ticketId]?.trim() || "Reviewed.",
         status: status as "open" | "in_review" | "resolved",
       });
+      if (res) return;
       toast.success("Ticket updated.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update.");
@@ -378,7 +665,7 @@ function TicketsPanel() {
 }
 
 function PostsPanel() {
-  const moderatePost = useMutation(api.admin.moderatePost);
+  const moderatePost = useOfflineMutation(api.admin.moderatePost, "admin.moderatePost");
   const { results, status, loadMore } = usePaginatedQuery(
     api.admin.listRecentPosts,
     {},
@@ -409,13 +696,14 @@ function PostsPanel() {
     if (pendingRemove === null) return;
     setBusy(true);
     try {
-      await moderatePost({
+      const res = await moderatePost({
         postId: pendingRemove.postId as Id<"posts">,
         standardId,
         note,
       });
-      toast.success("Post removed.");
       setPendingRemove(null);
+      if (res) return;
+      toast.success("Post removed.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not remove.");
     } finally {
@@ -500,8 +788,12 @@ const STATUS_VARIANTS: Record<string, string> = {
 };
 
 function SecurityPanel() {
-  const setAccountStatus = useMutation(api.security.setAccountStatus);
-  const setShadowban = useMutation(api.security.setShadowban);
+  const setAccountStatus = useOfflineMutation(
+    api.security.setAccountStatus,
+    "security.setAccountStatus",
+  );
+  const setShadowban = useOfflineMutation(api.security.setShadowban, "security.setShadowban");
+  const removeAccount = useOfflineMutation(api.admin.removeAccount, "admin.removeAccount");
   const { results, status, loadMore } = usePaginatedQuery(
     api.security.listFlaggedAccounts,
     {},
@@ -514,6 +806,27 @@ function SecurityPanel() {
       void loadMore(15);
     }
   }, [inView, status, loadMore]);
+
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  const confirmRemove = async (userId: string, standardId: string, note: string) => {
+    setRemoving(true);
+    try {
+      const res = await removeAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+      });
+      setPendingRemove(null);
+      if (res) return;
+      toast.success("Account removed — every trace of them is gone.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not remove.");
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   const accounts = results as unknown as {
     _id: string;
@@ -533,10 +846,11 @@ function SecurityPanel() {
 
   const setStatus = async (userId: string, accountStatus: string) => {
     try {
-      await setAccountStatus({
+      const res = await setAccountStatus({
         userId: userId as Id<"users">,
         status: accountStatus as "active" | "suspicious" | "restricted" | "banned",
       });
+      if (res) return;
       toast.success(`Account ${accountStatus}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update.");
@@ -566,23 +880,26 @@ function SecurityPanel() {
     setBusy(true);
     try {
       if (kind === "silence") {
-        await setShadowban({
+        const res = await setShadowban({
           userId: userId as Id<"users">,
           shadowban: true,
           standardId,
           note,
         });
+        setPendingAction(null);
+        if (res) return;
         toast.success("Account silenced.");
       } else {
-        await setAccountStatus({
+        const res = await setAccountStatus({
           userId: userId as Id<"users">,
           status: kind === "restrict" ? "restricted" : "banned",
           standardId,
           note,
         });
+        setPendingAction(null);
+        if (res) return;
         toast.success(kind === "restrict" ? "Account restricted." : "Account banned.");
       }
-      setPendingAction(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update.");
     } finally {
@@ -712,6 +1029,16 @@ function SecurityPanel() {
               <Ban className="size-4" />
               Ban
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive"
+              onClick={() => setPendingRemove(u._id)}
+              title="Permanently remove this account and all of its content"
+            >
+              <Trash2 className="size-4" />
+              Remove
+            </Button>
           </div>
         </motion.div>
       ))}
@@ -744,6 +1071,17 @@ function SecurityPanel() {
         }
         busy={busy}
         onConfirm={(standardId, note) => void confirmAction(standardId, note)}
+      />
+      <RemoveAccountDialog
+        open={pendingRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemove(null);
+        }}
+        user={accounts.find((u) => u._id === pendingRemove) ?? null}
+        busy={removing}
+        onConfirm={(userId, standardId, note) =>
+          void confirmRemove(userId, standardId, note)
+        }
       />
     </div>
   );
@@ -890,7 +1228,8 @@ function AuditTrail({ userId }: { userId: string }) {
  * an admin unsilence one or many accounts at once.
  */
 function SilencedPanel() {
-  const bulkUnsilence = useMutation(api.security.bulkUnsilence);
+  const bulkUnsilence = useOfflineMutation(api.security.bulkUnsilence, "security.bulkUnsilence");
+  const removeAccount = useOfflineMutation(api.admin.removeAccount, "admin.removeAccount");
   const { results, status, loadMore } = usePaginatedQuery(
     api.security.listSilencedAccounts,
     {},
@@ -900,12 +1239,39 @@ function SilencedPanel() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   useEffect(() => {
     if (inView && status === "CanLoadMore") {
       void loadMore(15);
     }
   }, [inView, status, loadMore]);
+
+  const confirmRemove = async (userId: string, standardId: string, note: string) => {
+    setRemoving(true);
+    try {
+      const res = await removeAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+      });
+      setPendingRemove(null);
+      if (res) return;
+      toast.success("Account removed — every trace of them is gone.");
+      // The account just left the silenced list; drop it from any selection.
+      setSelected((prev) => {
+        if (prev.size === 0) return prev;
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not remove.");
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   const accounts = results as unknown as {
     _id: string;
@@ -939,7 +1305,8 @@ function SilencedPanel() {
     if (ids.length === 0 || busy) return;
     setBusy(true);
     try {
-      await bulkUnsilence({ userIds: ids as Id<"users">[] });
+      const res = await bulkUnsilence({ userIds: ids as Id<"users">[] });
+      if (res) return;
       toast.success(label);
       // Drop the restored accounts from any selection so a bulk button never
       // counts an account that has already left the silenced list.
@@ -1058,6 +1425,17 @@ function SilencedPanel() {
                   <Unlock className="size-4" />
                   Unsilence
                 </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive"
+                  onClick={() => setPendingRemove(u._id)}
+                  disabled={busy || removing}
+                  title="Permanently remove this account and all of its content"
+                >
+                  <Trash2 className="size-4" />
+                  Remove
+                </Button>
               </div>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 pl-9">
@@ -1125,14 +1503,28 @@ function SilencedPanel() {
           </button>
         ) : null}
       </div>
+      <RemoveAccountDialog
+        open={pendingRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemove(null);
+        }}
+        user={accounts.find((u) => u._id === pendingRemove) ?? null}
+        busy={removing}
+        onConfirm={(userId, standardId, note) =>
+          void confirmRemove(userId, standardId, note)
+        }
+      />
     </div>
   );
 }
 
 function AiReviewPanel() {
-  const moderatePost = useMutation(api.admin.moderatePost);
-  const resolveAiReview = useMutation(api.admin.resolveAiReview);
-  const resolveAiReviewBatch = useMutation(api.admin.resolveAiReviewBatch);
+  const moderatePost = useOfflineMutation(api.admin.moderatePost, "admin.moderatePost");
+  const resolveAiReview = useOfflineMutation(api.admin.resolveAiReview, "admin.resolveAiReview");
+  const resolveAiReviewBatch = useOfflineMutation(
+    api.admin.resolveAiReviewBatch,
+    "admin.resolveAiReviewBatch",
+  );
   const { results, status, loadMore } = usePaginatedQuery(
     api.admin.listAiReview,
     {},
@@ -1161,7 +1553,10 @@ function AiReviewPanel() {
     if (posts.length === 0 || approvingPage) return;
     setApprovingPage(true);
     try {
-      await resolveAiReviewBatch({ postIds: posts.map((p) => p._id as Id<"posts">) });
+      const res = await resolveAiReviewBatch({
+        postIds: posts.map((p) => p._id as Id<"posts">),
+      });
+      if (res) return;
       toast.success(
         posts.length === 1
           ? "Marked as original — kept live."
@@ -1176,7 +1571,8 @@ function AiReviewPanel() {
 
   const approve = async (postId: string) => {
     try {
-      await resolveAiReview({ postId: postId as Id<"posts"> });
+      const res = await resolveAiReview({ postId: postId as Id<"posts"> });
+      if (res) return;
       toast.success("Marked as original — kept live.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update.");
@@ -1193,13 +1589,14 @@ function AiReviewPanel() {
     if (pendingRemove === null) return;
     setBusy(true);
     try {
-      await moderatePost({
+      const res = await moderatePost({
         postId: pendingRemove.postId as Id<"posts">,
         standardId,
         note,
       });
-      toast.success("Post removed.");
       setPendingRemove(null);
+      if (res) return;
+      toast.success("Post removed.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not remove.");
     } finally {

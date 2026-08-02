@@ -18,6 +18,15 @@
  *     then delete it through the post menu and confirm it's gone — the
  *     content pipeline, not just auth.
  *
+ *  7. When the deployment runs in Cloudinary mode, the same post must
+ *     prove the storage claim end-to-end: the media item carries a
+ *     Cloudinary secure_url + public_id (never a Convex storage id), the
+ *     asset is actually served (HTTP 200), and after the delete the
+ *     secure_url stops being served (404) — the object was destroyed, not
+ *     just the row. When CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET are
+ *     provided, a signed destroy call additionally confirms the asset is
+ *     gone. The cloud name is derived from the post's secure_url.
+ *
  * This is the full-loop proof that the OTP pipeline works in production:
  * account created -> code email sent -> code accepted -> session established
  * -> password reset -> new credential accepted. The throwaway account is
@@ -31,8 +40,13 @@
  * CONVEX_URL (default the same deployment's backend), RESEND_API_URL
  * (default https://api.resend.com), HEADED=1 to watch the browser on
  * screen, BROWSER_TIMEOUT_MS (default 20000).
+ * Optional Cloudinary verification: CLOUDINARY_API_KEY and
+ * CLOUDINARY_API_SECRET enable the signed-destroy confirmation; the cloud
+ * name is read from the post's secure_url, so nothing else is needed.
  * Exit codes: 0 all checks passed, 1 a check failed, 2 missing key.
  */
+import { createHash } from "node:crypto";
+
 import { chromium } from "playwright";
 
 import { ConvexHttpClient } from "convex/browser";
@@ -46,6 +60,11 @@ const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
 const RESEND_API_URL = process.env.RESEND_API_URL ?? "https://api.resend.com";
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
+// Optional: only used for the signed-destroy confirmation after the post
+// delete. Without them the Cloudinary checks still run (URL-shape and
+// serve/404 polling); the destroy confirm is simply skipped.
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
 const HEADED = process.env.HEADED === "1";
 const TIMEOUT = Number(process.env.BROWSER_TIMEOUT_MS ?? 20000);
 const NAV_TIMEOUT = 45000;
@@ -201,6 +220,58 @@ async function fetchCodeFromResend(
     await sleep(2000);
   }
   throw new Error(`Code email never appeared (${last})`);
+}
+
+/** Raw SHA-1 hex (node:crypto) — Cloudinary signed requests. */
+function sha1Hex(input) {
+  return createHash("sha1").update(input, "utf8").digest("hex");
+}
+
+/**
+ * The cloud name from a Cloudinary secure_url, e.g.
+ * `https://res.cloudinary.com/saintscloud/image/upload/...` → `saintscloud`.
+ */
+function cloudNameFromUrl(url) {
+  try {
+    return new URL(url).pathname.split("/").filter(Boolean)[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Signed Cloudinary destroy — the same call the app's scheduled cleanup
+ * makes. Returns the parsed `result` string, or null on any failure. Used
+ * AFTER the secure_url already 404s, so a `"not found"` result proves the
+ * app's cleanup (not this script) destroyed the asset.
+ */
+async function cloudinaryDestroy(publicId, resourceType, cloudName) {
+  if (!CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET || !cloudName) {
+    return null;
+  }
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const params = { public_id: publicId, timestamp, invalidate: "true" };
+  const signature = sha1Hex(
+    Object.keys(params)
+      .sort()
+      .map((k) => `${k}=${params[k]}`)
+      .join("&") + CLOUDINARY_API_SECRET,
+  );
+  const form = new FormData();
+  form.append("public_id", publicId);
+  form.append("timestamp", timestamp);
+  form.append("invalidate", "true");
+  form.append("api_key", CLOUDINARY_API_KEY);
+  form.append("signature", signature);
+  try {
+    const res = await fetch(
+      `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`,
+      { method: "POST", body: form },
+    );
+    return res.ok ? ((await res.json()).result ?? null) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Read the namespaced auth tokens out of the page's localStorage. */
@@ -546,7 +617,17 @@ async function main() {
       .waitFor({ timeout: NAV_TIMEOUT })
       .then(() => true)
       .catch(() => false);
-    check("media thumbnail attached to the composer", thumbShown);
+    check(
+      "media thumbnail attached to the composer",
+      thumbShown,
+      thumbShown
+        ? ""
+        : await page
+            .locator("[data-sonner-toast]")
+            .first()
+            .textContent()
+            .catch(() => "no toast — upload may have failed silently"),
+    );
 
     // 9c. Publish and confirm the success toast.
     await page.getByRole("button", { name: "Post", exact: true }).click();
@@ -582,13 +663,64 @@ async function main() {
       serverPost = null;
     }
     check("post verified server-side in the Global feed", serverPost !== null);
+    // Remembered so the post-delete Cloudinary checks know which asset to
+    // watch disappear.
+    let cloudUrl = null;
+    let cloudKey = null;
     if (serverPost !== null) {
       check("post is originality-verified", serverPost.originalityVerified === true);
       const media = serverPost.media ?? [];
+      const mediaUrls = serverPost.mediaUrls ?? [];
       check(
         "post carries exactly one image",
         media.length === 1 && media[0].kind === "image",
       );
+      if (media.length === 1 && media[0].kind === "image") {
+        const item = media[0];
+        cloudUrl = item.url ?? null;
+        cloudKey = item.key ?? null;
+        // Cloudinary-mode assertions: the stored item must be an external
+        // secure_url + public_id — never a Convex storage id.
+        check(
+          "post media is a Cloudinary secure_url",
+          typeof item.url === "string" &&
+            item.url.startsWith("https://res.cloudinary.com/"),
+          typeof item.url === "string"
+            ? `url: ${item.url.slice(0, 90)}`
+            : "no url on media item",
+        );
+        check(
+          "post media carries a public_id (key)",
+          typeof item.key === "string" && item.key.length > 0,
+          "no key on media item",
+        );
+        check(
+          "media bytes live outside Convex storage (no storageId)",
+          item.storageId === undefined,
+          item.storageId !== undefined
+            ? `storageId present: ${item.storageId}`
+            : "",
+        );
+        check(
+          "feed resolves the external URL (mediaUrls[0].url)",
+          typeof mediaUrls[0]?.url === "string" &&
+            mediaUrls[0].url === item.url,
+          typeof mediaUrls[0]?.url === "string"
+            ? `resolved: ${mediaUrls[0].url.slice(0, 90)}`
+            : "mediaUrls[0].url missing",
+        );
+        // The asset must actually be served by Cloudinary right now.
+        if (typeof cloudUrl === "string") {
+          const live = await fetch(cloudUrl, { method: "GET" })
+            .then((r) => r.status)
+            .catch(() => 0);
+          check(
+            "Cloudinary asset is live (HTTP 200)",
+            live === 200,
+            live ? `HTTP ${live}` : "fetch failed",
+          );
+        }
+      }
     }
 
     // 9f. Delete it through the post menu — the same path a user takes.
@@ -618,6 +750,48 @@ async function main() {
           goneServer = false;
         }
         check("post removed server-side after delete", goneServer);
+
+        // 9h. The Cloudinary object must be gone too. The app's delete
+        //     schedules a signed destroy with invalidate=true, which purges
+        //     the CDN edge, so poll the same secure_url until it 404s.
+        //     (With API creds provided, a signed destroy then returns
+        //     "not found" — proof the cleanup — not this script — did it.)
+        if (typeof cloudUrl === "string") {
+          const deadline = Date.now() + 30_000;
+          let status = 0;
+          let gone = false;
+          while (Date.now() < deadline) {
+            status = await fetch(cloudUrl, { method: "GET" })
+              .then((r) => r.status)
+              .catch(() => 0);
+            if (status === 404) {
+              gone = true;
+              break;
+            }
+            await sleep(2000);
+          }
+          check(
+            "Cloudinary asset destroyed after delete (secure_url 404)",
+            gone,
+            gone ? "" : `still HTTP ${status} after 30s`,
+          );
+          if (
+            gone &&
+            typeof cloudKey === "string" &&
+            cloudNameFromUrl(cloudUrl) !== null
+          ) {
+            const result = await cloudinaryDestroy(
+              cloudKey,
+              "image",
+              cloudNameFromUrl(cloudUrl),
+            );
+            check(
+              "signed destroy confirms asset is gone (result: not found)",
+              result === "not found",
+              result ? `result: ${result}` : "destroy call failed (creds absent or 4xx)",
+            );
+          }
+        }
       }
     }
     convex.clearAuth();

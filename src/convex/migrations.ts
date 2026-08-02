@@ -67,3 +67,81 @@ export const rehashEmailHashes = internalMutation({
     return { version, scanned, rewritten };
   },
 });
+
+/**
+ * One-pass backfill of the private removal log.
+ *
+ * Before the dedicated removalLog table existed, permanent removals were
+ * recorded as moderationLog rows with action "remove" (preserved by the
+ * erasure sweep). This migration copies those legacy rows into removalLog
+ * so the one-way audit trail — who was removed, when, by whom — stays
+ * complete after the switch. Identity fields that were never snapshotted
+ * under the old scheme (display name, email hash) simply stay absent on
+ * the backfilled rows; the username is carried over from the old
+ * targetUsername snapshot when it exists.
+ *
+ * Idempotent: rows whose userId + creation time already exist in
+ * removalLog are skipped, so re-running after a partial failure is safe.
+ * Once a legacy row is copied, it is deleted from moderationLog — the
+ * copy is the source of truth, and leaving the old schema-orphaned row
+ * behind would be permanent dead data. Run it with:
+ *
+ *   npx convex run internal.migrations.backfillRemovalLog
+ *
+ * It returns how many legacy rows were found and how many were copied.
+ */
+export const backfillRemovalLog = internalMutation({
+  handler: async (ctx) => {
+    let found = 0;
+    let copied = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await ctx.db
+        .query("moderationLog")
+        .order("asc")
+        .paginate({ numItems: 100, cursor });
+      for (const row of page.page) {
+        // The "remove" literal was dropped from the schema union when the
+        // removalLog table replaced it — legacy rows still carry it at
+        // runtime, so compare against the raw value.
+        if ((row.action as string) !== "remove") {
+          continue;
+        }
+        found++;
+        // Idempotency: an already-backfilled row is skipped.
+        const existing = await ctx.db
+          .query("removalLog")
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("userId"), row.targetUserId),
+              q.eq(q.field("_creationTime"), row._creationTime),
+            ),
+          )
+          .first();
+        if (existing !== null) {
+          continue;
+        }
+        // The old snapshot field (targetUsername) no longer exists on the
+        // typed moderationLog doc — read it off the raw row.
+        const legacy = row as typeof row & { targetUsername?: string };
+        await ctx.db.insert("removalLog", {
+          userId: row.targetUserId,
+          username: legacy.targetUsername ?? undefined,
+          actorId: row.actorId ?? undefined,
+          standardId: row.standardId ?? undefined,
+          note: row.note ?? undefined,
+        });
+        // The copy is committed; the legacy row is now redundant and no
+        // longer matches the schema union — remove it so no orphaned dead
+        // data lingers in moderationLog.
+        await ctx.db.delete(row._id);
+        copied++;
+      }
+      if (page.isDone) {
+        break;
+      }
+      cursor = page.continueCursor;
+    }
+    return { found, copied };
+  },
+});

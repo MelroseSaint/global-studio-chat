@@ -40,8 +40,11 @@ export function StoriesBar() {
     setSubmitting(true);
     try {
       // Scan the uploaded media bytes for AI-generator metadata first.
+      // Dual-mode: Cloudinary media passes its external URL, Convex media its id.
       const scan = await scanMedia({
-        media: [{ storageId: media[0].storageId, kind: media[0].kind }],
+        media: [
+          { storageId: media[0].storageId, url: media[0].externalUrl, kind: media[0].kind },
+        ],
       });
       if (scan.status === "blocked") {
         toast.error(
@@ -56,6 +59,8 @@ export function StoriesBar() {
         media: [
           {
             storageId: media[0].storageId,
+            url: media[0].externalUrl,
+            key: media[0].key,
             kind: media[0].kind,
             stripped: media[0].stripped,
           },

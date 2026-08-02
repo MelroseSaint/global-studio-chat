@@ -12,6 +12,7 @@ import {
   isValidLocation,
   locationValidator,
 } from "./location";
+import { cleanupMediaItems } from "./mediaCleanup";
 import { publicLocation, publicUser } from "./privacy";
 import {
   enforceActive,
@@ -206,7 +207,11 @@ export const createPost = mutation({
     media: v.optional(
       v.array(
         v.object({
-          storageId: v.id("_storage"),
+          // Dual-mode: a Convex storage id (legacy/fallback) OR an external
+          // Cloudinary url + key (primary path once CLOUDINARY_* is set).
+          storageId: v.optional(v.id("_storage")),
+          url: v.optional(v.string()),
+          key: v.optional(v.string()),
           kind: v.union(
             v.literal("image"),
             v.literal("video"),
@@ -402,6 +407,9 @@ export const deletePost = mutation({
     if (post.authorId !== userId && user?.role !== "admin") {
       throw new Error("You can only delete your own posts.");
     }
+    // The files die with the post — Convex storage ids inline, external
+    // Cloudinary keys through the fire-and-forget batch delete.
+    await cleanupMediaItems(ctx, post.media ?? []);
     await ctx.db.delete(postId);
   },
 });
@@ -411,8 +419,12 @@ async function withMedia(ctx: QueryCtx, user: Doc<"users"> | null) {
     return null;
   }
   const [avatarUrl, bannerUrl] = await Promise.all([
-    user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null,
-    user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null,
+    // Dual-mode: an external Cloudinary URL wins; otherwise resolve the Convex
+    // storage id (legacy/fallback path).
+    user.avatarUrl ??
+      (user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null),
+    user.bannerUrl ??
+      (user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null),
   ]);
   return { ...publicUser(user), avatarUrl, bannerUrl };
 }
@@ -437,7 +449,11 @@ async function withAuthor(
     ? await Promise.all(
         post.media.map(async (m) => ({
           ...m,
-          url: await ctx.storage.getUrl(m.storageId),
+          // Dual-mode: an external Cloudinary URL wins; otherwise resolve the
+          // Convex storage id (legacy/fallback path).
+          url:
+            m.url ??
+            (m.storageId ? await ctx.storage.getUrl(m.storageId) : null),
         })),
       )
     : undefined;

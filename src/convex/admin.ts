@@ -5,6 +5,8 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { isStandardId } from "@/lib/standard";
 
+import { eraseAccount } from "./account";
+import { cleanupMediaItems } from "./mediaCleanup";
 import { publicUser } from "./privacy";
 
 import { mutation, query, type QueryCtx } from "./_generated/server";
@@ -84,6 +86,33 @@ export const dashboardStats = query({
   },
 });
 
+/**
+ * Lightweight moderation workload for admins — the two queues that need a
+ * human decision: open support tickets and posts waiting on AI review.
+ * Indexed on both tables (by_status, by_ai_status), so it stays cheap to
+ * call from the app shell on every load (powers the Admin nav badge and the
+ * installed PWA's app-icon badge).
+ */
+export const moderationWorkload = query({
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const [openTickets, aiReview] = await Promise.all([
+      ctx.db
+        .query("supportTickets")
+        .withIndex("by_status", (q) => q.eq("status", "open"))
+        .collect(),
+      ctx.db
+        .query("posts")
+        .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
+        .collect(),
+    ]);
+    return {
+      openTickets: openTickets.length,
+      aiReview: aiReview.length,
+    };
+  },
+});
+
 export const listUsers = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
@@ -92,7 +121,15 @@ export const listUsers = query({
       .query("users")
       .order("desc")
       .paginate(paginationOpts);
-    return { ...result, page: result.page.map((u) => publicUser(u)) };
+    return {
+      ...result,
+      // Flag the owner account so the admin UI can mark its row protected
+      // and disable every control on it.
+      page: result.page.map((u) => ({
+        ...publicUser(u),
+        isOwner: u.email === ADMIN_EMAIL,
+      })),
+    };
   },
 });
 
@@ -100,6 +137,12 @@ export const setVerified = mutation({
   args: { userId: v.id("users"), verified: v.boolean() },
   handler: async (ctx, { userId, verified }) => {
     await requireAdmin(ctx);
+    // The owner account is untouchable — its verified badge can never be
+    // stripped, even by the owner. Checked by email, not role.
+    const target = await ctx.db.get(userId);
+    if (target !== null && target.email === ADMIN_EMAIL) {
+      throw new Error("The owner account cannot be changed.");
+    }
     await ctx.db.patch(userId, { verified });
   },
 });
@@ -111,7 +154,106 @@ export const setRole = mutation({
   },
   handler: async (ctx, { userId, role }) => {
     await requireAdmin(ctx);
+    // The owner account can never be demoted — the platform is not
+    // self-destructible. Checked by email, not role.
+    const target = await ctx.db.get(userId);
+    if (target !== null && target.email === ADMIN_EMAIL) {
+      throw new Error("The owner account cannot be changed.");
+    }
     await ctx.db.patch(userId, { role });
+  },
+});
+
+/**
+ * Permanently remove an account — the same full erasure a user triggers
+ * with "delete my account", run by an admin for accounts that must be
+ * gone entirely (repeat offenders, farm networks, impersonators). The
+ * platform is not self-destructible: the owner account (ADMIN_EMAIL) and
+ * the admin's own account cannot be removed this way.
+ *
+ * Like every other admin action, the removal must cite the PureWire
+ * Standard principle it is taken under. Before the erasure sweep runs,
+ * the account's public identity — username, display name, and the salted
+ * one-way email hash (never the plain address) — is snapshotted into the
+ * private removal log, together with who acted, the cited principle, and
+ * when. That record lives in a separate table the erasure sweep never
+ * touches (see eraseAccount), so "who was removed, when, by whom" is
+ * always knowable — and it is strictly one-way: it can never recreate the
+ * account or any of its data.
+ */
+export const removeAccount = mutation({
+  args: {
+    userId: v.id("users"),
+    // Required: the PureWire Standard principle this removal cites, so a
+    // permanent removal is never an unqualified action.
+    standardId: v.string(),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, standardId, note }) => {
+    const me = await requireAdmin(ctx);
+    if (userId === me) {
+      throw new Error("You can't remove your own account from here.");
+    }
+    if (!isStandardId(standardId)) {
+      throw new Error("That isn't a principle of the PureWire Standard.");
+    }
+    const target = await ctx.db.get(userId);
+    if (target !== null && target.email === ADMIN_EMAIL) {
+      throw new Error("The owner account cannot be removed.");
+    }
+    // One-way safety net FIRST: snapshot the account's public identity
+    // before the sweep erases every trace of it. The email is stored as
+    // the salted one-way hash — the same value already on the user record
+    // — never the plain address. `removalLog` is a separate table that
+    // eraseAccount never sweeps, so this record survives the erasure.
+    await ctx.db.insert("removalLog", {
+      userId,
+      username: target?.username ?? undefined,
+      name: target?.name ?? undefined,
+      emailHash: target?.emailHash ?? undefined,
+      actorId: me,
+      standardId,
+      note: note !== undefined && note.trim().length > 0 ? note.trim() : undefined,
+    });
+    await eraseAccount(ctx, userId);
+  },
+});
+
+/**
+ * Admin: the private removal log — every permanent removal with the
+ * snapshotted public identity (username, display name, salted email
+ * hash), who acted, the cited Standard principle, the note, and when.
+ * Read from the dedicated removalLog table, which the erasure sweep never
+ * touches, so this list is complete even for accounts whose data is long
+ * gone. One-way: admins can see who was removed; nothing here can restore
+ * the account.
+ */
+export const listRemovals = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    await requireAdmin(ctx);
+    const result = await ctx.db
+      .query("removalLog")
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map(async (entry) => {
+        const actor =
+          entry.actorId !== undefined ? await ctx.db.get(entry.actorId) : null;
+        return {
+          username: entry.username ?? null,
+          name: entry.name ?? null,
+          // The salted one-way email hash — displayable, but it can never
+          // be reversed into the address, and no restore path uses it.
+          emailHash: entry.emailHash ?? null,
+          actorUsername: actor?.username ?? actor?.name ?? null,
+          standardId: entry.standardId ?? null,
+          note: entry.note ?? null,
+          createdAt: entry._creationTime,
+        };
+      }),
+    );
+    return { ...result, page };
   },
 });
 
@@ -131,9 +273,11 @@ export const listRecentPosts = query({
           author: author
             ? {
                 ...publicUser(author),
-                avatarUrl: author.avatarStorageId
-                  ? await ctx.storage.getUrl(author.avatarStorageId)
-                  : null,
+                avatarUrl:
+                  author.avatarUrl ??
+                  (author.avatarStorageId
+                    ? await ctx.storage.getUrl(author.avatarStorageId)
+                    : null),
               }
             : null,
         };
@@ -175,6 +319,9 @@ export const moderatePost = mutation({
         }
         await ctx.db.patch(author._id, patch);
       }
+      // The files die with the removed post — Convex storage ids inline,
+      // external Cloudinary keys through the fire-and-forget batch delete.
+      await cleanupMediaItems(ctx, post.media ?? []);
       await ctx.db.delete(postId);
     }
   },
@@ -198,9 +345,11 @@ export const listAiReview = query({
           author: author
             ? {
                 ...publicUser(author),
-                avatarUrl: author.avatarStorageId
-                  ? await ctx.storage.getUrl(author.avatarStorageId)
-                  : null,
+                avatarUrl:
+                  author.avatarUrl ??
+                  (author.avatarStorageId
+                    ? await ctx.storage.getUrl(author.avatarStorageId)
+                    : null),
               }
             : null,
         };

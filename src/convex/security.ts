@@ -8,6 +8,17 @@ import { isStandardId } from "@/lib/standard";
 import { internal } from "./_generated/api";
 import { publicUser } from "./privacy";
 
+/**
+ * The platform owner's account — untouchable by any moderation action.
+ *
+ * Deliberately a local copy, not an import from ./auth: auth.ts imports
+ * computeRiskScore from this module, so importing ADMIN_EMAIL back would
+ * create a circular dependency. admin.ts keeps the same local copy for the
+ * same reason. users.ts and account.ts import the exported const from
+ * ./auth instead (no cycle there).
+ */
+const ADMIN_EMAIL = "monroedoses@gmail.com";
+
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
@@ -43,6 +54,21 @@ export const ACCOUNT_STATUS = v.union(
   v.literal("restricted"),
   v.literal("banned"),
 );
+
+/**
+ * The moderation actions the current schema allows on the audit trail.
+ * Legacy rows may hold values that predate the schema union (e.g. the old
+ * "remove" record, superseded by the dedicated removalLog table) — the
+ * audit trail maps anything outside this set to a safe current value.
+ */
+const KNOWN_MODERATION_ACTIONS = new Set([
+  "silence",
+  "unsilence",
+  "restrict",
+  "ban",
+  "approve",
+  "flag",
+]);
 
 /**
  * Human-only bot check: verifies a Cloudflare Turnstile token server-side.
@@ -500,9 +526,13 @@ export const listBlockedUsers = query({
           ? null
           : {
               ...publicUser(user),
-              avatarUrl: user.avatarStorageId
-                ? await ctx.storage.getUrl(user.avatarStorageId)
-                : null,
+              // Dual-mode: external Cloudinary URL wins; otherwise resolve the
+              // Convex storage id (legacy/fallback path).
+              avatarUrl:
+                user.avatarUrl ??
+                (user.avatarStorageId
+                  ? await ctx.storage.getUrl(user.avatarStorageId)
+                  : null),
             };
       }),
     );
@@ -645,9 +675,11 @@ export const listFlaggedAccounts = query({
     const page = await Promise.all(
       result.page.map(async (u) => ({
         ...publicUser(u),
-        avatarUrl: u.avatarStorageId
-          ? await ctx.storage.getUrl(u.avatarStorageId)
-          : null,
+        // Dual-mode: external Cloudinary URL wins; otherwise resolve the
+        // Convex storage id (legacy/fallback path).
+        avatarUrl:
+          u.avatarUrl ??
+          (u.avatarStorageId ? await ctx.storage.getUrl(u.avatarStorageId) : null),
       })),
     );
     return { ...result, page };
@@ -703,9 +735,11 @@ export const listSilencedAccounts = query({
             : undefined);
         return {
           ...publicUser(u),
-          avatarUrl: u.avatarStorageId
-            ? await ctx.storage.getUrl(u.avatarStorageId)
-            : null,
+          // Dual-mode: external Cloudinary URL wins; otherwise resolve the
+          // Convex storage id (legacy/fallback path).
+          avatarUrl:
+            u.avatarUrl ??
+            (u.avatarStorageId ? await ctx.storage.getUrl(u.avatarStorageId) : null),
           silentFlags: u.silentFlags ?? 0,
           lifetimeSilentFlags: u.lifetimeSilentFlags ?? 0,
           silentEventCount: events.length,
@@ -780,7 +814,13 @@ export const silentFlagHistory = query({
       actions: actions
         .sort((a, b) => b._creationTime - a._creationTime)
         .map((a) => ({
-          action: a.action,
+          // Legacy rows may carry an action value that predates the current
+          // schema union (e.g. the old "remove" record, since superseded by
+          // the dedicated removalLog table) — map anything unknown to the
+          // closest current action so the typed value never lies.
+          action: KNOWN_MODERATION_ACTIONS.has(a.action as string)
+            ? a.action
+            : "flag",
           actor: a.actorId !== undefined ? (actorNames.get(a.actorId) ?? "Admin") : null,
           standardId: a.standardId ?? null,
           note: a.note ?? null,
@@ -845,6 +885,11 @@ export const setAccountStatus = mutation({
     const user = await ctx.db.get(userId);
     if (user === null) {
       throw new Error("User not found");
+    }
+    // The owner account is untouchable — checked by email, not role, so it
+    // holds even if the role field were ever corrupted first.
+    if (user.email === ADMIN_EMAIL) {
+      throw new Error("The owner account cannot be changed.");
     }
     if (user.role === "admin") {
       throw new Error("Cannot change an admin account");
@@ -917,6 +962,11 @@ export const setShadowban = mutation({
     const user = await ctx.db.get(userId);
     if (user === null) {
       throw new Error("User not found");
+    }
+    // The owner account is untouchable — checked by email, not role, so it
+    // holds even if the role field were ever corrupted first.
+    if (user.email === ADMIN_EMAIL) {
+      throw new Error("The owner account cannot be changed.");
     }
     if (user.role === "admin") {
       throw new Error("Cannot change an admin account");

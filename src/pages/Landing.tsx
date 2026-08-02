@@ -7,6 +7,7 @@ import {
   Compass,
   Heart,
   KeyRound,
+  LogOut,
   Mail,
   MessageCircle,
   Quote,
@@ -16,11 +17,88 @@ import {
   UserPlus,
 } from "lucide-react";
 import { useEffect } from "react";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 
+import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
+
+type LandingUser = NonNullable<ReturnType<typeof useAuth>["user"]>;
+
+/**
+ * The signed-in member's account menu on the landing header — the one place
+ * on the PWA's start screen (start_url "/") where someone already signed in
+ * can open the app, reach their profile, or sign out without having to
+ * navigate into the app shell and hunt through the mobile More menu. The
+ * same dropdown the app shell uses, so the experience is consistent.
+ */
+function LandingUserMenu({
+  user,
+  onSignOut,
+}: {
+  user: LandingUser;
+  onSignOut: () => void;
+}) {
+  const navigate = useNavigate();
+  const username = user.username ?? "";
+  const profileTo = username ? `/u/${username}` : "/settings";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="flex cursor-pointer items-center gap-2 rounded-xl p-0.5 transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          aria-label="Account menu"
+        >
+          <UserAvatar user={user} className="size-7" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="font-normal">
+          <p className="text-sm font-medium">
+            {user.name ?? user.username ?? "Member"}
+            {user.verified ? " ✓" : ""}
+          </p>
+          <p className="text-xs text-muted-foreground">@{user.username}</p>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="cursor-pointer" onSelect={() => navigate("/home")}>
+          Home
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onSelect={() => navigate(profileTo)}
+        >
+          Profile
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onSelect={() => navigate("/settings")}
+        >
+          Settings
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          className="cursor-pointer"
+          onSelect={onSignOut}
+        >
+          <LogOut />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 const features = [
   {
@@ -127,8 +205,12 @@ const standard = [
 ];
 
 export function Landing() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user, signOut } = useAuth();
   const location = useLocation();
+
+  const handleSignOut = () => {
+    void signOut();
+  };
 
   // Scroll a section into view (offset for the sticky header) and update the
   // URL hash so the page reflects where the user is. Uses the History API
@@ -181,12 +263,31 @@ export function Landing() {
             >
               The Standard
             </Button>
-            <Button size="sm" asChild>
-              <Link to={isAuthenticated ? "/home" : "/auth"}>
-                {isAuthenticated ? "Open app" : "Get started"}
-                <ArrowRight className="size-4" />
-              </Link>
-            </Button>
+            {isAuthenticated ? (
+              <>
+                <Button size="sm" asChild>
+                  <Link to="/home">
+                    Open app
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+                {user ? (
+                  <LandingUserMenu user={user} onSignOut={handleSignOut} />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link to="/auth">Sign in</Link>
+                </Button>
+                <Button size="sm" asChild>
+                  <Link to="/auth">
+                    Get started
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+              </>
+            )}
           </nav>
         </div>
       </header>
@@ -499,9 +600,19 @@ export function Landing() {
             <Link to="/terms" className="hover:text-foreground hover:underline">
               Terms
             </Link>
-            <Link to="/auth" className="hover:text-foreground hover:underline">
-              Sign in
-            </Link>
+            {isAuthenticated ? (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="hover:text-foreground hover:underline"
+              >
+                Sign out
+              </button>
+            ) : (
+              <Link to="/auth" className="hover:text-foreground hover:underline">
+                Sign in
+              </Link>
+            )}
             <Link to="/support" className="hover:text-foreground hover:underline">
               Support
             </Link>

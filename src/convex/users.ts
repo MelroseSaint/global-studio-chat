@@ -2,11 +2,13 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { ADMIN_EMAIL } from "./auth";
 import {
   cleanLocationLabel,
   coarsenLocation,
   homeLocationValidator,
 } from "./location";
+import { keyFromPublicUrl } from "./media";
 import { publicUser } from "./privacy";
 import {
   detectFollowChurn,
@@ -14,6 +16,7 @@ import {
 } from "./farmNetwork";
 import { enforceActive, enforceRateLimit, isSandboxed } from "./security";
 
+import { internal } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
 
 export const getCurrentUser = query({
@@ -27,10 +30,23 @@ export const getCurrentUser = query({
       return null;
     }
     const [avatarUrl, bannerUrl] = await Promise.all([
-      user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null,
-      user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null,
+      // Dual-mode: an external Cloudinary URL wins; otherwise resolve the
+      // Convex storage id (legacy/fallback path).
+      user.avatarUrl ??
+        (user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null),
+      user.bannerUrl ??
+        (user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null),
     ]);
-    return { ...publicUser(user), avatarUrl, bannerUrl };
+    return {
+      ...publicUser(user),
+      avatarUrl,
+      bannerUrl,
+      // Lets the client lock the owner's identity fields (name, handle,
+      // deletion) so they're disabled in the UI, not just rejected by the
+      // server. Derived from the email here so no surface needs the
+      // plain-text address.
+      isOwner: user.email === ADMIN_EMAIL,
+    };
   },
 });
 
@@ -68,8 +84,12 @@ export const getProfile = query({
       }
     }
     const [avatarUrl, bannerUrl] = await Promise.all([
-      user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null,
-      user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null,
+      // Dual-mode: an external Cloudinary URL wins; otherwise resolve the
+      // Convex storage id (legacy/fallback path).
+      user.avatarUrl ??
+        (user.avatarStorageId ? ctx.storage.getUrl(user.avatarStorageId) : null),
+      user.bannerUrl ??
+        (user.bannerStorageId ? ctx.storage.getUrl(user.bannerStorageId) : null),
     ]);
     return {
       ...publicUser(user),
@@ -89,8 +109,13 @@ export const updateProfile = mutation({
     links: v.optional(
       v.array(v.object({ platform: v.string(), url: v.string() })),
     ),
-    avatarStorageId: v.optional(v.id("_storage")),
-    bannerStorageId: v.optional(v.id("_storage")),
+    // Dual-mode profile artwork: a Convex storage id (legacy/fallback) OR
+    // an external Cloudinary URL (primary path once CLOUDINARY_* is set).
+    // Pass null to clear the field entirely.
+    avatarStorageId: v.optional(v.union(v.null(), v.id("_storage"))),
+    bannerStorageId: v.optional(v.union(v.null(), v.id("_storage"))),
+    avatarUrl: v.optional(v.union(v.null(), v.string())),
+    bannerUrl: v.optional(v.union(v.null(), v.string())),
     // Home location: a public label plus coordinates. The coordinates are
     // never stored precisely — they are coarsened to a ~1 km cell on write
     // (never the point) and stripped from every client response, matching
@@ -109,14 +134,81 @@ export const updateProfile = mutation({
     // Banned/restricted accounts can't keep changing their identity.
     await enforceActive(ctx, userId);
     const current = await ctx.db.get(userId);
+    // The owner account is unalterable: its identity fields — the handle
+    // and the display name — can never be changed, even by the owner. The
+    // Settings form always submits both, so only a change is rejected;
+    // an unchanged re-save (e.g. editing the bio) still goes through.
+    // Cosmetic fields (bio, links, artwork, location) stay editable so the
+    // owner personalizes the account like anyone else — but the identity
+    // anchor itself is fixed for the life of the platform.
+    if (current?.email === ADMIN_EMAIL) {
+      const nextName = args.name !== undefined ? args.name.trim() : undefined;
+      const nextUsername =
+        args.username !== undefined
+          ? args.username.toLowerCase().replace(/[^a-z0-9_]/g, "")
+          : undefined;
+      if (
+        (nextName !== undefined && nextName !== (current.name ?? "").trim()) ||
+        (nextUsername !== undefined && nextUsername !== (current.username ?? ""))
+      ) {
+        throw new Error("The owner account cannot be changed.");
+      }
+    }
     const patch: Record<string, unknown> = {};
     if (args.name !== undefined) patch.name = args.name;
     if (args.bio !== undefined) patch.bio = args.bio;
     if (args.links !== undefined) patch.links = args.links;
-    if (args.avatarStorageId !== undefined)
+    if (args.avatarStorageId !== undefined) {
       patch.avatarStorageId = args.avatarStorageId;
-    if (args.bannerStorageId !== undefined)
+      // Setting a new avatar clears the other mode's reference so the two
+      // never fight over which URL wins on read.
+      patch.avatarUrl = null;
+    }
+    if (args.avatarUrl !== undefined) {
+      patch.avatarUrl = args.avatarUrl;
+      patch.avatarStorageId = null;
+    }
+    if (args.bannerStorageId !== undefined) {
       patch.bannerStorageId = args.bannerStorageId;
+      patch.bannerUrl = null;
+    }
+    if (args.bannerUrl !== undefined) {
+      patch.bannerUrl = args.bannerUrl;
+      patch.bannerStorageId = null;
+    }
+    // The old avatar/banner files are only ever replaced, never leaked.
+    // But only when artwork is actually being set/cleared this call — a
+    // plain profile save (name/bio/links/location) must NOT delete the
+    // current picture. Convex storage ids delete inline (mutations can);
+    // external Cloudinary keys go through the fire-and-forget batch delete.
+    const artworkChanging =
+      args.avatarStorageId !== undefined ||
+      args.avatarUrl !== undefined ||
+      args.bannerStorageId !== undefined ||
+      args.bannerUrl !== undefined;
+    if (artworkChanging) {
+      const oldKeys: string[] = [];
+      if (current?.avatarStorageId) {
+        await ctx.storage.delete(current.avatarStorageId);
+      }
+      if (current?.bannerStorageId) {
+        await ctx.storage.delete(current.bannerStorageId);
+      }
+      if (current?.avatarUrl) {
+        const key = keyFromPublicUrl(current.avatarUrl);
+        if (key !== null) oldKeys.push(key);
+      }
+      if (current?.bannerUrl) {
+        const key = keyFromPublicUrl(current.bannerUrl);
+        if (key !== null) oldKeys.push(key);
+      }
+      if (oldKeys.length > 0) {
+        // Profile artwork is always an image asset.
+        await ctx.scheduler.runAfter(0, internal.mediaStorage.deleteExternalKeys, {
+          keys: oldKeys.map((key) => ({ key, resourceType: "image" })),
+        });
+      }
+    }
     if (args.location !== undefined) {
       patch.location =
         args.location === null
@@ -331,8 +423,14 @@ export const suggestedUsers = query({
     return await Promise.all(
       candidates.map(async (u) => ({
         ...publicUser(u),
-        avatarUrl: u.avatarStorageId ? await ctx.storage.getUrl(u.avatarStorageId) : null,
-        bannerUrl: u.bannerStorageId ? await ctx.storage.getUrl(u.bannerStorageId) : null,
+        // Dual-mode: an external Cloudinary URL wins; otherwise resolve the
+        // Convex storage id (legacy/fallback path).
+        avatarUrl:
+          u.avatarUrl ??
+          (u.avatarStorageId ? await ctx.storage.getUrl(u.avatarStorageId) : null),
+        bannerUrl:
+          u.bannerUrl ??
+          (u.bannerStorageId ? await ctx.storage.getUrl(u.bannerStorageId) : null),
       })),
     );
   },
@@ -357,8 +455,12 @@ export const searchUsers = query({
     return await Promise.all(
       matches.slice(0, 10).map(async (u) => {
         const [avatarUrl, bannerUrl] = await Promise.all([
-          u.avatarStorageId ? ctx.storage.getUrl(u.avatarStorageId) : null,
-          u.bannerStorageId ? ctx.storage.getUrl(u.bannerStorageId) : null,
+          // Dual-mode: an external Cloudinary URL wins; otherwise resolve the
+          // Convex storage id (legacy/fallback path).
+          u.avatarUrl ??
+            (u.avatarStorageId ? ctx.storage.getUrl(u.avatarStorageId) : null),
+          u.bannerUrl ??
+            (u.bannerStorageId ? ctx.storage.getUrl(u.bannerStorageId) : null),
         ]);
         return { ...publicUser(u), avatarUrl, bannerUrl };
       }),
