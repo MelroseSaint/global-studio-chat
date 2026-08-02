@@ -24,7 +24,10 @@ jobs:
   deploy:
     name: Build and deploy to production
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cold runners are slow: npm ci + vercel build (tsc + vite) plus the
+    # upload routinely exceed 20 minutes on the first run after a cache
+    # miss, so give the deploy headroom to finish.
+    timeout-minutes: 45
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
