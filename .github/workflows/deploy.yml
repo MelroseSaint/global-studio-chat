@@ -40,4 +40,4 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: team_S3b0Y2fnJhOo8sdP39P0zfGP
           VERCEL_PROJECT_ID: prj_Y8sMe7X0RLGsMWa0tcMi8auuNpXa
-        run: npx --yes vercel@latest --prod --yes
+        run: npx --yes vercel@latest --prod --yes --scope team_S3b0Y2fnJhOo8sdP39P0zfGP
