@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Pre-push hook: block pushes that contain commits authored with an email
+# that isn't monroedoses@gmail.com. Vercel silently rejects deployments
+# when the commit author email doesn't match a verified GitHub account, so
+# this catches the mistake before it leaves the machine.
+#
+# Installed by the npm postinstall script. The pattern is:
+#   - scripts/pre-push → symlinked into .git/hooks/pre-push by postinstall
+#   - survives fresh clones because postinstall runs after every npm install
+
+set -euo pipefail
+
+REQUIRED_EMAIL="monroedoses@gmail.com"
+VIOLATIONS=0
+
+while IFS=' ' read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+  # If the remote SHA is all zeros, the ref doesn't exist on the remote yet
+  # (first push of a branch). Check all commits reachable from LOCAL_SHA.
+  if [ "$REMOTE_SHA" = "0000000000000000000000000000000000000000" ]; then
+    RANGE="$LOCAL_SHA"
+  else
+    RANGE="${REMOTE_SHA}..${LOCAL_SHA}"
+  fi
+
+  # Get commits that are about to be pushed, newest-first so the reporter
+  # shows the most recent offending commit last.
+  COMMITS=$(git rev-list "$RANGE" 2>/dev/null || true)
+  if [ -z "$COMMITS" ]; then
+    continue
+  fi
+
+  while IFS= read -r COMMIT; do
+    EMAIL=$(git log -1 --format='%ae' "$COMMIT")
+    if [ "$EMAIL" != "$REQUIRED_EMAIL" ]; then
+      if [ "$VIOLATIONS" -eq 0 ]; then
+        echo ""
+        echo "  ─────────────────────────────────────────────────────"
+        echo "  PUSH BLOCKED — wrong commit author email"
+        echo ""
+        echo "  Vercel requires the commit author email to match a"
+        echo "  verified GitHub account. Commits authored with an"
+        echo "  unverified email are silently dropped at deploy time."
+        echo ""
+        echo "  Expected: $REQUIRED_EMAIL"
+        echo "  ─────────────────────────────────────────────────────"
+        echo ""
+      fi
+      VIOLATIONS=$((VIOLATIONS + 1))
+      SUBJECT=$(git log -1 --format='%s' "$COMMIT")
+      echo "  ✗  $COMMIT  <$EMAIL>"
+      echo "     $SUBJECT"
+      echo ""
+    fi
+  done <<< "$COMMITS"
+done
+
+if [ "$VIOLATIONS" -gt 0 ]; then
+  echo "  ─────────────────────────────────────────────────────"
+  echo "  $VIOLATIONS commit(s) with the wrong email."
+  echo ""
+  echo "  Fix with:"
+  echo "    git rebase -i HEAD~$VIOLATIONS  # edit the commits"
+  echo "    git commit --amend --author=\"MelroseSaint <$REQUIRED_EMAIL>\" --no-edit"
+  echo ""
+  echo "  Or, to reset the author on every commit in the range:"
+  echo "    git rebase --exec 'git commit --amend --reset-author --no-edit' <base>"
+  echo "  ─────────────────────────────────────────────────────"
+  echo ""
+  exit 1
+fi
+
+exit 0
