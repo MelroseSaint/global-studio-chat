@@ -130,32 +130,31 @@ export function Landing() {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
 
-  // Scroll a section into view, offset for the sticky header.
+  // Scroll a section into view (offset for the sticky header) and update the
+  // URL hash so the page reflects where the user is. Uses the History API
+  // directly instead of relying on React Router's hash handling, which can
+  // silently drop same-path hash-only navigations.
   const scrollToSection = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.history.replaceState(null, "", `/#${id}`);
   };
 
-  // Anchor links on the landing page (/ #features, / #standard) are React
-  // Router <Link>s, so the browser's native hash-jump never runs — the click
-  // updates the URL but nothing scrolls. Scroll to the target manually, and
-  // handle direct deep links (e.g. loading / #standard from elsewhere) the
-  // same way.
+  // Direct deep links (e.g. loading /#standard from a bookmark or an
+  // external link) still need the router to finish painting before we
+  // measure, so the scroll lands on the right spot.
   useEffect(() => {
     const id = location.hash.replace("#", "");
     if (id.length === 0) return;
-    // A short delay lets the router paint the target section before we
-    // measure, so the scroll lands on the right spot.
-    const timer = window.setTimeout(() => scrollToSection(id), 60);
+    const timer = window.setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 60);
     return () => window.clearTimeout(timer);
   }, [location.hash]);
-
-  // Scroll on click too, so re-clicking the same anchor (hash unchanged,
-  // effect won't re-run) still glides to the section instead of doing
-  // nothing.
-  const scrollTo = (id: string) => () => scrollToSection(id);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -169,22 +168,18 @@ export function Landing() {
             <Button
               variant="ghost"
               size="sm"
-              asChild
               className="hidden sm:inline-flex"
+              onClick={() => scrollToSection("features")}
             >
-              <Link to="/#features" onClick={scrollTo("features")}>
-                Why PureWire
-              </Link>
+              Why PureWire
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              asChild
               className="hidden sm:inline-flex"
+              onClick={() => scrollToSection("standard")}
             >
-              <Link to="/#standard" onClick={scrollTo("standard")}>
-                The Standard
-              </Link>
+              The Standard
             </Button>
             <Button size="sm" asChild>
               <Link to={isAuthenticated ? "/home" : "/auth"}>
@@ -237,10 +232,12 @@ export function Landing() {
                     <ArrowRight className="size-4" />
                   </Link>
                 </Button>
-                <Button size="lg" variant="outline" asChild>
-                  <Link to="/#standard" onClick={scrollTo("standard")}>
-                    See the PureWire Standard
-                  </Link>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={() => scrollToSection("standard")}
+                >
+                  See the PureWire Standard
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
