@@ -1,5 +1,6 @@
 import { convexAuth } from "@convex-dev/auth/server";
 import { Password } from "@convex-dev/auth/providers/Password";
+import { ConvexError } from "convex/values";
 
 import { normalizeEmailIdentity } from "@/lib/format";
 
@@ -98,7 +99,11 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
             .withIndex("email", (q) => q.eq("email", canonicalEmail))
             .first();
           if (existing !== null && existing._id !== userId) {
-            throw new Error(
+            // ConvexError so the message crosses the public HTTP boundary:
+            // plain Errors are masked as "Server Error" by Convex and the
+            // sign-up form would show a generic failure instead of the
+            // real one-inbox-one-badge reason.
+            throw new ConvexError(
               "An account with this email already exists. One inbox gets one badge.",
             );
           }

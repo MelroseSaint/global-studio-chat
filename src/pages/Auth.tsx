@@ -128,11 +128,43 @@ export function Auth() {
    * account (deleted session) — the client then attaches that dead token to
    * every auth call and the server rejects with "Invalid token". When that
    * happens, clear the stale session so the next attempt starts clean.
+   *
+   * Convex masks plain Errors thrown inside actions at the public HTTP
+   * boundary, so credential rejections from the auth library arrive as
+   * "Server Error" instead of a real message. Those failures are expected
+   * (wrong password, unknown account, expired code, rate limit) — translate
+   * them into honest per-flow copy instead of showing a scary outage line.
+   *
+   * Our own user-facing failures throw ConvexError, whose payload crosses
+   * the boundary in `err.data` (the `.message` field is still masked) — so
+   * those real messages are surfaced verbatim before any translation.
    */
   const authErrorMessage = (err: unknown, fallback: string): string => {
+    const data =
+      err instanceof Error && "data" in err
+        ? (err as { data?: unknown }).data
+        : undefined;
+    if (typeof data === "string" && data.length > 0) {
+      return data;
+    }
     const msg = err instanceof Error ? err.message : fallback;
     if (/invalid token|invalidaccountid|not authenticated/i.test(msg)) {
       void signOut();
+    }
+    if (/server error/i.test(msg)) {
+      if (step === "signup") {
+        return "We couldn't create your account. If an account with this email already exists, sign in instead.";
+      }
+      if (step === "verify") {
+        return "That code didn't work. Check the email we sent and try again.";
+      }
+      if (step === "forgot") {
+        return "We couldn't send a reset code to that address. Check the email and try again.";
+      }
+      if (step === "reset") {
+        return "That code didn't work or your new password is too weak. Try again.";
+      }
+      return "That email and password didn't match. Check them and try again, or reset your password.";
     }
     return msg;
   };
