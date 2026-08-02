@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
@@ -6,24 +6,45 @@ import { ConvexReactClient } from "convex/react";
 import { UpdateBanner } from "@convex-dev/static-hosting/react";
 
 import { AppLayout } from "@/components/AppLayout";
+import { PageLoader } from "@/components/PageLoader";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/index.css";
 
-import { Admin } from "@/pages/Admin";
-import { Auth } from "@/pages/Auth";
-import { Explore } from "@/pages/Explore";
-import { Feed } from "@/pages/Feed";
+// Entry and error pages stay eager for an instant first paint. Every other
+// route is code-split: the shell downloads once and the page body streams in
+// on demand, so the initial bundle stays small.
 import { Landing } from "@/pages/Landing";
 import { NotFound } from "@/pages/NotFound";
-import { Notifications } from "@/pages/Notifications";
-import { PostDetail } from "@/pages/PostDetail";
-import { Privacy } from "@/pages/Privacy";
-import { Profile } from "@/pages/Profile";
-import { Settings } from "@/pages/Settings";
-import { Support } from "@/pages/Support";
-import { Terms } from "@/pages/Terms";
+
+// Pages export named components, so each lazy factory remaps its named export
+// onto the `default` that React.lazy resolves.
+const Admin = lazy(() => import("@/pages/Admin").then((m) => ({ default: m.Admin })));
+const Auth = lazy(() => import("@/pages/Auth").then((m) => ({ default: m.Auth })));
+const Explore = lazy(() =>
+  import("@/pages/Explore").then((m) => ({ default: m.Explore })),
+);
+const Feed = lazy(() => import("@/pages/Feed").then((m) => ({ default: m.Feed })));
+const Notifications = lazy(() =>
+  import("@/pages/Notifications").then((m) => ({ default: m.Notifications })),
+);
+const PostDetail = lazy(() =>
+  import("@/pages/PostDetail").then((m) => ({ default: m.PostDetail })),
+);
+const Privacy = lazy(() =>
+  import("@/pages/Privacy").then((m) => ({ default: m.Privacy })),
+);
+const Profile = lazy(() =>
+  import("@/pages/Profile").then((m) => ({ default: m.Profile })),
+);
+const Settings = lazy(() =>
+  import("@/pages/Settings").then((m) => ({ default: m.Settings })),
+);
+const Support = lazy(() =>
+  import("@/pages/Support").then((m) => ({ default: m.Support })),
+);
+const Terms = lazy(() => import("@/pages/Terms").then((m) => ({ default: m.Terms })));
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
@@ -43,29 +64,31 @@ createRoot(document.getElementById("root")!).render(
     <ConvexAuthProvider client={convex}>
       <TooltipProvider delayDuration={200}>
         <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/privacy" element={<Privacy />} />
-            <Route path="/terms" element={<Terms />} />
-            <Route
-              element={
-                <RequireAuth>
-                  <AppLayout />
-                </RequireAuth>
-              }
-            >
-              <Route path="/home" element={<Feed />} />
-              <Route path="/explore" element={<Explore />} />
-              <Route path="/notifications" element={<Notifications />} />
-              <Route path="/u/:username" element={<Profile />} />
-              <Route path="/post/:postId" element={<PostDetail />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/support" element={<Support />} />
-              <Route path="/admin" element={<Admin />} />
-            </Route>
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/" element={<Landing />} />
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/terms" element={<Terms />} />
+              <Route
+                element={
+                  <RequireAuth>
+                    <AppLayout />
+                  </RequireAuth>
+                }
+              >
+                <Route path="/home" element={<Feed />} />
+                <Route path="/explore" element={<Explore />} />
+                <Route path="/notifications" element={<Notifications />} />
+                <Route path="/u/:username" element={<Profile />} />
+                <Route path="/post/:postId" element={<PostDetail />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/support" element={<Support />} />
+                <Route path="/admin" element={<Admin />} />
+              </Route>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
           {/* Live-reload prompt when a new deployment ships. */}
           <UpdateBanner
             message="A new version of PureWire is available"

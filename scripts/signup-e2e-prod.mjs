@@ -13,6 +13,10 @@
  *  4. Forgot password → reset code (again read from Resend) → new password.
  *  5. Prove the OLD password is rejected and sign-in with the NEW password
  *     works.
+ *  6. Post with media like a real user, confirm the post lands in the
+ *     Global feed (browser + server-side) and is originality-verified,
+ *     then delete it through the post menu and confirm it's gone — the
+ *     content pipeline, not just auth.
  *
  * This is the full-loop proof that the OTP pipeline works in production:
  * account created -> code email sent -> code accepted -> session established
@@ -34,6 +38,8 @@ import { chromium } from "playwright";
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+
+import { deflateSync } from "node:zlib";
 
 const SITE_URL = process.env.SITE_URL ?? "https://outgoing-seal-727.convex.site";
 const CONVEX_URL =
@@ -62,6 +68,67 @@ function check(name, ok, detail = "") {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Deterministic PRNG (mulberry32) so each run's photo is unique — a
+ * repeated image would collide with a leftover post from a prior run in
+ * the 7-day duplicate window. */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** CRC-32 for PNG chunk checksums. */
+function crc32(buf) {
+  let c = ~0;
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i];
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+
+function pngChunk(type, data) {
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const out = Buffer.alloc(12 + data.length);
+  out.writeUInt32BE(data.length, 0);
+  out.write(type, 4, "ascii");
+  data.copy(out, 8);
+  out.writeUInt32BE(crc32(body), 8 + data.length);
+  return out;
+}
+
+/** A tiny unique RGB PNG so the upload pipeline has real bytes to chew on. */
+function makeTestPng(seed) {
+  const size = 64;
+  const rng = mulberry32(seed);
+  const raw = Buffer.alloc(size * (1 + size * 3));
+  for (let y = 0; y < size; y++) {
+    raw[y * (1 + size * 3)] = 0; // filter: none
+    for (let x = 0; x < size; x++) {
+      const p = y * (1 + size * 3) + 1 + x * 3;
+      raw[p] = (rng() * 256) | 0;
+      raw[p + 1] = (rng() * 256) | 0;
+      raw[p + 2] = (rng() * 256) | 0;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: truecolor
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 /** Detect the Turnstile gate state (mirrors admin-auth-browser-qa.mjs). */
 async function detectTurnstile(page) {
@@ -449,6 +516,111 @@ async function main() {
       "fresh session JWT stored after new-password sign-in",
       typeof jwt === "string" && jwt.length > 20,
     );
+
+    // 9. Content pipeline — a synthetic real-user post with media.
+    // The stamp appears twice so two runs' texts share few word shingles
+    // (Jaccard ≈ 0.45, well under the 0.7 duplicate threshold): a post left
+    // behind by a failed prior run can never reject this run's post.
+    const postText = `Nightly E2E post ${stamp} — original photo from run ${stamp}.`;
+    const pngSeed = [...stamp].reduce(
+      (h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0,
+      7,
+    );
+
+    // 9a. Compose the post (we're signed in on /home).
+    await page.getByPlaceholder("Say it anyway…").fill(postText);
+
+    // 9b. Attach a generated photo through the hidden file input. The
+    //     client pipeline (AI scan → metadata strip → upload → perceptual
+    //     hash) runs before the media thumbnail renders, so waiting for
+    //     the thumbnail guarantees the media is actually attached before
+    //     the Post button is pressed.
+    await page.locator('input[type="file"]').first().setInputFiles({
+      name: `e2e-${stamp}.png`,
+      mimeType: "image/png",
+      buffer: makeTestPng(pngSeed),
+    });
+    const thumbShown = await page
+      .locator('img[src^="blob:"]')
+      .first()
+      .waitFor({ timeout: NAV_TIMEOUT })
+      .then(() => true)
+      .catch(() => false);
+    check("media thumbnail attached to the composer", thumbShown);
+
+    // 9c. Publish and confirm the success toast.
+    await page.getByRole("button", { name: "Post", exact: true }).click();
+    const postedToast = await page
+      .getByText("Posted!", { exact: true })
+      .waitFor({ timeout: NAV_TIMEOUT })
+      .then(() => true)
+      .catch(() => false);
+    check("post published (Posted! toast)", postedToast, postedToast ? "" : "no success toast");
+
+    // 9d. The post must surface in the Global feed, with its image.
+    const card = page.locator("article").filter({ hasText: postText }).first();
+    const inFeed = await card
+      .waitFor({ timeout: NAV_TIMEOUT })
+      .then(() => true)
+      .catch(() => false);
+    check("post appears in the Global feed", inFeed, inFeed ? "" : "card not found");
+    if (inFeed) {
+      check("post shows the uploaded image", (await card.locator("img").count()) > 0);
+    }
+
+    // 9e. Server-side confirmation through the same session: the post is
+    //     real, originality-verified, and carries exactly one image.
+    convex.setAuth(jwt);
+    let serverPost = null;
+    try {
+      const feedRes = await convex.query(api.posts.feed, {
+        paginationOpts: { numItems: 50, cursor: null },
+        filter: "global",
+      });
+      serverPost = (feedRes.page ?? []).find((p) => p.content === postText) ?? null;
+    } catch {
+      serverPost = null;
+    }
+    check("post verified server-side in the Global feed", serverPost !== null);
+    if (serverPost !== null) {
+      check("post is originality-verified", serverPost.originalityVerified === true);
+      const media = serverPost.media ?? [];
+      check(
+        "post carries exactly one image",
+        media.length === 1 && media[0].kind === "image",
+      );
+    }
+
+    // 9f. Delete it through the post menu — the same path a user takes.
+    if (serverPost !== null) {
+      await card.hover();
+      const more = card.locator('button[aria-haspopup="menu"]').first();
+      const menuOpened = await more.click().then(() => true).catch(() => false);
+      check("post menu opens", menuOpened);
+      if (menuOpened) {
+        page.once("dialog", (d) => void d.accept());
+        await page.getByRole("menuitem", { name: "Delete post" }).click();
+        const goneFromUi = await card
+          .waitFor({ state: "detached", timeout: NAV_TIMEOUT })
+          .then(() => true)
+          .catch(() => false);
+        check("post removed from the UI after delete", goneFromUi);
+
+        // 9g. Confirm it's gone server-side too.
+        let goneServer = false;
+        try {
+          const after = await convex.query(api.posts.feed, {
+            paginationOpts: { numItems: 50, cursor: null },
+            filter: "global",
+          });
+          goneServer = !(after.page ?? []).some((p) => p.content === postText);
+        } catch {
+          goneServer = false;
+        }
+        check("post removed server-side after delete", goneServer);
+      }
+    }
+    convex.clearAuth();
   } finally {
     // Erase the throwaway account on every exit path — success or failure —
     // before the browser closes. Only claims success when the delete call

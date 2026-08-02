@@ -9,10 +9,11 @@ import {
   Shield,
   User,
 } from "lucide-react";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 
 import { api } from "@/convex/_generated/api";
+import { PageLoader } from "@/components/PageLoader";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
@@ -157,7 +158,12 @@ export function AppLayout() {
         </header>
 
         <main className="mx-auto w-full max-w-2xl flex-1">
-          <Outlet />
+          {/* Inner Suspense keeps the sidebar and mobile nav mounted while a
+              lazy page chunk streams in — only the content column shows the
+              loader, not the whole app shell. */}
+          <Suspense fallback={<PageLoader label="Opening" />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
 
