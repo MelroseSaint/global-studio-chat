@@ -173,6 +173,7 @@ export function AppLayout() {
         <NavItem to="/explore" icon={Compass} label="" />
         <NavItem to="/notifications" icon={Bell} label="" badge={unread ?? 0} />
         <NavItem to="/support" icon={LifeBuoy} label="" />
+        {user?.role === "admin" && <NavItem to="/admin" icon={Shield} label="" />}
         <NavItem to={profileTo} icon={User} label="" />
       </nav>
     </div>
