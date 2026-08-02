@@ -16,6 +16,8 @@
     "qa:admin-auth": "node scripts/admin-auth-qa.mjs",
     "qa:admin-auth-browser": "node scripts/admin-auth-browser-qa.mjs",
     "qa:signup-e2e": "node scripts/signup-e2e-prod.mjs",
+    "qa:secrets": "node scripts/secrets-scan.mjs",
+    "turnstile:keys": "node scripts/set-turnstile-keys.mjs",
     "typecheck": "tsc -b --noEmit",
     "deploy": "npm run deploy:backend && npm run upload:version && npm run deploy:web",
     "deploy:backend": "npx convex deploy",

@@ -1,0 +1,60 @@
+name: Static Audit
+
+# Full static gate for every push to `main` — the local audit, automated:
+# typecheck, lint, production build, Convex function typecheck, the salt-rotation
+# QA, and a secrets scan that fails the pipeline the moment a credential shape
+# lands in a tracked file. Catches breaking changes in minutes instead of on the
+# next deploy. Also runnable manually from the Actions tab.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+concurrency:
+  # Never overlap runs: if the previous push is still auditing, the new one
+  # waits rather than racing it.
+  group: static-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Static audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fail fast on credentials: a leaked key must stop the push before any
+      # of the slower steps run — a secret leak often lands alongside other
+      # breakage, so it must never be skipped by an earlier failure.
+      - name: Scan for leaked secrets
+        run: npm run qa:secrets
+
+      - name: Typecheck the app
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build for production
+        run: npm run build
+
+      - name: Typecheck the Convex backend
+        run: npx convex typecheck
+
+      - name: Run the salt-rotation QA
+        run: npm run qa:salt
