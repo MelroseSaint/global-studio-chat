@@ -125,6 +125,34 @@ export const createTestUser = mutation({
 });
 
 /**
+ * Erase a throwaway QA account (and its auth sessions) by id, so a run that
+ * crashes before its own cleanup can still be swept. Only ever targets the
+ * reserved qa_ prefix, never a real account. Gated by the same two env gates.
+ */
+export const deleteTestUser = mutation({
+  args: { userId: v.id("users"), secret: v.string() },
+  handler: async (ctx, { userId, secret }) => {
+    requireHarness(secret);
+    const user = await ctx.db.get(userId);
+    if (user === null) {
+      return { deleted: false, reason: "not-found" };
+    }
+    if (!user.username?.startsWith("qa_")) {
+      return { deleted: false, reason: "not-qa" };
+    }
+    const sessions = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q) => q.eq("userId", userId))
+      .take(100);
+    for (const session of sessions) {
+      await ctx.db.delete(session._id);
+    }
+    await ctx.db.delete(userId);
+    return { deleted: true, sessions: sessions.length };
+  },
+});
+
+/**
  * Mint a real session for the platform's admin (ADMIN_EMAIL), so the QA
  * check can verify silenced content is visible to moderation. Gated by the
  * same two env gates as everything else in this module.
@@ -142,6 +170,28 @@ export const mintAdminSession = mutation({
     }
     const token = await mintSession(ctx, admin._id);
     return { userId: admin._id, token };
+  },
+});
+
+/**
+ * Mint a real session for any existing account by its stored email, so the
+ * QA check can verify the salted-hash pipeline against a real
+ * email-bearing record (e.g. a pre-existing test account). Gated by the
+ * same two env gates as everything else in this module.
+ */
+export const mintSessionForEmail = mutation({
+  args: { email: v.string(), secret: v.string() },
+  handler: async (ctx, { email, secret }) => {
+    requireHarness(secret);
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", email))
+      .first();
+    if (user === null) {
+      throw new Error("No account with that email on this deployment.");
+    }
+    const token = await mintSession(ctx, user._id);
+    return { userId: user._id, token };
   },
 });
 

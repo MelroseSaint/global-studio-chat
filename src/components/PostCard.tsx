@@ -252,21 +252,35 @@ export function PostCard({
 
   const linkUrl = extractFirstUrl(post.content);
 
+  const authorUsername = post.author?.username;
+
   return (
     <article className="group flex gap-3 border-b px-4 py-4 transition-colors hover:bg-muted/25 sm:px-5">
-      <Link to={`/u/${post.author?.username ?? ""}`} className="shrink-0">
-        <UserAvatar user={post.author} className="size-11" />
-      </Link>
+      {authorUsername ? (
+        <Link to={`/u/${authorUsername}`} className="shrink-0">
+          <UserAvatar user={post.author} className="size-11" />
+        </Link>
+      ) : (
+        <span className="shrink-0">
+          <UserAvatar user={post.author} className="size-11" />
+        </span>
+      )}
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5 text-sm">
-            <Link
-              to={`/u/${post.author?.username ?? ""}`}
-              className="truncate font-semibold hover:underline"
-            >
-              {post.author?.name ?? post.author?.username ?? "Unknown"}
-            </Link>
+            {authorUsername ? (
+              <Link
+                to={`/u/${authorUsername}`}
+                className="truncate font-semibold hover:underline"
+              >
+                {post.author?.name ?? post.author?.username ?? "Unknown"}
+              </Link>
+            ) : (
+              <span className="truncate font-semibold">
+                {post.author?.name ?? "Unknown"}
+              </span>
+            )}
             {post.author?.verified ? (
               <VerifiedBadge className="shrink-0" />
             ) : null}

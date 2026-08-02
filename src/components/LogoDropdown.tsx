@@ -60,7 +60,11 @@ export function LogoDropdown({
         <DropdownMenuItem onClick={() => navigate("/home")}>
           Home
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => navigate(`/u/${user?.username}`)}>
+        <DropdownMenuItem
+          onClick={() =>
+            navigate(user?.username ? `/u/${user.username}` : "/settings")
+          }
+        >
           Profile
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => navigate("/settings")}>

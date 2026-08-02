@@ -1,0 +1,146 @@
+name: Production Health Check
+
+# Runs the full sign-up + password-reset auth loop against the live site
+# (scripts/signup-e2e-prod.mjs). Runs on every push to `main` — so a bad
+# deploy or a breaking change alerts immediately instead of waiting until
+# the nightly run — plus once a night at 03:00 UTC to catch anything the
+# push-triggered runs missed. Also runnable manually from the Actions tab.
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Nightly at 03:00 UTC — well outside usual deploy windows.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  # Never overlap runs: if the previous one is still going (slow email
+  # delivery, etc.), the new run waits rather than piling up.
+  group: production-healthcheck
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # open a deduplicated alert issue when a check fails
+
+jobs:
+  auth-loop:
+    name: Sign-up + reset auth loop
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the production auth-loop E2E
+        id: e2e
+        env:
+          # The Resend key is required — the script reads the OTP codes from
+          # Resend's API. Add it under Settings > Secrets > Actions.
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # Overridable via repository variables; default to production.
+          SITE_URL: ${{ vars.SITE_URL || 'https://outgoing-seal-727.convex.site' }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:signup-e2e 2>&1 | tee healthcheck.log
+
+      - name: Upload the E2E log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: healthcheck-log
+          path: healthcheck.log
+
+      # Alerting: GitHub already emails on failed runs. This also opens a
+      # single persistent issue (label prod-healthcheck) so a failing nightly
+      # check is visible on the repo and never silently lost — and never
+      # spams one issue per night, because an open alert blocks a new one.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-healthcheck";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Production health check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The PureWire auth-loop E2E failed against the live site.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the run log (healthcheck-log artifact) for the failing check.",
+                "The throwaway account, if one was left behind, is named in the log.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      # Self-healing: when a run passes, close any open alert issue so the
+      # next real failure can open a fresh one instead of being swallowed by
+      # a stale alert.
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-healthcheck";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed alert issue #${issue.number}.`);
+            }

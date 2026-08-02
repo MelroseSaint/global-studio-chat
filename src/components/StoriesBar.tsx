@@ -192,12 +192,16 @@ export function StoriesBar() {
           )}
           <div className="max-h-full w-full max-w-md px-4">
             <div className="mb-3 flex items-center gap-3">
-              <Link
-                to={`/u/${current.author?.username ?? ""}`}
-                onClick={() => setViewerOpen(false)}
-              >
+              {current.author?.username ? (
+                <Link
+                  to={`/u/${current.author.username}`}
+                  onClick={() => setViewerOpen(false)}
+                >
+                  <UserAvatar user={current.author} className="size-10" />
+                </Link>
+              ) : (
                 <UserAvatar user={current.author} className="size-10" />
-              </Link>
+              )}
               <div className="min-w-0">
                 <p className="truncate font-semibold text-white">
                   {current.author?.name ?? current.author?.username}

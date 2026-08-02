@@ -15,7 +15,8 @@ import {
   Sparkles,
   UserPlus,
 } from "lucide-react";
-import { Link } from "react-router";
+import { useEffect } from "react";
+import { Link, useLocation } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -127,6 +128,34 @@ const standard = [
 
 export function Landing() {
   const { isAuthenticated } = useAuth();
+  const location = useLocation();
+
+  // Scroll a section into view, offset for the sticky header.
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
+  // Anchor links on the landing page (/ #features, / #standard) are React
+  // Router <Link>s, so the browser's native hash-jump never runs — the click
+  // updates the URL but nothing scrolls. Scroll to the target manually, and
+  // handle direct deep links (e.g. loading / #standard from elsewhere) the
+  // same way.
+  useEffect(() => {
+    const id = location.hash.replace("#", "");
+    if (id.length === 0) return;
+    // A short delay lets the router paint the target section before we
+    // measure, so the scroll lands on the right spot.
+    const timer = window.setTimeout(() => scrollToSection(id), 60);
+    return () => window.clearTimeout(timer);
+  }, [location.hash]);
+
+  // Scroll on click too, so re-clicking the same anchor (hash unchanged,
+  // effect won't re-run) still glides to the section instead of doing
+  // nothing.
+  const scrollTo = (id: string) => () => scrollToSection(id);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -143,7 +172,9 @@ export function Landing() {
               asChild
               className="hidden sm:inline-flex"
             >
-              <Link to="/#features">Why PureWire</Link>
+              <Link to="/#features" onClick={scrollTo("features")}>
+                Why PureWire
+              </Link>
             </Button>
             <Button
               variant="ghost"
@@ -151,7 +182,9 @@ export function Landing() {
               asChild
               className="hidden sm:inline-flex"
             >
-              <Link to="/#standard">The Standard</Link>
+              <Link to="/#standard" onClick={scrollTo("standard")}>
+                The Standard
+              </Link>
             </Button>
             <Button size="sm" asChild>
               <Link to={isAuthenticated ? "/home" : "/auth"}>
@@ -205,7 +238,9 @@ export function Landing() {
                   </Link>
                 </Button>
                 <Button size="lg" variant="outline" asChild>
-                  <Link to="/#standard">See the PureWire Standard</Link>
+                  <Link to="/#standard" onClick={scrollTo("standard")}>
+                    See the PureWire Standard
+                  </Link>
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -220,7 +255,7 @@ export function Landing() {
         {/* Join PureWire — the two ways in, and the no-guest promise */}
         <section
           id="join"
-          className="border-y bg-muted/30"
+          className="scroll-mt-16 border-y bg-muted/30"
         >
           <div className="mx-auto w-full max-w-6xl px-4 py-14">
             <div className="mb-8 text-center">
@@ -290,7 +325,10 @@ export function Landing() {
         </section>
 
         {/* Features */}
-        <section id="features" className="mx-auto w-full max-w-6xl px-4 pb-20">
+        <section
+          id="features"
+          className="scroll-mt-16 mx-auto w-full max-w-6xl px-4 pb-20"
+        >
           <div className="mb-8 text-center">
             <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
               Built around freedom, not followers
@@ -328,7 +366,7 @@ export function Landing() {
         </section>
 
         {/* The PureWire Standard */}
-        <section id="standard" className="border-t bg-muted/30">
+        <section id="standard" className="scroll-mt-16 border-t bg-muted/30">
           <div className="mx-auto w-full max-w-6xl px-4 py-16">
             <div className="mb-2 text-center">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-moss/40 bg-moss/10 px-3 py-1 text-xs font-medium text-moss">
@@ -383,7 +421,7 @@ export function Landing() {
         </section>
 
         {/* How it works */}
-        <section id="how" className="border-t">
+        <section id="how" className="scroll-mt-16 border-t">
           <div className="mx-auto w-full max-w-6xl px-4 py-16">
             <div className="mb-8 text-center">
               <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">

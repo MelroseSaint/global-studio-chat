@@ -19,3 +19,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Freebuff desktop scratch (run docs, preview logs, QA render artifacts)
+.freebuff/
+desktop-v2.db
+desktop-v2.db-shm
+desktop-v2.db-wal
+
+.vercel

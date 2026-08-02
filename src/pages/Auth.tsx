@@ -40,7 +40,7 @@ const RESEND_COOLDOWN_SECONDS = 30;
 type Step = "signin" | "signup" | "verify" | "forgot" | "reset";
 
 export function Auth() {
-  const { isLoading, isAuthenticated, signIn } = useAuth();
+  const { isLoading, isAuthenticated, signIn, signOut } = useAuth();
   const verifyBotChallenge = useMutation(api.security.verifyBotChallenge);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -123,6 +123,20 @@ export function Auth() {
     setBotFailed(false);
   };
 
+  /**
+   * Normalize an auth error for display. A stored token can outlive its
+   * account (deleted session) — the client then attaches that dead token to
+   * every auth call and the server rejects with "Invalid token". When that
+   * happens, clear the stale session so the next attempt starts clean.
+   */
+  const authErrorMessage = (err: unknown, fallback: string): string => {
+    const msg = err instanceof Error ? err.message : fallback;
+    if (/invalid token|invalidaccountid|not authenticated/i.test(msg)) {
+      void signOut();
+    }
+    return msg;
+  };
+
   const submitSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -139,7 +153,7 @@ export function Auth() {
         setResendIn(RESEND_COOLDOWN_SECONDS);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid credentials.");
+      setError(authErrorMessage(err, "Invalid credentials."));
     } finally {
       setSubmitting(false);
     }
@@ -173,7 +187,7 @@ export function Auth() {
         setResendIn(RESEND_COOLDOWN_SECONDS);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create account.");
+      setError(authErrorMessage(err, "Could not create account."));
     } finally {
       setSubmitting(false);
     }
@@ -190,7 +204,7 @@ export function Auth() {
         flow: "email-verification",
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid code.");
+      setError(authErrorMessage(err, "Invalid code."));
     } finally {
       setSubmitting(false);
     }
@@ -209,7 +223,7 @@ export function Auth() {
       setStep("reset");
       toast.success("Reset code sent. Check your inbox.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send reset code.");
+      setError(authErrorMessage(err, "Could not send reset code."));
     } finally {
       setSubmitting(false);
     }
@@ -235,7 +249,7 @@ export function Auth() {
       setResendIn(RESEND_COOLDOWN_SECONDS);
       toast.success("A new code is on its way — check your inbox.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't send a new code.");
+      setError(authErrorMessage(err, "Couldn't send a new code."));
     } finally {
       setSubmitting(false);
     }
@@ -258,7 +272,7 @@ export function Auth() {
         flow: "reset-verification",
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid code.");
+      setError(authErrorMessage(err, "Invalid code."));
     } finally {
       setSubmitting(false);
     }

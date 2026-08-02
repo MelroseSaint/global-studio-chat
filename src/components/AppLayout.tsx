@@ -75,6 +75,10 @@ export function AppLayout() {
   }, [user, ensureAdminStatus, pruneExpiredStories]);
 
   const username = user?.username ?? "";
+  // A member without a username yet has no profile page — send them to
+  // Settings (where they can pick one) instead of a dead `/u/` route that
+  // 404s.
+  const profileTo = username ? `/u/${username}` : "/settings";
 
   const handleSignOut = async () => {
     await signOut();
@@ -102,11 +106,7 @@ export function AppLayout() {
             label="Notifications"
             badge={unread ?? 0}
           />
-          <NavItem
-            to={`/u/${username}`}
-            icon={User}
-            label="Profile"
-          />
+          <NavItem to={profileTo} icon={User} label="Profile" />
           <NavItem to="/settings" icon={Settings} label="Settings" />
           <NavItem to="/support" icon={LifeBuoy} label="Support" />
           {user?.role === "admin" && (
@@ -148,7 +148,7 @@ export function AppLayout() {
               variant="ghost"
               size="icon"
               className="size-9"
-              onClick={() => navigate(`/u/${username}`)}
+              onClick={() => navigate(profileTo)}
               aria-label="Profile"
             >
               <UserAvatar user={user} className="size-8" />
@@ -167,7 +167,7 @@ export function AppLayout() {
         <NavItem to="/explore" icon={Compass} label="" />
         <NavItem to="/notifications" icon={Bell} label="" badge={unread ?? 0} />
         <NavItem to="/support" icon={LifeBuoy} label="" />
-        <NavItem to={`/u/${username}`} icon={User} label="" />
+        <NavItem to={profileTo} icon={User} label="" />
       </nav>
     </div>
   );

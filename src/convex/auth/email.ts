@@ -1,6 +1,7 @@
 import { Email } from "@convex-dev/auth/providers/Email";
 
-import { integrations } from "@/lib/email-service";
+import { sendEmail } from "@/lib/email-service";
+import { codeEmailHtml, codeEmailText } from "@/lib/email-template";
 
 /** Generate a random 6-digit one-time code. */
 export async function generateSixDigitToken(): Promise<string> {
@@ -14,17 +15,23 @@ export async function sendCodeEmail(
   to: string,
   subject: string,
   token: string,
+  kind: "verify" | "reset",
 ) {
-  const result = await integrations.email.send({
+  // Fail with a clear, human message instead of leaking the provider's raw
+  // rejection (e.g. an invalid API key, an unverified sender domain, or a
+  // provider outage) — that string surfacing in the auth flow reads like a
+  // broken login, not an email outage. Translate any failure here so
+  // sign-up/verify/reset show the real story.
+  const result = await sendEmail({
     to,
     subject,
-    html: `<p>Your PureWire code is</p>
-<p style="font-size: 24px; font-weight: 700; letter-spacing: 4px;">${token}</p>
-<p>This code expires in 10 minutes.</p>`,
-    text: `Your PureWire code is ${token}. It expires in 10 minutes.`,
+    html: codeEmailHtml(token, kind, subject),
+    text: codeEmailText(token, kind),
   });
   if (!result.success) {
-    throw new Error(result.error ?? "Failed to send email.");
+    throw new Error(
+      "PureWire can't send emails right now. Please try again in a moment.",
+    );
   }
 }
 
@@ -32,22 +39,24 @@ export async function sendCodeEmail(
  * Shared email code provider used for email verification and password reset.
  * Sends a 6-digit code through PureWire's email service.
  */
-function codeEmail(id: string, subject: string) {
+function codeEmail(id: string, subject: string, kind: "verify" | "reset") {
   return Email({
     id,
     maxAge: 10 * 60, // 10 minutes
     generateVerificationToken: generateSixDigitToken,
     sendVerificationRequest: ({ identifier, token }) =>
-      sendCodeEmail(identifier, subject, token),
+      sendCodeEmail(identifier, subject, token, kind),
   });
 }
 
 export const EmailVerification = codeEmail(
   "email-verification",
   "Verify your PureWire email",
+  "verify",
 );
 
 export const PasswordReset = codeEmail(
   "password-reset",
   "Reset your PureWire password",
+  "reset",
 );

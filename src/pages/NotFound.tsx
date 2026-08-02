@@ -3,8 +3,12 @@ import { Link } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { LogoDropdown } from "@/components/LogoDropdown";
+import { useAuth } from "@/hooks/use-auth";
 
 export function NotFound() {
+  const { isLoading, isAuthenticated } = useAuth();
+  const signedOut = !isLoading && !isAuthenticated;
+
   return (
     <div className="relative flex min-h-dvh flex-col overflow-hidden">
       <div
@@ -38,6 +42,17 @@ export function NotFound() {
             The link may be broken, or the post or profile may have been
             removed.
           </p>
+          {signedOut ? (
+            <p className="rounded-full border border-border/60 bg-card/60 px-4 py-2 text-sm text-muted-foreground">
+              This content may need you to be signed in.{" "}
+              <Link
+                to="/auth"
+                className="font-medium text-primary hover:underline"
+              >
+                Sign in to PureWire
+              </Link>
+            </p>
+          ) : null}
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Button asChild>
               <Link to="/home">Back to your feed</Link>
