@@ -234,12 +234,43 @@ export const extendSessionLifetimes = mutation({
 async function extendSessionLifetimesImpl(
   ctx: MutationCtx,
   secret: string,
-): Promise<{ sessions: number; tokens: number }> {
+): Promise<{ sessions: number; tokens: number; prefs: number }> {
   requireHarness(secret);
   const horizon = Date.now() + SESSION_HORIZON_MS;
   const sessions = await extendTable(ctx, "authSessions", horizon);
   const tokens = await extendTable(ctx, "authRefreshTokens", horizon);
-  return { sessions, tokens };
+  const prefs = await sweepOrphanPrefs(ctx);
+  return { sessions, tokens, prefs };
+}
+
+/**
+ * Delete sessionPrefs rows whose session no longer exists. The auth
+ * library's own sign-out / expiry cleanup deletes the session row but knows
+ * nothing about sessionPrefs, so an opt-out marker can outlive its session;
+ * this converges them (harmless — the audit only ever consults prefs for
+ * sessions that still exist).
+ */
+async function sweepOrphanPrefs(ctx: MutationCtx): Promise<number> {
+  let swept = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const rows = await ctx.db
+      .query("sessionPrefs")
+      .order("asc")
+      .filter((q) =>
+        q.gt(q.field("_id"), (cursor ?? "") as Id<"sessionPrefs">),
+      )
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      if ((await ctx.db.get(row.sessionId)) === null) {
+        await ctx.db.delete(row._id);
+        swept++;
+      }
+      cursor = row._id;
+    }
+  }
+  return swept;
 }
 
 /**
@@ -340,26 +371,12 @@ export const auditSessionLifetimes = query({
   },
 });
 
+const VIOLATION_CAP = 100;
+
 async function auditSessionLifetimesImpl(ctx: QueryCtx, secret: string) {
   requireHarness(secret);
   const now = Date.now();
   const horizon = now + AUDIT_HORIZON_MS;
-
-  // Deliberate opt-outs: sessions whose owner chose "Keep me signed in"
-  // off. They are expected to be short-lived and must never trip the gate.
-  const optedOut = new Set<string>();
-  for (const pref of await ctx.db.query("sessionPrefs").take(2000)) {
-    optedOut.add(pref.sessionId);
-  }
-
-  // QA scaffolding: sessions minted for qa_ throwaway accounts. They use a
-  // short TTL by design and are deleted at the end of each QA run.
-  const qaUsers = new Set<string>();
-  for (const user of await ctx.db.query("users").take(2000)) {
-    if (user.username?.startsWith("qa_")) {
-      qaUsers.add(user._id);
-    }
-  }
 
   const violations: Array<{
     table: "authSessions" | "authRefreshTokens";
@@ -371,9 +388,38 @@ async function auditSessionLifetimesImpl(ctx: QueryCtx, secret: string) {
   let sessions = 0;
   let tokens = 0;
 
+  /** True when this session is a deliberate opt-out ("Keep me signed in"
+   * off) or belongs to a qa_ harness account. Only candidate violations —
+   * rows already expiring within a year — trigger the lookup, so a clean
+   * run (the normal case) does zero extra reads. */
+  async function isExempt(
+    sessionId: Id<"authSessions">,
+    ownerId: Id<"users"> | null,
+  ) {
+    // Deliberate opt-out: the owner chose a short 30-day session. Only
+    // remember=false rows are ever written, but check the flag anyway so a
+    // hypothetical remember=true row can never wrongly exempt a session.
+    const pref = await ctx.db
+      .query("sessionPrefs")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+    if (pref !== null && !pref.remember) {
+      return true;
+    }
+    // QA scaffolding: sessions minted for qa_ throwaway accounts use a
+    // short TTL by design and are deleted at the end of each QA run.
+    if (ownerId !== null) {
+      const owner = await ctx.db.get(ownerId);
+      if (owner !== null && owner.username?.startsWith("qa_")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Walk authSessions with take() + an _id cursor (Convex allows only a
   // single paginate per function — this visits every row exactly once).
-  const sessionOwner = new Map<string, string>(); // sessionId -> userId
+  const sessionOwner = new Map<string, Id<"users">>(); // sessionId -> userId
   let cursor: string | null = null;
   for (;;) {
     const rows = await ctx.db
@@ -389,8 +435,8 @@ async function auditSessionLifetimesImpl(ctx: QueryCtx, secret: string) {
       sessionOwner.set(row._id, row.userId);
       if (
         row.expirationTime < horizon &&
-        !optedOut.has(row._id) &&
-        !qaUsers.has(row.userId)
+        violations.length < VIOLATION_CAP &&
+        !(await isExempt(row._id, row.userId))
       ) {
         violations.push({
           table: "authSessions",
@@ -419,12 +465,10 @@ async function auditSessionLifetimesImpl(ctx: QueryCtx, secret: string) {
     for (const row of rows) {
       tokens++;
       const ownerId = sessionOwner.get(row.sessionId);
-      const ownedByQa =
-        ownerId !== undefined && qaUsers.has(ownerId);
       if (
         row.expirationTime < horizon &&
-        !optedOut.has(row.sessionId) &&
-        !ownedByQa
+        violations.length < VIOLATION_CAP &&
+        !(await isExempt(row.sessionId, ownerId ?? null))
       ) {
         violations.push({
           table: "authRefreshTokens",
@@ -444,6 +488,7 @@ async function auditSessionLifetimesImpl(ctx: QueryCtx, secret: string) {
     sessions,
     tokens,
     violations,
+    truncated: violations.length >= VIOLATION_CAP,
   };
 }
 

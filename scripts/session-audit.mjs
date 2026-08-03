@@ -77,8 +77,9 @@ async function main() {
     process.exit(0);
   }
 
+  const shown = report.violations.length;
   console.log(
-    `  \u274c ${report.violations.length} row(s) expire within a year — ` +
+    `  \u274c ${shown} row(s) expire within a year — ` +
       "the permanent-session guarantee has regressed:",
   );
   for (const v of report.violations) {
@@ -90,6 +91,11 @@ async function main() {
     console.log(
       `     - ${v.table} ${v.id} (${who}) expires in ~${days} days ` +
         `(${new Date(v.expirationTime).toISOString()})`,
+    );
+  }
+  if (report.truncated) {
+    console.log(
+      `     … and more (the report is capped at ${shown} rows — the sweep is failing at scale).`,
     );
   }
   console.log(

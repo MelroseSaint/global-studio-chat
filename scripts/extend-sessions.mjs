@@ -56,6 +56,9 @@ async function main() {
   console.log(
     `Extended ${result.sessions} sessions and ${result.tokens} refresh tokens to the permanent horizon.`,
   );
+  if (result.prefs > 0) {
+    console.log(`Swept ${result.prefs} orphaned session preference rows.`);
+  }
   console.log(
     result.sessions === 0 && result.tokens === 0
       ? "Nothing needed extending — every session is already permanent."
