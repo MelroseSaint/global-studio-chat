@@ -5,6 +5,8 @@ import {
   CheckCheck,
   ChevronDown,
   ChevronUp,
+  ChevronsRight,
+  Ellipsis,
   EyeOff,
   Flag,
   Heart,
@@ -24,7 +26,7 @@ import {
   UserCheck,
   Users,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -37,6 +39,13 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -235,6 +244,35 @@ const STAT_CARDS = [
 function AdminDashboard({ meId }: { meId: string }) {
   const stats = useQuery(api.admin.dashboardStats);
   const [tab, setTab] = useState("users");
+  // The stats strip is a swipeable row on phones; these flags track whether
+  // there is more to swipe and whether the user has reached the end, so the
+  // fading-edge gradient and "swipe for more" cue appear only while the cue
+  // is true — and gracefully fade out once the end is reached. On tablets
+  // and up the strip is a grid (no scrolling), so the affordance stays
+  // hidden there entirely (sm:hidden below).
+  const statsScrollRef = useRef<HTMLDivElement>(null);
+  const [statsOverflow, setStatsOverflow] = useState(false);
+  const [statsAtEnd, setStatsAtEnd] = useState(false);
+
+  useEffect(() => {
+    const el = statsScrollRef.current;
+    if (!el) return;
+    const update = () => {
+      const canScroll = el.scrollWidth > el.clientWidth + 8;
+      setStatsOverflow(canScroll);
+      setStatsAtEnd(
+        !canScroll || el.scrollLeft + el.clientWidth >= el.scrollWidth - 8,
+      );
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, []);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4 pb-24 sm:p-6">
@@ -249,24 +287,46 @@ function AdminDashboard({ meId }: { meId: string }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {STAT_CARDS.map(({ key, label, icon: Icon }) => (
-          <Card key={key}>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Icon className="size-4" />
-                <span className="text-xs font-medium">{label}</span>
-              </div>
-              <p className="mt-1 text-2xl font-bold">
-                {stats === undefined ? "…" : String(stats[key])}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
+      <div>
+        <div className="relative">
+          <div
+            ref={statsScrollRef}
+            className="flex snap-x gap-3 overflow-x-auto pb-1 sm:grid sm:snap-none sm:grid-cols-3 sm:overflow-visible sm:pb-0"
+          >
+            {STAT_CARDS.map(({ key, label, icon: Icon }) => (
+              <Card key={key} className="min-w-[10.5rem] snap-start sm:min-w-0">
+                <CardContent className="p-3 sm:p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Icon className="size-4" />
+                    <span className="text-xs font-medium">{label}</span>
+                  </div>
+                  <p className="mt-1 text-2xl font-bold">
+                    {stats === undefined ? "…" : String(stats[key])}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          {/* Fading right edge on phones: signals cards continue past the fold. */}
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background to-transparent transition-opacity duration-300 sm:hidden ${
+              statsOverflow && !statsAtEnd ? "opacity-100" : "opacity-0"
+            }`}
+          />
+        </div>
+        <p
+          className={`mt-1 flex items-center justify-end gap-0.5 text-[11px] font-medium text-muted-foreground transition-opacity duration-300 sm:hidden ${
+            statsOverflow && !statsAtEnd ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          <ChevronsRight className="size-3.5" />
+          Swipe for more
+        </p>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-6">
+        <TabsList className="grid w-full grid-cols-3 lg:grid-cols-6">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>
@@ -362,7 +422,7 @@ function UsersPanel({ meId }: { meId: string }) {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
             <Badge variant="outline">{u.role ?? "user"}</Badge>
             {u.isOwner ? (
               <Badge
@@ -413,16 +473,27 @@ function UsersPanel({ meId }: { meId: string }) {
               <option value="admin">Admin</option>
             </select>
             {u._id !== meId && !u.isOwner ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive"
-                onClick={() => setPendingRemove(u._id)}
-                title="Permanently remove this account and all of its content"
-              >
-                <Trash2 className="size-4" />
-                Remove
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive"
+                    aria-label={`Actions for ${u.username ?? u.name ?? "user"}`}
+                  >
+                    <Ellipsis className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => setPendingRemove(u._id)}
+                  >
+                    <Trash2 className="size-4" />
+                    Remove account
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
           </div>
         </motion.div>
@@ -995,50 +1066,45 @@ function SecurityPanel() {
               variant="outline"
               size="sm"
               onClick={() => void setStatus(u._id, "active")}
+              title="Clear flags and restore this account to active"
             >
               <UserCheck className="size-4" />
               Approve
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleSilence(u._id, u.shadowban)}
-              title={
-                u.shadowban
-                  ? "Restore their content to the public feed"
-                  : "Silently stop their content from reaching anyone"
-              }
-            >
-              <EyeOff className="size-4" />
-              {u.shadowban ? "Unsilence" : "Silence"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPendingAction({ userId: u._id, kind: "restrict" })}
-            >
-              <ShieldAlert className="size-4" />
-              Restrict
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive"
-              onClick={() => setPendingAction({ userId: u._id, kind: "ban" })}
-            >
-              <Ban className="size-4" />
-              Ban
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive"
-              onClick={() => setPendingRemove(u._id)}
-              title="Permanently remove this account and all of its content"
-            >
-              <Trash2 className="size-4" />
-              Remove
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" aria-label="More actions">
+                  <Ellipsis className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onClick={() => handleSilence(u._id, u.shadowban)}>
+                  <EyeOff className="size-4" />
+                  {u.shadowban ? "Unsilence" : "Silence"}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setPendingAction({ userId: u._id, kind: "restrict" })}
+                >
+                  <ShieldAlert className="size-4" />
+                  Restrict
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setPendingAction({ userId: u._id, kind: "ban" })}
+                >
+                  <Ban className="size-4" />
+                  Ban account
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setPendingRemove(u._id)}
+                >
+                  <Trash2 className="size-4" />
+                  Remove account
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </motion.div>
       ))}
@@ -1425,17 +1491,29 @@ function SilencedPanel() {
                   <Unlock className="size-4" />
                   Unsilence
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive"
-                  onClick={() => setPendingRemove(u._id)}
-                  disabled={busy || removing}
-                  title="Permanently remove this account and all of its content"
-                >
-                  <Trash2 className="size-4" />
-                  Remove
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive"
+                      disabled={busy || removing}
+                      aria-label="More actions"
+                    >
+                      <Ellipsis className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => setPendingRemove(u._id)}
+                      disabled={busy || removing}
+                    >
+                      <Trash2 className="size-4" />
+                      Remove account
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 pl-9">

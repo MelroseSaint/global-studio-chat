@@ -2,8 +2,10 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { internal } from "./_generated/api";
+import { action } from "./_generated/server";
 import { cleanLocationLabel, coarsenLocation } from "./location";
-import { mutation } from "./_generated/server";
+import { placeResult, type PlaceCacheEntry } from "./placesInternal";
 
 /**
  * Server-side place search for the location picker.
@@ -16,9 +18,13 @@ import { mutation } from "./_generated/server";
  * treatment they get on every stored write — so no precise point ever
  * leaves the server.
  *
- * These are mutations (not actions) so the cache read/write happens
- * directly on `ctx.db` with no internal-function indirection — the same
- * fetch-inside-mutation pattern the URL previews use (see links.ts).
+ * These are ACTIONS, not mutations: Convex mutations cannot make external
+ * network requests, so the Nominatim fetch has to run in an action. The
+ * cache read/write is delegated to internal query/mutation helpers in
+ * ./placesInternal (`getPlaceCache` / `putPlaceCache`), which is how an
+ * action touches the database. The helpers live in their own module so
+ * referencing them via `internal.placesInternal.*` never creates a circular
+ * type reference with this file's own actions.
  */
 
 const SEARCH_URL = "https://nominatim.openstreetmap.org/search";
@@ -27,15 +33,9 @@ const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 const USER_AGENT = "PureWire/1.0 (https://purewire.com)";
 
 /** Search for places by name; returns coarsened coordinates + clean labels. */
-export const searchPlaces = mutation({
+export const searchPlaces = action({
   args: { query: v.string() },
-  returns: v.array(
-    v.object({
-      label: v.string(),
-      latitude: v.number(),
-      longitude: v.number(),
-    }),
-  ),
+  returns: v.array(placeResult),
   handler: async (ctx, { query }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
@@ -46,10 +46,13 @@ export const searchPlaces = mutation({
       return [];
     }
     const cacheKey = q.slice(0, 100);
-    const cached = await ctx.db
-      .query("placeCache")
-      .withIndex("by_query", (q) => q.eq("query", cacheKey))
-      .first();
+    // Explicitly shaped (like media.ts): the action's return type must not
+    // flow through the generated `internal` namespace, or its inference
+    // resolves back through `typeof places` into its own initializer
+    // (TS7022).
+    const cached = (await ctx.runQuery(internal.placesInternal.getPlaceCache, {
+      query: cacheKey,
+    })) as unknown as PlaceCacheEntry | null;
     if (cached !== null && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
       return cached.results;
     }
@@ -77,18 +80,18 @@ export const searchPlaces = mutation({
           }
           return coarsenLocation({ latitude, longitude, label });
         })
-        .filter((r): r is { label: string; latitude: number; longitude: number } =>
-          r !== null,
+        .filter(
+          (r): r is { label: string; latitude: number; longitude: number } =>
+            r !== null,
         );
       // Don't cache empty result sets: a transient geocoder hiccup that
       // returns zero rows must not block real results for a week.
       if (results.length > 0) {
-        const payload = { query: cacheKey, results, fetchedAt: Date.now() };
-        if (cached !== null) {
-          await ctx.db.patch(cached._id, payload);
-        } else {
-          await ctx.db.insert("placeCache", payload);
-        }
+        await ctx.runMutation(internal.placesInternal.putPlaceCache, {
+          query: cacheKey,
+          results,
+          fetchedAt: Date.now(),
+        });
       }
       return results;
     } catch {
@@ -102,7 +105,7 @@ export const searchPlaces = mutation({
  * cached under the coarsened cell, so nearby positions share one entry and
  * never re-hit the geocoder. Returns the coarsened anchor + label.
  */
-export const reverseGeocode = mutation({
+export const reverseGeocode = action({
   args: { latitude: v.number(), longitude: v.number() },
   returns: v.union(
     v.null(),
@@ -125,11 +128,14 @@ export const reverseGeocode = mutation({
       return null;
     }
     const cacheKey = `rev:${coarse.latitude},${coarse.longitude}`;
-    const cached = await ctx.db
-      .query("placeCache")
-      .withIndex("by_query", (q) => q.eq("query", cacheKey))
-      .first();
-    if (cached !== null && cached.results.length > 0 && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    const cached = (await ctx.runQuery(internal.placesInternal.getPlaceCache, {
+      query: cacheKey,
+    })) as unknown as PlaceCacheEntry | null;
+    if (
+      cached !== null &&
+      cached.results.length > 0 &&
+      Date.now() - cached.fetchedAt < CACHE_TTL_MS
+    ) {
       return cached.results[0];
     }
     try {
@@ -147,12 +153,11 @@ export const reverseGeocode = mutation({
         return null;
       }
       const result = { label, latitude: coarse.latitude, longitude: coarse.longitude };
-      const payload = { query: cacheKey, results: [result], fetchedAt: Date.now() };
-      if (cached !== null) {
-        await ctx.db.patch(cached._id, payload);
-      } else {
-        await ctx.db.insert("placeCache", payload);
-      }
+      await ctx.runMutation(internal.placesInternal.putPlaceCache, {
+        query: cacheKey,
+        results: [result],
+        fetchedAt: Date.now(),
+      });
       return result;
     } catch {
       return null;

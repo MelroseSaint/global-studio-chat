@@ -2,7 +2,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
-import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { action, query } from "./_generated/server";
 
 function extractMeta(html: string) {
   const pick = (patterns: RegExp[]) => {
@@ -45,6 +46,16 @@ function domainOf(url: string) {
   }
 }
 
+/** The preview shape the client (LinkCard) renders. */
+type CachedPreview = {
+  url: string;
+  title?: string | null;
+  description?: string | null;
+  image?: string | null;
+  domain: string;
+};
+
+/** Public cache reader for the client (LinkCard) — shows a cached preview instantly. */
 export const getUrlPreview = query({
   args: { url: v.string() },
   handler: async (ctx, { url }) => {
@@ -55,14 +66,25 @@ export const getUrlPreview = query({
   },
 });
 
-export const fetchUrlPreview = mutation({
+/**
+ * Fetch and cache an OpenGraph preview for a URL. An ACTION because Convex
+ * mutations cannot make external network requests — the fetch must run
+ * here, and the cache read/write goes through the internal helpers in
+ * ./linksInternal (which actions touch the database with). The helpers live
+ * in their own module so `internal.linksInternal.*` never creates a
+ * circular type reference with this file's own functions.
+ */
+export const fetchUrlPreview = action({
   args: { url: v.string() },
   handler: async (ctx, { url }) => {
     await getAuthUserId(ctx); // require a session
-    const cached = await ctx.db
-      .query("urlPreviews")
-      .withIndex("by_url", (q) => q.eq("url", url))
-      .first();
+    // Explicitly shaped (like media.ts): the action's return type must not
+    // flow through the generated `internal` namespace, or its inference
+    // resolves back through `typeof links` into its own initializer
+    // (TS7022).
+    const cached = (await ctx.runQuery(internal.linksInternal.getUrlPreview, {
+      url,
+    })) as unknown as CachedPreview | null;
     if (cached !== null) {
       return cached;
     }
@@ -84,7 +106,7 @@ export const fetchUrlPreview = mutation({
         image: meta.image,
         domain: domainOf(url),
       };
-      await ctx.db.insert("urlPreviews", preview);
+      await ctx.runMutation(internal.linksInternal.putUrlPreview, { preview });
       return preview;
     } catch {
       return {

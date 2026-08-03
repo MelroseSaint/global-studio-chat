@@ -1,12 +1,20 @@
 /**
  * PureWire service worker — offline-capable PWA, no external dependencies.
  *
+ * This file is a BUILD TEMPLATE: the Vite `precacheManifest` plugin reads it,
+ * replaces `__PUREWIRE_CACHE__` with a content-derived version (a hash of the
+ * build's asset list), and emits the result as /sw.js. Because the version is
+ * baked into the cache name, EVERY deploy produces a different sw.js — the
+ * browser reinstalls it, and the activate handler purges the previous
+ * deploy's cache. That is what prevents the post-deploy stale-chunk crash: an
+ * open tab that lazily imports a chunk by its old hash never finds it.
+ *
  * Strategy:
  * - Precaches the app shell (index, manifest, icons) at install time, plus
  *   every hashed JS/CSS chunk listed in /precache-manifest.json (written by
- *   a build-time Vite plugin). That includes the lazy-loaded Admin route, so
- *   the whole app — admin dashboard included — opens without a connection
- *   after install, not only after each route has been visited once.
+ *   the same build-time Vite plugin). That includes the lazy-loaded Admin
+ *   route, so the whole app — admin dashboard included — opens without a
+ *   connection after install, not only after each route has been visited.
  * - Navigations are network-first with an offline fallback to the cached
  *   shell, so a fresh deployment is always served when online while the app
  *   still opens without a connection.
@@ -14,14 +22,14 @@
  *   with a background refresh — fast loads, no stale UI.
  * - Every other same-origin GET (logos, manifest) is stale-while-revalidate.
  * - Convex API calls (cross-origin POSTs to the backend) are never cached.
- *
- * The cache is versioned; on activate, old versions are purged.
  */
 
-const CACHE = "purewire-v1";
+const CACHE = "purewire-__PUREWIRE_CACHE__";
 
 // Cap on cached hashed assets. Each deploy emits new immutable /assets/*
-// files, so without eviction the cache would grow without bound.
+// files, so without eviction the cache would grow without bound. (The
+// per-deploy versioned cache name already purges the previous deploy's
+// assets wholesale on activate; this bound only limits within-deploy growth.)
 const MAX_ASSETS = 80;
 
 /** Keep the asset cache bounded by evicting the oldest entries. */

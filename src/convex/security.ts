@@ -21,6 +21,7 @@ const ADMIN_EMAIL = "monroedoses@gmail.com";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  action,
   internalMutation,
   mutation,
   query,
@@ -80,8 +81,9 @@ const KNOWN_MODERATION_ACTIONS = new Set([
  * check is reported as disabled rather than failing — signups still run
  * through email normalization, risk scoring, and rate limits.
  */
-export const verifyBotChallenge = mutation({
+export const verifyBotChallenge = action({
   args: { token: v.string() },
+  returns: v.object({ ok: v.boolean(), enabled: v.boolean() }),
   handler: async (_ctx, { token }) => {
     const secret = process.env.TURNSTILE_SECRET_KEY;
     if (!secret) {

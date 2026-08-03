@@ -1,4 +1,4 @@
-import { useMutation } from "convex/react";
+import { useAction } from "convex/react";
 import { Loader2, LocateFixed, MapPin, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -52,8 +52,8 @@ export function LocationPicker({
   id,
   allowLabelOnly = true,
 }: LocationPickerProps) {
-  const searchPlaces = useMutation(api.places.searchPlaces);
-  const reverseGeocode = useMutation(api.places.reverseGeocode);
+  const searchPlaces = useAction(api.places.searchPlaces);
+  const reverseGeocode = useAction(api.places.reverseGeocode);
   const [query, setQuery] = useState(value?.label ?? "");
   const [results, setResults] = useState<PlaceResult[]>([]);
   const [open, setOpen] = useState(false);

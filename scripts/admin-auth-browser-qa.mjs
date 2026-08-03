@@ -186,17 +186,33 @@ async function main() {
 
     // 5. Dashboard content: feed tabs, composer, and the admin-only nav item
     //    (which proves the session actually resolved to the admin role).
+    //    These WAIT for the lazy-loaded feed chunk instead of counting
+    //    instantly — the feed page streams in after the shell mounts, and
+    //    instant count() checks race it (flaky failures on the live site).
     check(
       "dashboard feed rendered (Global tab)",
-      (await page.getByRole("tab", { name: "Global" }).count()) > 0,
+      await page
+        .getByRole("tab", { name: "Global" })
+        .first()
+        .waitFor({ timeout: NAV_TIMEOUT })
+        .then(() => true)
+        .catch(() => false),
     );
     check(
       "composer present",
-      (await page.getByPlaceholder("Say it anyway…").count()) > 0,
+      await page
+        .getByPlaceholder("Say it anyway…")
+        .waitFor({ timeout: NAV_TIMEOUT })
+        .then(() => true)
+        .catch(() => false),
     );
     check(
       "admin nav item visible",
-      (await page.getByRole("link", { name: "Admin" }).count()) > 0,
+      await page
+        .getByRole("link", { name: "Admin" })
+        .waitFor({ timeout: NAV_TIMEOUT })
+        .then(() => true)
+        .catch(() => false),
     );
 
     // 6. Sign out from the sidebar and confirm we land back on the landing

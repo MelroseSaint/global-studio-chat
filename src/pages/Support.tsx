@@ -256,7 +256,7 @@ export function Support() {
               Related Standard principle (optional)
             </Label>
             <Select value={standardId} onValueChange={setStandardId}>
-              <SelectTrigger id="standard">
+              <SelectTrigger id="standard" className="w-full max-w-full">
                 <SelectValue placeholder="Choose a principle if this relates to one" />
               </SelectTrigger>
               <SelectContent>

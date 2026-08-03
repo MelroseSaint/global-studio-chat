@@ -1,4 +1,4 @@
-import { useMutation } from "convex/react";
+import { useAction } from "convex/react";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -41,7 +41,7 @@ type Step = "signin" | "signup" | "verify" | "forgot" | "reset";
 
 export function Auth() {
   const { isLoading, isAuthenticated, signIn, signOut } = useAuth();
-  const verifyBotChallenge = useMutation(api.security.verifyBotChallenge);
+  const verifyBotChallenge = useAction(api.security.verifyBotChallenge);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 

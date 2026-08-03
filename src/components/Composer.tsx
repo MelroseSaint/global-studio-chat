@@ -163,7 +163,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
           maxLength={MAX_LENGTH + 10}
           className="resize-none border-none bg-transparent px-0 text-[15px] shadow-none focus-visible:ring-0"
         />
-        <div className="mt-2 flex items-center justify-between gap-3">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="flex items-center gap-2">
             <MediaUpload
               value={media}
@@ -213,7 +213,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-3">
             <span
               className={cn(
                 "text-xs tabular-nums",

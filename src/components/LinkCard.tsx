@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { ExternalLink, Globe } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -14,7 +14,7 @@ interface Preview {
 
 export function LinkCard({ url }: { url: string }) {
   const cached = useQuery(api.links.getUrlPreview, { url });
-  const fetchPreview = useMutation(api.links.fetchUrlPreview);
+  const fetchPreview = useAction(api.links.fetchUrlPreview);
   const [local, setLocal] = useState<Preview | null>(null);
   const tried = useRef(false);
 

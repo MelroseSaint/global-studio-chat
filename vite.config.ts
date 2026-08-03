@@ -1,13 +1,27 @@
 import path from "path";
+import { readFileSync } from "fs";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 /**
- * Writes precache-manifest.json listing every hashed JS/CSS asset the build
- * emitted. The service worker (public/sw.js) fetches it at install time and
- * precaches each chunk — so lazy routes like the Admin dashboard open
- * offline without a connection, not only after being visited once.
+ * Build-time PWA wiring. Two outputs:
+ *
+ * 1. precache-manifest.json — lists every hashed JS/CSS asset the build
+ *    emitted plus a content-derived `version`. The service worker reads it
+ *    at install to precache each chunk (so lazy routes like the Admin
+ *    dashboard open offline), and the version keys the SW's cache name.
+ *
+ * 2. sw.js — the service worker itself, rendered from sw-template.js with
+ *    the build version baked into the cache name. Because the version is a
+ *    hash of the asset list, EVERY deploy emits a different sw.js: the
+ *    browser reinstalls it, the new cache is precached fresh, and the
+ *    activate handler purges the previous deploy's cache — eliminating the
+ *    post-deploy stale-chunk crash where an open tab lazily imports a chunk
+ *    by an old hash that no longer exists.
+ *
+ * The template lives at the repo root (sw-template.js), not in public/, so
+ * Vite never serves a raw template or conflicts with the emitted artifact.
  */
 function precacheManifest(): Plugin {
   return {
@@ -18,10 +32,26 @@ function precacheManifest(): Plugin {
         .filter((name) => /^assets\/.*\.(js|css)$/.test(name))
         .map((name) => `/${name}`)
         .sort();
+      // Content-derived version: identical rebuilds reuse the same cache,
+      // any asset change rotates it (old caches are purged on activate).
+      const version = assets
+        .join("|")
+        .split("")
+        .reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)
+        .toString(36);
       this.emitFile({
         type: "asset",
         fileName: "precache-manifest.json",
-        source: JSON.stringify({ assets }, null, 2),
+        source: JSON.stringify({ version, assets }, null, 2),
+      });
+      const template = readFileSync(
+        path.resolve(__dirname, "sw-template.js"),
+        "utf8",
+      );
+      this.emitFile({
+        type: "asset",
+        fileName: "sw.js",
+        source: template.replaceAll("__PUREWIRE_CACHE__", version),
       });
     },
   };
