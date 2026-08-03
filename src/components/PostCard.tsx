@@ -222,7 +222,11 @@ export function PostCard({
     } catch {
       // silent — share tracking is best-effort
     }
-    const shareData = { title: "PureWire", text: post.content.slice(0, 120), url };
+    const shareData = {
+      title: `${post.author?.name ?? post.author?.username ?? "PureWire"} on PureWire`,
+      text: post.content.slice(0, 120),
+      url,
+    };
     if (navigator.share) {
       try {
         await navigator.share(shareData);

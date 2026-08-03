@@ -23,6 +23,7 @@ import type * as mediaCleanup from "../mediaCleanup.js";
 import type * as mediaStorage from "../mediaStorage.js";
 import type * as migrations from "../migrations.js";
 import type * as notifications from "../notifications.js";
+import type * as og from "../og.js";
 import type * as places from "../places.js";
 import type * as placesInternal from "../placesInternal.js";
 import type * as posts from "../posts.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   mediaStorage: typeof mediaStorage;
   migrations: typeof migrations;
   notifications: typeof notifications;
+  og: typeof og;
   places: typeof places;
   placesInternal: typeof placesInternal;
   posts: typeof posts;
