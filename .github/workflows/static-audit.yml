@@ -60,6 +60,32 @@ jobs:
       - name: Run the salt-rotation QA
         run: npm run qa:salt
 
+      # The permanent-session guarantee must never silently regress: if the
+      # `session` config in convex/auth.ts is ever reverted to the library's
+      # 30-day default, every member gets logged out automatically — the one
+      # behavior PureWire promises never happens. This gate queries the
+      # production deployment (harness-gated) and fails the push if any
+      # authSessions/authRefreshTokens row expires within a year. Deliberate
+      # opt-outs (sessionPrefs) and qa_ harness sessions are exempt. Gated on
+      # the harness secret so a repository that hasn't configured it yet
+      # still gets the static gates green — same pattern as the admin
+      # responsive check.
+      - name: Assert permanent sessions
+        if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:session-audit 2>&1 | tee session-audit.log
+
+      - name: Upload the session audit log
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-audit-log
+          path: session-audit.log
+
       # The admin dashboard is the one surface the static gates can't see —
       # its responsive layout only exists in a real browser at real widths.
       # Sign in on production and walk every admin tab at 320/390/768 to

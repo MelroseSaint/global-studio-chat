@@ -314,6 +314,15 @@ const schema = defineSchema({
   })
     .index("by_target", ["targetUserId"])
     .index("by_actor", ["actorId"]),
+  // "Keep me signed in" per-device preference: which authSessions were
+  // deliberately opted down to the short 30-day horizon by their owner.
+  // Only opt-outs are recorded — the permanent 10-year default needs no
+  // row. The session-lifetime CI audit reads this so a deliberate choice
+  // never trips the "nothing may expire within a year" regression gate.
+  sessionPrefs: defineTable({
+    sessionId: v.id("authSessions"),
+    remember: v.boolean(),
+  }).index("by_session", ["sessionId"]),
   // Private, one-way removal log. When an admin permanently removes an
   // account, this record snapshots the removed user's public identity —
   // handle, display name, and the salted one-way email hash (never the

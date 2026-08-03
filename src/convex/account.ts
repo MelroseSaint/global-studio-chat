@@ -107,6 +107,15 @@ export async function eraseAccount(
     for (const token of tokens) {
       await ctx.db.delete(token._id);
     }
+    // The sessionPrefs row ("Keep me signed in" opt-out marker) dies with
+    // its session — a preference must never outlive the session it keys.
+    const pref = await ctx.db
+      .query("sessionPrefs")
+      .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+      .first();
+    if (pref !== null) {
+      await ctx.db.delete(pref._id);
+    }
     // authVerifiers has no sessionId index — scan and filter (the table
     // only holds short-lived OAuth PKCE records).
     const verifiers = await ctx.db.query("authVerifiers").collect();
@@ -534,6 +543,20 @@ export const setSessionLifetime = mutation({
       .take(SWEEP);
     for (const token of tokens) {
       await ctx.db.patch(token._id, { expirationTime });
+    }
+    // Record the device preference so the session-lifetime audit can tell a
+    // deliberate opt-out (this row) from a silent regression (no row). Only
+    // opt-outs are stored — the permanent default needs no marker.
+    const pref = await ctx.db
+      .query("sessionPrefs")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+    if (remember) {
+      if (pref !== null) {
+        await ctx.db.delete(pref._id);
+      }
+    } else if (pref === null) {
+      await ctx.db.insert("sessionPrefs", { sessionId, remember: false });
     }
     return { remember, expirationTime };
   },

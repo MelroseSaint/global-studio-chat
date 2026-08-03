@@ -8,6 +8,7 @@ import {
   mutation,
   query,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 
 import type { Id } from "./_generated/dataModel";
@@ -151,6 +152,13 @@ export const deleteTestUser = mutation({
       .withIndex("userId", (q) => q.eq("userId", userId))
       .take(100);
     for (const session of sessions) {
+      const pref = await ctx.db
+        .query("sessionPrefs")
+        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+        .first();
+      if (pref !== null) {
+        await ctx.db.delete(pref._id);
+      }
       await ctx.db.delete(session._id);
     }
     await ctx.db.delete(userId);
@@ -297,6 +305,147 @@ export const getCurrentSessionLifetime = query({
     };
   },
 });
+
+/** The regression horizon the CI audit enforces: one year. */
+const AUDIT_HORIZON_MS = 1000 * 60 * 60 * 24 * 365;
+
+/**
+ * CI regression gate for the permanent-session guarantee.
+ *
+ * Walks every authSessions and authRefreshTokens row and reports any that
+ * expire within the next year. A row that expires that soon is a silent
+ * regression — someone reverted the `session` config to the library's
+ * 30-day default, or a session escaped the migration — and it would log a
+ * member out automatically, which PureWire never does.
+ *
+ * Deliberate exceptions, neither of which trips the gate:
+ * - Sessions opted down by their owner ("Keep me signed in" off) carry a
+ *   sessionPrefs row — an explicit user choice, not a regression.
+ * - Harness sessions minted for qa_ throwaway accounts use a short TTL by
+ *   design (see mintSession) and are deleted at the end of every QA run.
+ *
+ * Gated by the same two env gates as the rest of the module. The runner
+ * scripts/session-audit.mjs exits 1 when violations exist.
+ */
+export const auditSessionLifetimes = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    try {
+      return await auditSessionLifetimesImpl(ctx, secret);
+    } catch (e) {
+      // Convex masks plain Error messages as "Server Error"; rethrow as a
+      // ConvexError so the runner script reports the real reason.
+      throw new ConvexError(e instanceof Error ? e.message : String(e));
+    }
+  },
+});
+
+async function auditSessionLifetimesImpl(ctx: QueryCtx, secret: string) {
+  requireHarness(secret);
+  const now = Date.now();
+  const horizon = now + AUDIT_HORIZON_MS;
+
+  // Deliberate opt-outs: sessions whose owner chose "Keep me signed in"
+  // off. They are expected to be short-lived and must never trip the gate.
+  const optedOut = new Set<string>();
+  for (const pref of await ctx.db.query("sessionPrefs").take(2000)) {
+    optedOut.add(pref.sessionId);
+  }
+
+  // QA scaffolding: sessions minted for qa_ throwaway accounts. They use a
+  // short TTL by design and are deleted at the end of each QA run.
+  const qaUsers = new Set<string>();
+  for (const user of await ctx.db.query("users").take(2000)) {
+    if (user.username?.startsWith("qa_")) {
+      qaUsers.add(user._id);
+    }
+  }
+
+  const violations: Array<{
+    table: "authSessions" | "authRefreshTokens";
+    id: string;
+    expirationTime: number;
+    userId: string | null;
+    sessionId: string | null;
+  }> = [];
+  let sessions = 0;
+  let tokens = 0;
+
+  // Walk authSessions with take() + an _id cursor (Convex allows only a
+  // single paginate per function — this visits every row exactly once).
+  const sessionOwner = new Map<string, string>(); // sessionId -> userId
+  let cursor: string | null = null;
+  for (;;) {
+    const rows = await ctx.db
+      .query("authSessions")
+      .order("asc")
+      .filter((q) =>
+        q.gt(q.field("_id"), (cursor ?? "") as Id<"authSessions">),
+      )
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      sessions++;
+      sessionOwner.set(row._id, row.userId);
+      if (
+        row.expirationTime < horizon &&
+        !optedOut.has(row._id) &&
+        !qaUsers.has(row.userId)
+      ) {
+        violations.push({
+          table: "authSessions",
+          id: row._id,
+          expirationTime: row.expirationTime,
+          userId: row.userId,
+          sessionId: null,
+        });
+      }
+      cursor = row._id;
+    }
+  }
+
+  // Walk authRefreshTokens the same way, resolving each token's owner
+  // session to apply the same opt-out / qa_ exemptions.
+  let tokenCursor: string | null = null;
+  for (;;) {
+    const rows = await ctx.db
+      .query("authRefreshTokens")
+      .order("asc")
+      .filter((q) =>
+        q.gt(q.field("_id"), (tokenCursor ?? "") as Id<"authRefreshTokens">),
+      )
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      tokens++;
+      const ownerId = sessionOwner.get(row.sessionId);
+      const ownedByQa =
+        ownerId !== undefined && qaUsers.has(ownerId);
+      if (
+        row.expirationTime < horizon &&
+        !optedOut.has(row.sessionId) &&
+        !ownedByQa
+      ) {
+        violations.push({
+          table: "authRefreshTokens",
+          id: row._id,
+          expirationTime: row.expirationTime,
+          userId: ownerId ?? null,
+          sessionId: row.sessionId,
+        });
+      }
+      tokenCursor = row._id;
+    }
+  }
+
+  return {
+    checkedAt: now,
+    horizonMs: AUDIT_HORIZON_MS,
+    sessions,
+    tokens,
+    violations,
+  };
+}
 
 /**
  * Full silent-moderation state for a QA account: the current (decayed) flag
