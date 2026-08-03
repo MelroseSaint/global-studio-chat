@@ -1,7 +1,9 @@
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
+  Laptop,
   Loader2,
+  LogOut,
   MapPin,
   Plus,
   Save,
@@ -61,6 +63,8 @@ export function Settings() {
 function SettingsForm({ user }: { user: Profile }) {
   const updateProfile = useMutation(api.users.updateProfile);
   const deleteAccount = useMutation(api.account.deleteAccount);
+  const currentSession = useQuery(api.account.getCurrentSession);
+  const signOutOtherSessions = useMutation(api.account.signOutOtherSessions);
   const { signOut } = useAuth();
   const navigate = useNavigate();
 
@@ -75,6 +79,7 @@ function SettingsForm({ user }: { user: Profile }) {
   );
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [endingSessions, setEndingSessions] = useState(false);
 
   const eraseAccount = async () => {
     if (deleting) return;
@@ -124,6 +129,31 @@ function SettingsForm({ user }: { user: Profile }) {
   const updateLink = (i: number, patch: Partial<LinkRow>) => {
     setLinks((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   };
+
+  const endOtherSessions = async () => {
+    if (endingSessions) return;
+    setEndingSessions(true);
+    try {
+      const { ended } = await signOutOtherSessions();
+      toast.success(
+        ended === 0
+          ? "No other devices were signed in."
+          : `Signed out on ${ended} other device${ended === 1 ? "" : "s"}.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not sign out other devices.");
+    } finally {
+      setEndingSessions(false);
+    }
+  };
+
+  const sessionSince = currentSession?.createdAt
+    ? new Date(currentSession.createdAt).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : null;
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 p-4 pb-24 sm:p-6">
@@ -360,6 +390,102 @@ function SettingsForm({ user }: { user: Profile }) {
             ever stored — never your exact coordinates — and other members
             only ever see the label you choose.
           </p>
+        </CardContent>
+      </Card>
+
+      <Separator />
+
+      {/* Sessions — the permanent-session promise, on this device */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Laptop className="size-4 text-oxide dark:text-oxide-light" />
+            Your session
+          </CardTitle>
+          <CardDescription>
+            This device's sign-in stays until you sign out — PureWire never
+            logs anyone out on a timeout.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid gap-3 rounded-xl border bg-muted/30 p-4 text-sm sm:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Signed in since
+              </p>
+              <p className="mt-0.5">{sessionSince ?? "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                This session
+              </p>
+              <p className="mt-0.5">
+                {currentSession?.permanent
+                  ? "Stays until you sign out"
+                  : "Ends after 30 days (you turned off Keep me signed in)"}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
+            <div className="flex items-start gap-3">
+              <LogOut className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+              <div>
+                <p className="font-semibold">End the session everywhere else</p>
+                <p className="text-sm text-muted-foreground">
+                  {currentSession && currentSession.otherSessions > 0
+                    ? `Signed in on ${currentSession.otherSessions} other device${currentSession.otherSessions === 1 ? "" : "s"}. Signing out there won't affect this device.`
+                    : "You're not signed in anywhere else right now."}
+                </p>
+              </div>
+            </div>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={
+                    endingSessions ||
+                    currentSession == null ||
+                    currentSession.otherSessions === 0
+                  }
+                >
+                  <LogOut className="size-4" />
+                  Sign out everywhere else
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Sign out on every other device?</DialogTitle>
+                  <DialogDescription>
+                    This ends your session on all other devices. This device
+                    stays signed in — you won't be interrupted here. You can
+                    sign back in on any device with your email and password.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="gap-2 sm:justify-between">
+                  <DialogClose asChild>
+                    <Button variant="outline" disabled={endingSessions}>
+                      Keep this session
+                    </Button>
+                  </DialogClose>
+                  <Button
+                    variant="destructive"
+                    className="gap-1.5"
+                    disabled={endingSessions}
+                    onClick={() => void endOtherSessions()}
+                  >
+                    {endingSessions ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <LogOut className="size-4" />
+                    )}
+                    {endingSessions ? "Ending…" : "Sign out everywhere else"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         </CardContent>
       </Card>
 

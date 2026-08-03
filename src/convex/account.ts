@@ -4,7 +4,12 @@ import { v, ConvexError } from "convex/values";
 import { ADMIN_EMAIL, PERMANENT_SESSION_MS, SHORT_SESSION_MS } from "./auth";
 import { cleanupMediaItems, cleanupUserArtwork } from "./mediaCleanup";
 
-import { mutation, type MutationCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 
 import type { Id } from "./_generated/dataModel";
 
@@ -559,5 +564,101 @@ export const setSessionLifetime = mutation({
       await ctx.db.insert("sessionPrefs", { sessionId, remember: false });
     }
     return { remember, expirationTime };
+  },
+});
+
+/**
+ * The current device's session, for the Settings → Sessions surface: when
+ * it was created and whether it is the permanent default or a deliberate
+ * opt-out ("Keep me signed in" off). Only this session is returned — the
+ * platform never lists other devices' sessions to the client.
+ */
+export const getCurrentSession = query({
+  handler: async (ctx: QueryCtx) => {
+    const sessionId = await getAuthSessionId(ctx);
+    if (sessionId === null) {
+      return null;
+    }
+    const session = await ctx.db.get(sessionId);
+    if (session === null) {
+      return null;
+    }
+    // An opt-out marker means the owner chose a short session; its absence
+    // is the permanent 10-year default. Mirrors setSessionLifetime.
+    const pref = await ctx.db
+      .query("sessionPrefs")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+    // How many other devices are signed in — lets the UI disable the
+    // "sign out everywhere else" button when there's nothing to end.
+    const userId = await getAuthUserId(ctx);
+    const otherSessions =
+      userId === null
+        ? 0
+        : (
+            await ctx.db
+              .query("authSessions")
+              .withIndex("userId", (q) => q.eq("userId", userId))
+              .take(SWEEP)
+          ).filter((s) => s._id !== sessionId).length;
+    return {
+      sessionId,
+      createdAt: session._creationTime,
+      expirationTime: session.expirationTime,
+      permanent: pref === null,
+      otherSessions,
+    };
+  },
+});
+
+/**
+ * End the session on every other device, keeping this one signed in.
+ * Deletes all of the user's other authSessions rows together with their
+ * refresh tokens, verification records, and opt-out markers — the same
+ * sweep eraseAccount performs per session. The current session survives so
+ * the person stays right where they are.
+ */
+export const signOutOtherSessions = mutation({
+  handler: async (ctx: MutationCtx) => {
+    const userId = await getAuthUserId(ctx);
+    const currentSessionId = await getAuthSessionId(ctx);
+    if (userId === null || currentSessionId === null) {
+      throw new ConvexError("Not signed in.");
+    }
+    const sessions = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q) => q.eq("userId", userId))
+      .take(SWEEP);
+    let ended = 0;
+    for (const session of sessions) {
+      if (session._id === currentSessionId) {
+        continue;
+      }
+      const tokens = await ctx.db
+        .query("authRefreshTokens")
+        .withIndex("sessionId", (q) => q.eq("sessionId", session._id))
+        .collect();
+      for (const token of tokens) {
+        await ctx.db.delete(token._id);
+      }
+      // authVerifiers has no sessionId index — scan and filter, matching
+      // the erasure sweep's approach.
+      const verifiers = await ctx.db.query("authVerifiers").collect();
+      for (const verifier of verifiers) {
+        if (verifier.sessionId === session._id) {
+          await ctx.db.delete(verifier._id);
+        }
+      }
+      const pref = await ctx.db
+        .query("sessionPrefs")
+        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+        .first();
+      if (pref !== null) {
+        await ctx.db.delete(pref._id);
+      }
+      await ctx.db.delete(session._id);
+      ended++;
+    }
+    return { ended };
   },
 });
