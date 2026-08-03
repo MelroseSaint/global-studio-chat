@@ -65,10 +65,16 @@ export function Auth() {
   // "Keep me signed in": the device-level session preference. ON (the
   // default, matching PureWire's permanent-session promise) opts this
   // device into the 10-year session; OFF caps it at 30 days. Persisted
-  // locally so the choice survives page reloads.
-  const [remember, setRemember] = useState<boolean>(
-    () => localStorage.getItem("purewire_remember_me") !== "0",
-  );
+  // locally so the choice survives page reloads. Both reads and writes go
+  // through guards — storage can be unavailable (private mode, sandboxed
+  // frames) and a SecurityError must never crash the Auth page.
+  const [remember, setRemember] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("purewire_remember_me") !== "0";
+    } catch {
+      return true;
+    }
+  });
 
   // Tick the resend countdown down once per second; stops at zero.
   useEffect(() => {
@@ -188,7 +194,15 @@ export function Auth() {
     try {
       await setSessionLifetime({ remember });
     } catch {
-      // Best-effort — a preference write must never block sign-in.
+      // Best-effort — a preference write must never block sign-in. But a
+      // user who turned the toggle OFF asked for a shorter session; if the
+      // write failed, the session keeps the permanent default, the opposite
+      // of their choice — say so instead of staying silent.
+      if (!remember) {
+        toast.error(
+          "Couldn't set your session preference — you'll stay signed in for 10 years. Try again later.",
+        );
+      }
     }
   };
 

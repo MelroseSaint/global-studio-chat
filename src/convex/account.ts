@@ -531,7 +531,7 @@ export const setSessionLifetime = mutation({
     const tokens = await ctx.db
       .query("authRefreshTokens")
       .withIndex("sessionId", (q) => q.eq("sessionId", sessionId))
-      .collect();
+      .take(SWEEP);
     for (const token of tokens) {
       await ctx.db.patch(token._id, { expirationTime });
     }
