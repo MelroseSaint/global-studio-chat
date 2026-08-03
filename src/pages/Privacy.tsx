@@ -66,6 +66,11 @@ const stored = [
       "Your posts, stories, comments, and the files you upload. Photos are stored after metadata stripping and compression, so the stored copy contains no GPS or device data. Videos are remuxed on PureWire's servers so the stored copy carries no GPS or device atoms either. Stories expire and are deleted automatically after 24 hours.",
   },
   {
+    title: "Your session",
+    detail:
+      "One sign-in credential per device, held by your browser so you don't re-enter your password on every visit. Sessions persist until you sign out — up to 10 years on the permanent default, or 30 days if you turned off \"Keep me signed in\" at sign-in. Signing out, or ending a session from Settings, deletes that stored credential. On a shared device, sign out when you're done — that's the one step that clears the sign-in token from the machine.",
+  },
+  {
     title: "Your activity",
     detail:
       "Follows, likes, shares, and notifications — the records that make the platform work for you.",
@@ -90,6 +95,11 @@ const retention = [
   {
     title: "Rate-limit markers",
     detail: "Rolling one-hour windows that clear themselves as you use the platform.",
+  },
+  {
+    title: "Sessions",
+    detail:
+      "Until you sign out — up to 10 years on the permanent default (30 days if you opted out of \"Keep me signed in\"). The browser-stored sign-in credential is deleted when the session ends, and you can sign out of every other device from Settings at any time.",
   },
   {
     title: "Everything else",

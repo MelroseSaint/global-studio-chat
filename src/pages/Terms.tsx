@@ -150,6 +150,10 @@ const sections: TermsSection[] = [
         body: "PureWire is built with privacy-first infrastructure. Server proxies discard IP addresses and metadata in memory. EXIF location metadata is automatically stripped from media uploads — and videos are remuxed on PureWire's servers so GPS and device atoms are removed before they are ever served.",
       },
       {
+        heading: "Sessions & Sign-Out",
+        body: "Your session persists until you sign out — up to 10 years on the permanent default, or 30 days if you opted out of \u201cKeep me signed in\u201d at sign-in. To keep you signed in without a password prompt on every visit, a sign-in credential (including its refresh token) is stored in your browser on each device. That credential is deleted when the session ends — by signing out, by ending the session from Settings, or by account deletion. On a shared device, sign out when you are done: signing out is the one action that clears your sign-in token from that machine, and you can end the session on every other device at any time from Settings.",
+      },
+      {
         heading: "Subpoenas & Records",
         body: "Because PureWire intentionally operates on zero-data retention, the Platform cannot produce user tracking logs, historical location records, or plain-text email strings in response to legal discovery or third-party subpoenas.",
       },
@@ -254,17 +258,17 @@ export function Terms() {
             PureWire is built on a simple deal: your freedom to say it anyway,
             in exchange for a platform worth saying it on. These Terms keep
             that deal honest — who can join, what stays yours, what&apos;s not
-            allowed, and where disputes get resolved. Last updated August 1,
+            allowed, and where disputes get resolved. Last updated August 3,
             2026. By using PureWire you agree to be bound by them.
           </p>
           <div className="mt-5 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <BadgeCheck className="size-3.5 text-moss" />
-              Last Updated: August 1, 2026
+              Last Updated: August 3, 2026
             </span>
             <span className="inline-flex items-center gap-1.5">
               <BadgeCheck className="size-3.5 text-moss" />
-              Effective Date: August 1, 2026
+              Effective Date: August 3, 2026
             </span>
           </div>
         </motion.div>
