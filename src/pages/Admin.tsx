@@ -245,14 +245,16 @@ function AdminDashboard({ meId }: { meId: string }) {
   const stats = useQuery(api.admin.dashboardStats);
   const [tab, setTab] = useState("users");
   // The stats strip is a swipeable row on phones; these flags track whether
-  // there is more to swipe and whether the user has reached the end, so the
-  // fading-edge gradient and "swipe for more" cue appear only while the cue
-  // is true — and gracefully fade out once the end is reached. On tablets
-  // and up the strip is a grid (no scrolling), so the affordance stays
-  // hidden there entirely (sm:hidden below).
+  // there is more to swipe and whether the user has reached either edge, so
+  // the fading-edge gradients (and the "swipe for more" cue on the right)
+  // appear only while there is actually more to discover — and gracefully
+  // fade out once the relevant edge is reached. On tablets and up the strip
+  // is a grid (no scrolling), so the affordances stay hidden there entirely
+  // (sm:hidden below).
   const statsScrollRef = useRef<HTMLDivElement>(null);
   const [statsOverflow, setStatsOverflow] = useState(false);
-  const [statsAtEnd, setStatsAtEnd] = useState(false);
+  const [statsAtStart, setStatsAtStart] = useState(true);
+  const [statsAtEnd, setStatsAtEnd] = useState(true);
 
   useEffect(() => {
     const el = statsScrollRef.current;
@@ -260,6 +262,7 @@ function AdminDashboard({ meId }: { meId: string }) {
     const update = () => {
       const canScroll = el.scrollWidth > el.clientWidth + 8;
       setStatsOverflow(canScroll);
+      setStatsAtStart(!canScroll || el.scrollLeft <= 8);
       setStatsAtEnd(
         !canScroll || el.scrollLeft + el.clientWidth >= el.scrollWidth - 8,
       );
@@ -307,6 +310,13 @@ function AdminDashboard({ meId }: { meId: string }) {
               </Card>
             ))}
           </div>
+          {/* Fading left edge on phones: signals cards continue behind when scrolled. */}
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-background to-transparent transition-opacity duration-300 sm:hidden ${
+              statsOverflow && !statsAtStart ? "opacity-100" : "opacity-0"
+            }`}
+          />
           {/* Fading right edge on phones: signals cards continue past the fold. */}
           <div
             aria-hidden="true"
