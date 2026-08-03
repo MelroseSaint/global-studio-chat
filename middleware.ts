@@ -11,12 +11,16 @@
  * user-agents, serves the server-rendered OG page from the Convex backend
  * (https://outgoing-seal-727.convex.site/og/post/:id) — the real post:
  * author handle in the title, body in the description, first photo as the
- * image. Every other request passes straight through to the app untouched.
+ * image. Every other request returns `undefined` so Vercel passes it
+ * through to the app untouched.
  *
  * The canonical URL is forwarded as `?u=` so the OG page's og:url points at
  * the purewire.vercel.app address the crawler asked for, never the backend.
+ *
+ * Edge-runtime constraint: only web-standard Request/Response APIs are
+ * used — no `next/server` import, which the Vite project's Edge build
+ * cannot resolve.
  */
-import { NextResponse, type NextRequest } from "next/server";
 
 /** The Convex site that hosts the backend + static frontend. */
 const CONVEX_SITE = "https://outgoing-seal-727.convex.site";
@@ -25,15 +29,19 @@ const CONVEX_SITE = "https://outgoing-seal-727.convex.site";
 const CRAWLER_UA =
   /(discordbot|twitterbot|facebookexternalhit|whatsapp|telegrambot|slackbot|linkedinbot|applebot|googlebot|bingbot|duckduckbot|yandex|baiduspider|skypeuripreview|pinterest|redditbot|snapchat|viber|line|tumblr|quora|embedly|linkding|mastodon|instagram|imessage)/i;
 
-export default async function middleware(request: NextRequest) {
-  const { pathname, origin } = request.nextUrl;
+export default async function middleware(
+  request: Request,
+): Promise<Response | undefined> {
+  const { pathname, origin } = new URL(request.url);
   const match = pathname.match(/^\/post\/([^/]+)\/?$/);
   if (!match || request.method !== "GET") {
-    return NextResponse.next();
+    // Not a GET on /post/:id — let the app serve it normally.
+    return undefined;
   }
   const userAgent = request.headers.get("user-agent") ?? "";
   if (!CRAWLER_UA.test(userAgent)) {
-    return NextResponse.next();
+    // Real browser — hand the request to the SPA.
+    return undefined;
   }
   const postId = match[1];
   const canonical = `${origin}${pathname}`;
@@ -44,7 +52,7 @@ export default async function middleware(request: NextRequest) {
     );
     if (res.ok) {
       const html = await res.text();
-      return new NextResponse(html, {
+      return new Response(html, {
         status: 200,
         headers: {
           "content-type": "text/html; charset=utf-8",
@@ -55,7 +63,7 @@ export default async function middleware(request: NextRequest) {
   } catch {
     // Backend hiccup — fall through to the SPA rather than failing the fetch.
   }
-  return NextResponse.next();
+  return undefined;
 }
 
 export const config = {
