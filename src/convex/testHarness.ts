@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { SignJWT, importPKCS8 } from "jose";
 
 import { ADMIN_EMAIL } from "./auth";
@@ -50,6 +50,11 @@ function requireHarness(secret: string): void {
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days, like the auth library
 const TOKEN_TTL_MS = 1000 * 60 * 60; // 1 hour, like the auth library
+
+// The permanent-session horizon used by the migration below: 10 years,
+// matching the `session` config in convex/auth.ts. Sessions are meant to
+// last until the user signs out — never a timeout.
+const SESSION_HORIZON_MS = 1000 * 60 * 60 * 24 * 365 * 10;
 
 /** Insert an authSessions row and sign a JWT for it, mirroring tokens.js. */
 async function mintSession(
@@ -194,6 +199,75 @@ export const mintSessionForEmail = mutation({
     return { userId: user._id, token };
   },
 });
+
+/**
+ * One-time migration: push every existing auth session and refresh token
+ * out to the permanent 10-year horizon. Sessions created before the
+ * `session` config in convex/auth.ts took effect carry the library's old
+ * 30-day default and would otherwise log those members out automatically;
+ * this converges them so no existing user hits a timeout. Idempotent —
+ * rows already beyond the horizon are left untouched, so re-running is
+ * harmless. Gated by the same two env gates as the rest of the module.
+ */
+export const extendSessionLifetimes = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    try {
+      return await extendSessionLifetimesImpl(ctx, secret);
+    } catch (e) {
+      // Convex masks plain Error messages as "Server Error"; rethrow as a
+      // ConvexError so the runner script reports the real reason.
+      throw new ConvexError(e instanceof Error ? e.message : String(e));
+    }
+  },
+});
+
+async function extendSessionLifetimesImpl(
+  ctx: MutationCtx,
+  secret: string,
+): Promise<{ sessions: number; tokens: number }> {
+  requireHarness(secret);
+  const horizon = Date.now() + SESSION_HORIZON_MS;
+  const sessions = await extendTable(ctx, "authSessions", horizon);
+  const tokens = await extendTable(ctx, "authRefreshTokens", horizon);
+  return { sessions, tokens };
+}
+
+/**
+ * Walk one auth-library table and push every row's expirationTime out to
+ * the horizon. Convex allows only a single `paginate` per function, so
+ * this pages with take() + an _id cursor filter instead — fully general
+ * and visits every row exactly once regardless of table size.
+ */
+async function extendTable(
+  ctx: MutationCtx,
+  table: "authSessions" | "authRefreshTokens",
+  horizon: number,
+): Promise<number> {
+  let extended = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const rows = await ctx.db
+      .query(table)
+      .order("asc")
+      .filter((q) =>
+        q.gt(
+          q.field("_id"),
+          (cursor ?? "") as Id<"authSessions"> | Id<"authRefreshTokens">,
+        ),
+      )
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      if (row.expirationTime < horizon) {
+        await ctx.db.patch(row._id, { expirationTime: horizon });
+        extended++;
+      }
+      cursor = row._id;
+    }
+  }
+  return extended;
+}
 
 /**
  * Full silent-moderation state for a QA account: the current (decayed) flag

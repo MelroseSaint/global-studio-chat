@@ -19,6 +19,7 @@
     "qa:admin-responsive": "node scripts/qa-admin-responsive.mjs",
     "qa:signup-e2e": "node scripts/signup-e2e-prod.mjs",
     "qa:cloudinary-health": "node scripts/cloudinary-health-probe.mjs",
+    "qa:extend-sessions": "node scripts/extend-sessions.mjs",
     "qa:secrets": "node scripts/secrets-scan.mjs",
     "turnstile:keys": "node scripts/set-turnstile-keys.mjs",
     "typecheck": "tsc -b --noEmit",

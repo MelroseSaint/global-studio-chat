@@ -46,6 +46,16 @@ function buildProfile(params: ProfileParams) {
 }
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
+  // Sessions are effectively permanent: the short-lived access JWT (1 hour
+  // by default) is silently refreshed by the client, while the underlying
+  // session and refresh token last a decade. Members are only signed out by
+  // their own choice, by an admin removing the account, or by an explicit
+  // server-side invalidation — never by a timeout. (The library defaults to
+  // 30 days, which was logging people out automatically.)
+  session: {
+    totalDurationMs: 1000 * 60 * 60 * 24 * 365 * 10, // 10 years
+    inactiveDurationMs: 1000 * 60 * 60 * 24 * 365 * 10, // 10 years
+  },
   providers: [
     Password({
       profile(params) {

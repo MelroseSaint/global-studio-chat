@@ -5,25 +5,6 @@ import { useEffect } from "react";
 import { api } from "@/convex/_generated/api";
 
 /**
- * Read the `exp` claim (unix seconds) from a JWT payload without verifying
- * the signature. Used to detect a stored token that has already expired.
- */
-function jwtExpiry(token: string): number | null {
-  try {
-    const payload = token.split(".")[1] ?? "";
-    // JWT payloads are unpadded base64url; some engines' atob rejects that.
-    const base64 = payload
-      .replace(/-/g, "+")
-      .replace(/_/g, "/")
-      .padEnd(Math.ceil(payload.length / 4) * 4, "=");
-    const json = JSON.parse(atob(base64)) as { exp?: unknown };
-    return typeof json.exp === "number" ? json.exp : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Auth state hook. Use this everywhere instead of reaching into
  * @convex-dev/auth/react directly.
  *
@@ -43,27 +24,29 @@ export function useAuth() {
   );
 
   /**
-   * Self-healing session: a stored token can outlive its account. If the
-   * token has expired, or the account it belongs to was deleted, nothing can
-   * refresh it — but the client keeps attaching it to every call, so
-   * sign-in and sign-up fail with "Invalid token" until the stale token is
-   * cleared. Detect either case and clear the session so the user can sign
-   * in fresh.
+   * Self-healing session: only one state is truly unrecoverable — the
+   * account a session belongs to was deleted server-side (the query
+   * resolves to `null` and nothing can ever refresh it). Clear the session
+   * in that case so the user can sign in fresh instead of carrying a dead
+   * token into every call.
+   *
+   * Deliberately NOT signed out on an expired JWT: access tokens are
+   * short-lived by design (1 hour) and the auth client silently refreshes
+   * them with the stored refresh token, while sessions are configured to
+   * last effectively forever. Treating expiry as a dead session is what
+   * logged members out automatically — every hour, and on every tab
+   * refocus after the token turned over.
    */
   useEffect(() => {
     // A stale session can also appear while the tab sits in the background:
-    // the JWT expires, or the account is deleted server-side. Browsers
-    // suspend background tabs, so the query never resolves until the tab
-    // regains focus — re-run the check on `visibilitychange` so the dead
-    // session is cleared immediately instead of lingering until the next
-    // navigation. The check is idempotent, so running it on both paths is
-    // harmless.
+    // the account is deleted server-side. Browsers suspend background
+    // tabs, so the query never resolves until the tab regains focus —
+    // re-run the check on `visibilitychange` so the dead session is
+    // cleared immediately instead of lingering until the next navigation.
+    // The check is idempotent, so running it on both paths is harmless.
     const clearStaleSession = () => {
       if (!isAuthenticated || !token) return;
-      const exp = jwtExpiry(token);
-      const stale =
-        exp === null || exp * 1000 < Date.now() || user === null;
-      if (stale) {
+      if (user === null) {
         void signOut();
       }
     };
