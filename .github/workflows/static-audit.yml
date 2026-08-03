@@ -19,6 +19,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write # upload the admin-responsive log artifact on failure
 
 jobs:
   audit:
@@ -58,3 +59,41 @@ jobs:
 
       - name: Run the salt-rotation QA
         run: npm run qa:salt
+
+      # The admin dashboard is the one surface the static gates can't see —
+      # its responsive layout only exists in a real browser at real widths.
+      # Sign in on production and walk every admin tab at 320/390/768 to
+      # catch overflow or cramped clusters on the next push instead of by a
+      # user on a phone. This is gated on the ADMIN_PASSWORD secret so a
+      # repository that hasn't configured it yet still gets the static gates
+      # green instead of failing every push.
+      - name: Cache Playwright browsers
+        if: ${{ secrets.ADMIN_PASSWORD != '' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        if: ${{ secrets.ADMIN_PASSWORD != '' }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the admin dashboard responsive QA
+        if: ${{ secrets.ADMIN_PASSWORD != '' }}
+        id: admin-responsive
+        env:
+          # Add the admin password under Settings > Secrets > Actions. The
+          # script signs in as the admin on the live site — same secret the
+          # production health-check's browser QA uses.
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: |
+          set -o pipefail
+          npm run qa:admin-responsive 2>&1 | tee admin-responsive.log
+
+      - name: Upload the admin responsive QA log
+        if: ${{ failure() && secrets.ADMIN_PASSWORD != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-responsive-log
+          path: admin-responsive.log
