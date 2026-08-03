@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -42,6 +42,7 @@ type Step = "signin" | "signup" | "verify" | "forgot" | "reset";
 export function Auth() {
   const { isLoading, isAuthenticated, signIn, signOut } = useAuth();
   const verifyBotChallenge = useAction(api.security.verifyBotChallenge);
+  const setSessionLifetime = useMutation(api.account.setSessionLifetime);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -61,6 +62,13 @@ export function Auth() {
   // Seconds left before "Send it again" unlocks. Started at 30 whenever a
   // code is sent, so codes can't be spammed by hammering the resend button.
   const [resendIn, setResendIn] = useState(0);
+  // "Keep me signed in": the device-level session preference. ON (the
+  // default, matching PureWire's permanent-session promise) opts this
+  // device into the 10-year session; OFF caps it at 30 days. Persisted
+  // locally so the choice survives page reloads.
+  const [remember, setRemember] = useState<boolean>(
+    () => localStorage.getItem("purewire_remember_me") !== "0",
+  );
 
   // Tick the resend countdown down once per second; stops at zero.
   useEffect(() => {
@@ -169,6 +177,31 @@ export function Auth() {
     return msg;
   };
 
+  /**
+   * Apply the "Keep me signed in" preference to the session that was just
+   * created. ON keeps the permanent 10-year session PureWire promises; OFF
+   * caps this device's session at 30 days via account.setSessionLifetime.
+   * Best-effort: a failure must never block sign-in — the session simply
+   * keeps its platform default (permanent).
+   */
+  const applySessionLifetime = async () => {
+    try {
+      await setSessionLifetime({ remember });
+    } catch {
+      // Best-effort — a preference write must never block sign-in.
+    }
+  };
+
+  const toggleRemember = (value: boolean) => {
+    setRemember(value);
+    try {
+      localStorage.setItem("purewire_remember_me", value ? "1" : "0");
+    } catch {
+      // Storage unavailable (private mode) — the preference still applies
+      // to this session for as long as the tab stays open.
+    }
+  };
+
   const submitSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -183,6 +216,9 @@ export function Auth() {
       if (result && "signingIn" in result && !result.signingIn) {
         setStep("verify");
         setResendIn(RESEND_COOLDOWN_SECONDS);
+      } else {
+        // Session issued directly — apply the keep-me-signed-in preference.
+        await applySessionLifetime();
       }
     } catch (err) {
       setError(authErrorMessage(err, "Invalid credentials."));
@@ -235,6 +271,9 @@ export function Auth() {
         code,
         flow: "email-verification",
       });
+      // The verification redeemed a session — apply the keep-me-signed-in
+      // preference (covers the sign-up and code sign-in paths).
+      await applySessionLifetime();
     } catch (err) {
       setError(authErrorMessage(err, "Invalid code."));
     } finally {
@@ -303,6 +342,8 @@ export function Auth() {
         newPassword: password,
         flow: "reset-verification",
       });
+      // The reset also signs the user in — apply the preference.
+      await applySessionLifetime();
     } catch (err) {
       setError(authErrorMessage(err, "Invalid code."));
     } finally {
@@ -477,6 +518,34 @@ export function Auth() {
                           Forgot password?
                         </button>
                       )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-card/40 px-3 py-2.5">
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-sm font-medium">
+                          Keep me signed in
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          Stay signed in on this device for 10 years. Turn
+                          this off on shared devices.
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={remember}
+                        aria-label="Keep me signed in"
+                        onClick={() => toggleRemember(!remember)}
+                        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+                          remember ? "bg-oxide" : "bg-border"
+                        }`}
+                      >
+                        <span
+                          className={`absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                            remember ? "translate-x-5" : ""
+                          }`}
+                        />
+                      </button>
                     </div>
 
                     {TURNSTILE_SITE_KEY ? (

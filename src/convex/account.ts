@@ -1,6 +1,7 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getAuthSessionId, getAuthUserId } from "@convex-dev/auth/server";
+import { v, ConvexError } from "convex/values";
 
-import { ADMIN_EMAIL } from "./auth";
+import { ADMIN_EMAIL, PERMANENT_SESSION_MS, SHORT_SESSION_MS } from "./auth";
 import { cleanupMediaItems, cleanupUserArtwork } from "./mediaCleanup";
 
 import { mutation, type MutationCtx } from "./_generated/server";
@@ -495,5 +496,45 @@ export const pruneExpiredStories = mutation({
         await ctx.db.delete(story._id);
       }
     }
+  },
+});
+
+/**
+ * Apply the "Keep me signed in" choice to the session that was just
+ * created. PureWire sessions are permanent by default (10 years, the
+ * platform's promise that nobody is logged out on a timeout); a device
+ * where the toggle is off opts down to a short 30-day session instead.
+ *
+ * The auth library enforces session lifetime through the authSessions
+ * row's expirationTime — every refresh checks it and stops minting new
+ * JWTs once it passes — so this caps that row (and its refresh tokens) to
+ * the chosen horizon. Called from the Auth page right after sign-in, when
+ * the fresh session is known. Idempotent and best-effort: a failure must
+ * never block sign-in.
+ */
+export const setSessionLifetime = mutation({
+  args: { remember: v.boolean() },
+  handler: async (ctx, { remember }) => {
+    const sessionId = await getAuthSessionId(ctx);
+    if (sessionId === null) {
+      throw new ConvexError("Not signed in.");
+    }
+    const horizon = remember ? PERMANENT_SESSION_MS : SHORT_SESSION_MS;
+    const expirationTime = Date.now() + horizon;
+    // The session row is the enforcement point (refreshTokenIfValid checks
+    // it on every refresh); patch it first.
+    await ctx.db.patch(sessionId, { expirationTime });
+    // Refresh tokens minted under the permanent config would otherwise
+    // outlive a short session. The library still keys validity off the
+    // session row, so this is belt-and-suspenders — but the rows should
+    // tell one story.
+    const tokens = await ctx.db
+      .query("authRefreshTokens")
+      .withIndex("sessionId", (q) => q.eq("sessionId", sessionId))
+      .collect();
+    for (const token of tokens) {
+      await ctx.db.patch(token._id, { expirationTime });
+    }
+    return { remember, expirationTime };
   },
 });

@@ -45,16 +45,31 @@ function buildProfile(params: ProfileParams) {
   };
 }
 
+/**
+ * Session horizons. The permanent one is the default: sessions are meant to
+ * last until the user signs out. The short one backs the "Keep me signed
+ * in" toggle on the Auth page — a device without it gets a 30-day session
+ * instead of the decade-long one. Shared by the `session` config below and
+ * the `setSessionLifetime` mutation in account.ts.
+ */
+export const PERMANENT_SESSION_MS = 1000 * 60 * 60 * 24 * 365 * 10; // 10 years
+// A shorter, deliberate session for devices where "keep me signed in" is
+// off. Matches the auth library's own default before PureWire made
+// sessions permanent, so the non-remembered experience is the familiar one.
+export const SHORT_SESSION_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
+
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   // Sessions are effectively permanent: the short-lived access JWT (1 hour
   // by default) is silently refreshed by the client, while the underlying
   // session and refresh token last a decade. Members are only signed out by
   // their own choice, by an admin removing the account, or by an explicit
   // server-side invalidation — never by a timeout. (The library defaults to
-  // 30 days, which was logging people out automatically.)
+  // 30 days, which was logging people out automatically.) A user who turns
+  // off "Keep me signed in" opts that session down to SHORT_SESSION_MS via
+  // account.setSessionLifetime after sign-in.
   session: {
-    totalDurationMs: 1000 * 60 * 60 * 24 * 365 * 10, // 10 years
-    inactiveDurationMs: 1000 * 60 * 60 * 24 * 365 * 10, // 10 years
+    totalDurationMs: PERMANENT_SESSION_MS,
+    inactiveDurationMs: PERMANENT_SESSION_MS,
   },
   providers: [
     Password({

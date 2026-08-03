@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { getAuthSessionId } from "@convex-dev/auth/server";
 import { SignJWT, importPKCS8 } from "jose";
 
 import { ADMIN_EMAIL } from "./auth";
@@ -268,6 +269,34 @@ async function extendTable(
   }
   return extended;
 }
+
+/**
+ * Read the calling session's expiry horizon: the authSessions row's
+ * expirationTime and how far out it is from now. Lets the session-lifetime
+ * QA assert both paths of the "Keep me signed in" toggle against the real
+ * rows — the permanent 10-year default and the opted-down 30-day session.
+ * Gated by the same two env gates as the rest of the module.
+ */
+export const getCurrentSessionLifetime = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const sessionId = await getAuthSessionId(ctx);
+    if (sessionId === null) {
+      return null;
+    }
+    const session = await ctx.db.get(sessionId);
+    if (session === null) {
+      return null;
+    }
+    const now = Date.now();
+    return {
+      expirationTime: session.expirationTime,
+      now,
+      remainingMs: Math.max(0, session.expirationTime - now),
+    };
+  },
+});
 
 /**
  * Full silent-moderation state for a QA account: the current (decayed) flag
