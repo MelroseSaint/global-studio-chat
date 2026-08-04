@@ -57,6 +57,53 @@ export async function cleanupMediaItems(
   }
 }
 
+/**
+ * Delete every like, comment, and share row pointing at a post, in chunks.
+ * Called when a post is removed — the user-facing deletePost and the
+ * admin's moderatePost — so no orphan engagement rows outlive it (they
+ * would inflate the admin dashboard's totals and never be reachable
+ * again). Chunked exactly like the erasure sweeps in account.ts (500 rows
+ * per pass) so a viral post's engagement is never loaded into memory
+ * wholesale or burned in a single mutation's write budget. The post's own
+ * like/comment/share counters die with the post row, so no counters need
+ * touching here.
+ */
+export async function sweepPostEngagement(
+  ctx: MutationCtx,
+  postId: Id<"posts">,
+): Promise<void> {
+  for (;;) {
+    const rows = await ctx.db
+      .query("likes")
+      .withIndex("by_post", (q) => q.eq("postId", postId))
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+  }
+  for (;;) {
+    const rows = await ctx.db
+      .query("comments")
+      .withIndex("by_post", (q) => q.eq("postId", postId))
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+  }
+  for (;;) {
+    const rows = await ctx.db
+      .query("shares")
+      .withIndex("by_post", (q) => q.eq("postId", postId))
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+  }
+}
+
 /** Shape of a user row's artwork fields, for cleanupUserArtwork. */
 export interface ArtworkFields {
   avatarStorageId?: Id<"_storage"> | null;

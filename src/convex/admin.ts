@@ -6,7 +6,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { isStandardId } from "@/lib/standard";
 
 import { eraseAccount } from "./account";
-import { cleanupMediaItems } from "./mediaCleanup";
+import { cleanupMediaItems, sweepPostEngagement } from "./mediaCleanup";
 import { publicUser } from "./privacy";
 
 import { mutation, query, type QueryCtx } from "./_generated/server";
@@ -325,23 +325,7 @@ export const moderatePost = mutation({
       // The engagement rows die with the post too — the same sweep the
       // user-facing deletePost does, so no orphan likes/comments/shares
       // rows outlive a moderated post.
-      const [likes, comments, shares] = await Promise.all([
-        ctx.db
-          .query("likes")
-          .withIndex("by_post", (q) => q.eq("postId", postId))
-          .collect(),
-        ctx.db
-          .query("comments")
-          .withIndex("by_post", (q) => q.eq("postId", postId))
-          .collect(),
-        ctx.db
-          .query("shares")
-          .withIndex("by_post", (q) => q.eq("postId", postId))
-          .collect(),
-      ]);
-      for (const row of [...likes, ...comments, ...shares]) {
-        await ctx.db.delete(row._id);
-      }
+      await sweepPostEngagement(ctx, postId);
       await ctx.db.delete(postId);
     }
   },
