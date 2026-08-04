@@ -204,6 +204,10 @@ const schema = defineSchema({
     description: v.optional(v.string()),
     image: v.optional(v.string()),
     domain: v.string(),
+    // When this preview was fetched (and re-fetched). Powers the periodic
+    // redirect-chain re-evaluation in fetchUrlPreview: a card cached before
+    // a domain was blocked is stale after 24h, re-scanned, and removed.
+    fetchedAt: v.optional(v.number()),
   }).index("by_url", ["url"]),
   // Server-side place search cache for the location picker. Queries run
   // against Nominatim inside PureWire's backend (the browser never talks to

@@ -6,7 +6,7 @@ import type { BlockCategory } from "./phishing";
 import { idnToAscii, matchBlockedHost } from "./phishing";
 
 import { internal } from "./_generated/api";
-import { action, query } from "./_generated/server";
+import { action, query, type ActionCtx } from "./_generated/server";
 
 function extractMeta(html: string) {
   const pick = (patterns: RegExp[]) => {
@@ -56,16 +56,40 @@ type CachedPreview = {
   description?: string | null;
   image?: string | null;
   domain: string;
+  fetchedAt?: number;
 };
 
-/** Public cache reader for the client (LinkCard) — shows a cached preview instantly. */
+/**
+ * A cached preview older than this is re-scanned (redirect chain + active
+ * blocklist) on the next view, so a link cached before a domain was added
+ * to the blocklist gets re-evaluated — and its card removed — instead of
+ * riding forever on the stale card.
+ */
+const PREVIEW_STALE_MS = 24 * 60 * 60 * 1000;
+
+/** True when a preview row is old enough that it must be re-verified. */
+function isPreviewStale(cached: { fetchedAt?: number; _creationTime: number }): boolean {
+  const fetched = cached.fetchedAt ?? cached._creationTime;
+  return Date.now() - fetched > PREVIEW_STALE_MS;
+}
+
+/**
+ * Public cache reader for the client (LinkCard). Shows a fresh cached
+ * preview instantly; a stale one reads as null so the client runs the
+ * fetchUrlPreview action, which re-scans the redirect chain and either
+ * refreshes the card or (if the domain is now blocked) removes it.
+ */
 export const getUrlPreview = query({
   args: { url: v.string() },
   handler: async (ctx, { url }) => {
-    return await ctx.db
+    const row = await ctx.db
       .query("urlPreviews")
       .withIndex("by_url", (q) => q.eq("url", url))
       .first();
+    if (row === null || isPreviewStale(row)) {
+      return null;
+    }
+    return row;
   },
 });
 
@@ -142,6 +166,25 @@ function emptyPreview(url: string): CachedPreview {
 }
 
 /**
+ * When a stale cached card's URL turns out unreachable (DNS, timeout,
+ * refused, hop cap), reset its freshness clock instead of leaving it stale:
+ * the last-known content stays in the DB so a later successful re-scan can
+ * restore the card, but the URL won't be re-scanned on every single view of
+ * a dead link — the periodic re-check fires at most once per 24h per URL.
+ */
+async function touchStaleCache(
+  ctx: ActionCtx,
+  url: string,
+  cached: (CachedPreview & { _creationTime: number }) | null,
+): Promise<void> {
+  if (cached === null) return;
+  // Reset fetchedAt only — content is untouched, so an allowed re-scan can
+  // still pick the card back up. Best-effort: a failure here just means the
+  // next view re-scans, which is safe.
+  await ctx.runMutation(internal.linksInternal.touchUrlPreview, { url }).catch(() => {});
+}
+
+/**
  * Fetch and cache an OpenGraph preview for a URL. An ACTION because Convex
  * mutations cannot make external network requests — the fetch must run
  * here, and the cache read/write goes through the internal helpers in
@@ -163,10 +206,15 @@ export const fetchUrlPreview = action({
     // flow through the generated `internal` namespace, or its inference
     // resolves back through `typeof links` into its own initializer
     // (TS7022).
+    // The internal cache read sees the RAW row (stale included) so this
+    // action can decide whether to re-scan. A fresh cached preview is
+    // returned as-is; a stale one falls through to the full redirect-chain
+    // re-scan below, which refreshes the card or removes it if the domain
+    // is now blocked.
     const cached = (await ctx.runQuery(internal.linksInternal.getUrlPreview, {
       url,
-    })) as unknown as CachedPreview | null;
-    if (cached !== null) {
+    })) as unknown as (CachedPreview & { _creationTime: number }) | null;
+    if (cached !== null && !isPreviewStale(cached)) {
       return cached;
     }
     if (!/^https?:\/\//i.test(url)) {
@@ -243,6 +291,12 @@ export const fetchUrlPreview = action({
             matchedDomain: scan.matchedDomain,
             redirectChain: chain,
           });
+          // A URL that was allowed (and carded) before its domain joined
+          // the blocklist gets its stale card cleared here, so the card
+          // disappears rather than only being re-recorded.
+          await ctx.runMutation(internal.linksInternal.clearUrlPreview, {
+            url,
+          }).catch(() => {});
           return emptyPreview(url);
         }
         const res = await fetch(current, {
@@ -289,6 +343,7 @@ export const fetchUrlPreview = action({
         finalHostname: chain[chain.length - 1],
         redirectChain: chain,
       }).catch(() => {});
+      await touchStaleCache(ctx, url, cached);
       return emptyPreview(url);
     } catch {
       // Fetch refused/failed (private address, DNS, timeout, non-http
@@ -300,6 +355,7 @@ export const fetchUrlPreview = action({
         finalHostname: chain[chain.length - 1],
         redirectChain: chain.length > 0 ? chain : undefined,
       }).catch(() => {});
+      await touchStaleCache(ctx, url, cached);
       return emptyPreview(url);
     }
   },

@@ -29,7 +29,13 @@ export function LinkCard({ url }: { url: string }) {
   }, [cached, url, fetchPreview]);
 
   const preview = cached ?? local;
-  if (!preview) return null;
+  // A preview with no content (empty title/description/image — e.g. a URL
+  // whose re-scan found the domain newly blocked, or a page with no OG
+  // metadata) renders no card at all: the link itself stays visible as
+  // post text, and a removed card must actually disappear.
+  if (!preview || (!preview.title && !preview.description && !preview.image)) {
+    return null;
+  }
 
   return (
     <a
