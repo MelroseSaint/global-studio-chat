@@ -120,10 +120,10 @@ export const createStory = mutation({
       caption,
       expiresAt,
       aiStatus: needsReview ? "review" : "clean",
+      // The review reason already carries the "Suspected phishing —"
+      // prefix from scanForPhishing — used as-is, no double prefix.
       aiStatusReason:
-        phishScan?.status === "review"
-          ? `Suspected phishing — ${phishScan.reason}`
-          : undefined,
+        phishScan?.status === "review" ? phishScan.reason : undefined,
     });
     if (media.kind === "video") {
       await ctx.scheduler.runAfter(

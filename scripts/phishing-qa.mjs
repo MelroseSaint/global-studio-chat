@@ -151,6 +151,13 @@ async function main() {
       typeof reviewRes.aiReviewReason === "string" &&
         /phishing/i.test(reviewRes.aiReviewReason),
     );
+    check(
+      "the author-facing reason is not double-prefixed",
+      typeof reviewRes.aiReviewReason === "string" &&
+        !reviewRes.aiReviewReason.includes(
+          "Suspected phishing — Suspected phishing",
+        ),
+    );
     const feedC1 = await client.query(api.posts.feed, {
       filter: "global",
       paginationOpts: pag,

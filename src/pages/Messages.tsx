@@ -817,7 +817,8 @@ export function Messages() {
                     <ShieldAlert className="mr-1 inline size-3.5 shrink-0" />
                     <span className="min-w-0 flex-1">
                       This looks like it might be a scam link —{" "}
-                      {phishConfirm.reason}. Send anyway?
+                      {phishConfirm.reason.replace(/^Suspected phishing — /, "")}.
+                      Send anyway?
                     </span>
                     <span className="flex shrink-0 gap-1.5">
                       <Button

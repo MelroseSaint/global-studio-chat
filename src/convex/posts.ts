@@ -399,8 +399,10 @@ export const createPost = mutation({
             : undefined;
     // A phishing-suspicious post goes to the same human queue, with its
     // own honest reason — the author learns *why* their post is waiting.
+    // scanForPhishing's review reason already carries the "Suspected
+    // phishing —" prefix, so it is used as-is (no double prefix).
     if (phishScan.status === "review") {
-      aiStatusReason = `Suspected phishing — ${phishScan.reason}${
+      aiStatusReason = `${phishScan.reason}${
         aiStatusReason !== undefined ? ` · ${aiStatusReason}` : ""
       }`;
     }
