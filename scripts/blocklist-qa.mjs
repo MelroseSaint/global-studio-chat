@@ -250,6 +250,40 @@ async function main() {
       routedRow?.category === "adult_fetish",
     );
 
+    // ── 4c. Deactivation: a domain that leaves its feed is deactivated ────
+    // Re-point the SAME source at a feed that no longer lists the routing
+    // domain (cam-domains.txt holds only core entries, none of which are
+    // qa-routing-feed.test). On the next successful sync the lifecycle must
+    // DEACTIVATE the vanished domain and stamp lastVerifiedAt — the spec's
+    // "compare against existing DB → deactivate removed domains".
+    await client.mutation(api.blocklist.upsertDomainSource, {
+      name: `qa-feed-${stamp}`,
+      url: `https://purewire.vercel.app/data/adult/cam-domains.txt`,
+      format: "domain",
+      enabled: true,
+    });
+    let deactivated = null;
+    let sync3 = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      sync3 = await client.action(api.blocklist.syncExternalSources);
+      const pages = await client.query(api.blocklist.listBlockedDomains, {
+        paginationOpts: { numItems: 200, cursor: null },
+      });
+      deactivated =
+        pages?.page?.find((d) => d.domain === routingDomain) ?? null;
+      if (deactivated?.active === false) break;
+      await sleep(10_000);
+    }
+    check(
+      "a domain that vanished from its feed is deactivated on re-sync",
+      deactivated?.active === false,
+    );
+    check(
+      "the deactivated row keeps its source + lastVerifiedAt trace",
+      typeof deactivated?.lastVerifiedAt === "number" &&
+        typeof deactivated?.source === "string",
+    );
+
     // ── 5. Pausing a domain un-blocks it ──────────────────────────────────
     client.setAuth(admin.token);
     await client.mutation(api.blocklist.setBlockedDomainActive, {
@@ -372,6 +406,64 @@ async function main() {
       blockedRow?.matchedDomain === testDomain,
     );
 
+    // ── 9. Negative matcher: lookalike/embedded hosts must NOT match ─────
+    // The core rule of the domain matcher: only the exact host and true
+    // subdomains match. A lookalike (notonlyfans.com) and a host that merely
+    // CONTAINS the blocked domain (onlyfans.com.example.com) must both stay
+    // clean — the chain walk, not a substring test, is what enforces this.
+    const negUser = await mkUser("neg");
+    client.setAuth(negUser.token);
+    const lookalike = await client.mutation(api.posts.createPost, {
+      content: `https://notonlyfans.com/post ${stamp}`,
+    });
+    check(
+      "notonlyfans.com is NOT matched (lookalike stays clean)",
+      lookalike?.ok === true,
+    );
+    const embedded = await client.mutation(api.posts.createPost, {
+      content: `https://onlyfans.com.example.com/post ${stamp}`,
+    });
+    check(
+      "onlyfans.com.example.com is NOT matched (embedded stays clean)",
+      embedded?.ok === true,
+    );
+    const cleanDom = await client.mutation(api.posts.createPost, {
+      content: `https://sub.onlyfans.com.example.org/post ${stamp}`,
+    });
+    check(
+      "a subdomain of the embedded host stays clean too",
+      cleanDom?.ok === true,
+    );
+
+    // ── 10. Textual obfuscation: dot-com/[.]/(.)/spaced forms are caught ──
+    // Each blocked attempt escalates 3 silent points and the threshold is 6,
+    // so every obfuscation form runs on its own throwaway (same discipline
+    // as the earlier surface checks).
+    const obfCases = [
+      ["onlyfans dot com", "obf1"],
+      ["onlyfans[.]com", "obf2"],
+      ["onlyfans(.)com", "obf3"],
+      ["onlyfans . com", "obf4"],
+    ];
+    const obfUsers = [];
+    for (const [text, tag] of obfCases) {
+      const u = await mkUser(tag);
+      obfUsers.push(u);
+      client.setAuth(u.token);
+      const res = await client.mutation(api.posts.createPost, {
+        content: `check out ${text} ${stamp}`,
+      });
+      check(`obfuscated form “${text}” is blocked`, res?.ok === false);
+    }
+    // The negative control: a lookalike written textually must stay clean —
+    // obfuscation detection only fires on REAL blocked entries.
+    const obfNeg = await mkUser("obf-neg");
+    client.setAuth(obfNeg.token);
+    const obfClean = await client.mutation(api.posts.createPost, {
+      content: `notonlyfans dot com is nothing ${stamp}`,
+    });
+    check("a textual lookalike stays clean (no false positive)", obfClean?.ok === true);
+
     // ── 6. Cleanup: remove the test entries + source, erase throwaways ────
     client.setAuth(admin.token);
     await client.mutation(api.blocklist.deleteBlockedDomain, { domain: testDomain });
@@ -399,6 +491,14 @@ async function main() {
       "the test pattern is gone after cleanup",
       afterCleanup?.patterns?.some((p) => p.pattern === patternText) !== true,
     );
+    // Sources leak silently if a run is interrupted between upsert and
+    // delete — assert the QA sources are really gone so a leaked feed never
+    // breaks the nightly sync job with a 404.
+    const sourcesAfter = await client.query(api.blocklist.listDomainSources);
+    check(
+      "no QA sources remain after cleanup",
+      !sourcesAfter?.some((s) => s.name.startsWith("qa-")),
+    );
     // Erase every surface throwaway.
     for (const u of [
       postUser,
@@ -409,6 +509,9 @@ async function main() {
       idnUserA,
       idnUserB,
       idnUserC,
+      negUser,
+      obfNeg,
+      ...obfUsers,
     ]) {
       client.setAuth(u.token);
       await client.mutation(api.account.deleteAccount);

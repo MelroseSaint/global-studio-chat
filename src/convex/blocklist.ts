@@ -662,6 +662,7 @@ export const syncExternalSources = action({
   args: {},
   returns: v.object({
     ok: v.boolean(),
+    purged: v.number(),
     results: v.array(
       v.object({
         name: v.string(),
@@ -672,6 +673,7 @@ export const syncExternalSources = action({
   }),
   handler: async (ctx): Promise<{
     ok: boolean;
+    purged: number;
     results: { name: string; imported: number; error?: string }[];
   }> => {
     const sources = await ctx.runQuery(internal.blocklist.listEnabledSourcesInternal);
@@ -715,7 +717,13 @@ export const syncExternalSources = action({
         results.push({ name: source.name, imported: 0, error: message });
       }
     }
-    return { ok: true, results };
+    // Privacy retention sweep: link-scan evidence older than 30 days is
+    // deleted every sync (spec point 14 — hashes stay, verbatim URLs go).
+    const { purged } = await ctx.runMutation(
+      internal.blocklist.purgeStaleScansInternal,
+      { now: Date.now() },
+    );
+    return { ok: true, results, purged };
   },
 });
 
@@ -775,6 +783,35 @@ export const markSourceFetchingInternal = internalMutation({
   },
 });
 
+/**
+ * Privacy retention sweep for linkScanResults — runs nightly with the sync.
+ * The scan cache keeps {urlHash, verdict, category, matchedDomain, scannedAt}
+ * forever (that part is pure hash + policy, and the user explicitly wants
+ * it), but the verbatim originalUrl/normalizedUrl columns are moderation
+ * evidence, not a permanent record. Per the privacy spec, evidence has a
+ * SHORT retention period: rows older than RETENTION_MS (30 days) are
+ * deleted, bounded per run so the sweep never blows a mutation budget.
+ */
+export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const RETENTION_BATCH = 200;
+
+export const purgeStaleScansInternal = internalMutation({
+  args: { now: v.number() },
+  handler: async (ctx, { now }) => {
+    const cutoff = now - RETENTION_MS;
+    // by_verdict isn't time-ordered; the table is small (one row per URL)
+    // and this is nightly, so a filtered take is the honest bounded scan.
+    const stale = await ctx.db
+      .query("linkScanResults")
+      .filter((q) => q.lt(q.field("scannedAt"), cutoff))
+      .take(RETENTION_BATCH);
+    for (const row of stale) {
+      await ctx.db.delete(row._id);
+    }
+    return { purged: stale.length };
+  },
+});
+
 export const markSourceSyncedInternal = internalMutation({
   args: { name: v.string(), now: v.number() },
   handler: async (ctx, { name, now }) => {
@@ -813,10 +850,18 @@ export const applySyncedDomainsInternal = internalMutation({
     now: v.number(),
   },
   handler: async (ctx, { name, domains, category, now }) => {
+    // Scale ceiling (documented): the import loop does a per-domain index
+    // lookup and the sweep below a source-filter scan — fine for the core
+    // 62 + our data/adult feeds. A single 18k-domain feed would exceed
+    // Convex's per-mutation write/time budget; that scale needs chunked
+    // ingestion, which is a future refactor (see the nightly sync job).
     let imported = 0;
     // Synced feeds are lower-confidence than the curated core list: they
     // are a second opinion, not a verdict, and entries carry the source
-    // name so an admin can audit and disable any feed.
+    // name so an admin can audit and disable any feed. This mutation runs
+    // ONLY after a successful fetch+parse (see syncExternalSources), so a
+    // failed fetch can never deactivate anything.
+    const incoming = new Set(domains);
     for (const domain of domains) {
       const existing = await ctx.db
         .query("blockedDomains")
@@ -831,6 +876,8 @@ export const applySyncedDomainsInternal = internalMutation({
           active: true,
           source: name,
           confidence: Math.max(existing.confidence, 0.6),
+          // Every successful sync verifies the entries the feed still lists.
+          lastVerifiedAt: now,
           updatedAt: now,
         });
         imported++;
@@ -844,10 +891,28 @@ export const applySyncedDomainsInternal = internalMutation({
           blockSubdomains: true,
           active: true,
           addedAt: now,
+          lastVerifiedAt: now,
           updatedAt: now,
         });
         imported++;
       }
+    }
+    // Deactivate entries this feed previously owned that are no longer in
+    // the current list — the spec's "compare against DB → deactivate removed".
+    // Only entries whose source is THIS feed are touched; core and manual
+    // rows are never swept. Bounded scan; the feed-name filter has no index,
+    // and the table is small enough for a nightly sync.
+    const owned = await ctx.db
+      .query("blockedDomains")
+      .filter((q) => q.eq(q.field("source"), name))
+      .take(10000);
+    for (const row of owned) {
+      if (incoming.has(row.domain)) continue;
+      await ctx.db.patch(row._id, {
+        active: false,
+        lastVerifiedAt: now,
+        updatedAt: now,
+      });
     }
     return { imported };
   },

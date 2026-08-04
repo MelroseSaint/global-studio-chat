@@ -444,6 +444,26 @@ export function scanWithBlocklist(
       }
     }
   }
+  // Textual obfuscation: "onlyfans dot com" / "onlyfans[.]com" written to
+  // dodge the URL extractor. Only acts when the reconstructed domain is an
+  // actual blocked entry — ordinary prose is never flagged.
+  for (const candidate of extractObfuscatedDomains(text)) {
+    const hit = matchBlockedHost(candidate, entries);
+    if (hit !== null) {
+      const label = BLOCK_CATEGORY_LABEL[hit.category];
+      if (hit.action === "review") {
+        return {
+          status: "review",
+          reason: `listed for review: ${hit.domain} (${label})`,
+        };
+      }
+      return {
+        status: "blocked",
+        reason: `banned ${label} (${hit.domain})`,
+        message: `Adult platforms aren't allowed on PureWire — this ${label} can't be shared, posted, or linked.`,
+      };
+    }
+  }
   return scanForPhishing(text);
 }
 
@@ -835,6 +855,34 @@ export function extractUrls(text: string): string[] {
   return urls;
 }
 
+/**
+ * Textual forms of a domain that a URL regex can't see: "onlyfans dot com",
+ * "onlyfans[.]com", "onlyfans(.)com", "onlyfans {.} com", "onlyfans . com".
+ * These are the anti-scraper ways people write links in plain text. The
+ * obfuscation markers are collapsed onto a plain dot and the resulting
+ * host-like token is returned for matching — but callers only act when it
+ * matches a REAL blocked entry, so ordinary prose ("example dot com" in a
+ * sentence) never trips anything. Deliberately a small bounded set of
+ * separators, not an enormous regex blacklist.
+ */
+export function extractObfuscatedDomains(text: string): string[] {
+  const normalized = text
+    .toLowerCase()
+    .replace(/\s*\[\s*\.\s*\]\s*/g, ".")
+    .replace(/\s*\(\s*\.\s*\)\s*/g, ".")
+    .replace(/\s*\{\s*\.\s*\}\s*/g, ".")
+    .replace(/\s+dot\s+/g, ".")
+    .replace(/\s*\.\s*/g, ".");
+  const out: string[] = [];
+  for (const m of normalized.matchAll(
+    /(?:^|[\s(>])((?:[a-z0-9-]+\.)+[a-z]{2,63})(?![a-z0-9-])/g,
+  )) {
+    const host = m[1].replace(/\.+$/, "");
+    if (host.includes(".") && host.length < 253) out.push(host);
+  }
+  return [...new Set(out)];
+}
+
 function hasUnusualTld(host: string): boolean {
   const labels = host.split(".");
   return UNUSUAL_TLDS.has(labels[labels.length - 1]);
@@ -949,6 +997,18 @@ export function scanForPhishing(content: string): PhishingVerdict {
     const verdict = inspectUrl(withScheme);
     if (verdict.status === "blocked") return verdict;
     if (verdict.status === "review") reviewHits.push(verdict.reason);
+  }
+  // Textual obfuscation against the static adult list — a banned host
+  // written as "onlyfans dot com" is caught even with no URL in the text.
+  for (const candidate of extractObfuscatedDomains(text)) {
+    const adult = bannedAdultCategory(candidate);
+    if (adult !== null) {
+      return {
+        status: "blocked",
+        reason: `banned ${ADULT_CATEGORY_LABEL[adult]} (${candidate})`,
+        message: `Adult platforms aren't allowed on PureWire — this ${ADULT_CATEGORY_LABEL[adult]} can't be shared, posted, or linked.`,
+      };
+    }
   }
   if (reviewHits.length > 0) {
     const unique = [...new Set(reviewHits)];

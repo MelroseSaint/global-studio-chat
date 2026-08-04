@@ -118,6 +118,11 @@ const retention = [
       "Until you delete the conversation — which removes it for both people, with no copy existing anywhere — or until your account is erased, which deletes every conversation you were part of, for everyone.",
   },
   {
+    title: "Link-scan evidence",
+    detail:
+      "30 days. To keep adult platforms and scams off PureWire, a link that appears in a post, bio, comment, or story is checked against the blocklist and the verdict is recorded as an unreadable hash (never your link text) plus the blocked domain and timestamp. That evidence is retained for 30 days so a block can be audited or appealed, then deleted automatically — the hash-only record that remains can't be traced back to you.",
+  },
+  {
     title: "Everything else",
     detail: "Kept only as long as your account exists — and erased the moment you ask.",
   },

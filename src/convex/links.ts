@@ -172,6 +172,9 @@ export const fetchUrlPreview = action({
     if (!/^https?:\/\//i.test(url)) {
       return emptyPreview(url);
     }
+    // Hoisted so the catch can record the hops we did collect when a fetch
+    // fails mid-chain (private address, DNS, timeout, non-http redirect).
+    const chain: string[] = [];
     try {
       // Redirect inspection: load the active blocklist once, then re-scan
       // the FINAL hostname (the host the URL resolves to after every hop)
@@ -217,7 +220,6 @@ export const fetchUrlPreview = action({
       // private-address guard — a legit-looking first hop must never steer
       // the server into the internal network on the second.
       let current = url;
-      const chain: string[] = [];
       for (let hop = 0; hop < 5; hop++) {
         const host = hostOf(current);
         if (host === null || isPrivateAddress(host)) {
@@ -278,8 +280,26 @@ export const fetchUrlPreview = action({
         });
         return preview;
       }
+      // Ran out of hops without a terminal response — record the chain as
+      // unreachable so the audit trail explains why no card was shown.
+      await ctx.runMutation(internal.blocklist.recordLinkScanInternal, {
+        rawUrl: url,
+        verdict: "unreachable",
+        hostname: chain[0],
+        finalHostname: chain[chain.length - 1],
+        redirectChain: chain,
+      }).catch(() => {});
       return emptyPreview(url);
     } catch {
+      // Fetch refused/failed (private address, DNS, timeout, non-http
+      // redirect, body cap). Record the chain we did collect as unreachable.
+      await ctx.runMutation(internal.blocklist.recordLinkScanInternal, {
+        rawUrl: url,
+        verdict: "unreachable",
+        hostname: chain[0],
+        finalHostname: chain[chain.length - 1],
+        redirectChain: chain.length > 0 ? chain : undefined,
+      }).catch(() => {});
       return emptyPreview(url);
     }
   },
