@@ -146,6 +146,11 @@ const schema = defineSchema({
     // human check). Posts that clearly self-identify as AI-generated are
     // rejected at creation and never stored.
     aiStatus: v.optional(v.union(v.literal("clean"), v.literal("review"))),
+    // Why the post was flagged — the specific detection signals the scan
+    // found (formulaic phrasing, uniform sentence lengths, generator
+    // metadata, a missing scan verdict, …). Shown in the admin AI-review
+    // queue so a human can judge the flag without re-reading everything.
+    aiStatusReason: v.optional(v.string()),
     likeCount: v.number(),
     commentCount: v.number(),
     shareCount: v.number(),
@@ -315,6 +320,8 @@ const schema = defineSchema({
       v.literal("restrict"),
       v.literal("ban"),
       v.literal("approve"),
+      // Full restore of a moderated account, with the reason recorded.
+      v.literal("reinstate"),
       v.literal("flag"),
     ),
     standardId: v.optional(v.string()),

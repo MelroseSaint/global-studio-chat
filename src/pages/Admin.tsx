@@ -205,6 +205,110 @@ function RemoveAccountDialog({
   );
 }
 
+/**
+ * Confirm-and-reinstate dialog for restoring a moderated account. The
+ * reason is REQUIRED and recorded on the account's audit trail, so every
+ * restore — like every restriction — leaves a "who, when, why". The
+ * optional Standard principle the action is taken under rides along.
+ * Removed accounts can't appear here: the erasure sweep destroys the
+ * account and its data by design, so there is nothing to restore.
+ */
+function ReinstateAccountDialog({
+  open,
+  onOpenChange,
+  user,
+  busy = false,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  user: { _id: string; username?: string | null; name?: string | null } | null;
+  busy?: boolean;
+  onConfirm: (userId: string, standardId: string, note: string) => void;
+}) {
+  const [standardId, setStandardId] = useState("");
+  const [note, setNote] = useState("");
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Reset the form each time the dialog is opened.
+        if (next) {
+          setStandardId("");
+          setNote("");
+        }
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-moss">
+            <UserCheck className="size-4" />
+            Reinstate account
+          </DialogTitle>
+          <DialogDescription>
+            Restores <b>@{user?.username ?? "this user"}</b> to full active
+            status — their profile, posts, and engagement become public
+            again, and any quiet silence is lifted. Removed accounts can&apos;t
+            be reinstated: the erasure sweep destroys the account and its
+            data by design, so there is nothing left to restore.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label>
+              Reason <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Why is this reinstatement called for? (false positive, appeal granted, …)"
+              rows={3}
+              maxLength={500}
+            />
+            <p className="text-xs text-muted-foreground">
+              Recorded on the account&apos;s audit trail, so every restore
+              leaves a reason like every restriction does.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label>PureWire Standard principle (optional)</Label>
+            <Select value={standardId} onValueChange={setStandardId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a principle (if one applies)" />
+              </SelectTrigger>
+              <SelectContent>
+                {STANDARD_PRINCIPLES.map((p, i) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {i + 1}. {p.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={note.trim().length === 0 || busy}
+            onClick={() => {
+              if (user) onConfirm(user._id, standardId, note.trim());
+            }}
+          >
+            {busy ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              "Reinstate account"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function Admin() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -874,6 +978,10 @@ function SecurityPanel() {
     "security.setAccountStatus",
   );
   const setShadowban = useOfflineMutation(api.security.setShadowban, "security.setShadowban");
+  const reinstateAccount = useOfflineMutation(
+    api.security.reinstateAccount,
+    "security.reinstateAccount",
+  );
   const removeAccount = useOfflineMutation(api.admin.removeAccount, "admin.removeAccount");
   const { results, status, loadMore } = usePaginatedQuery(
     api.security.listFlaggedAccounts,
@@ -925,25 +1033,36 @@ function SecurityPanel() {
     moderationNote?: string | null;
   }[];
 
-  const setStatus = async (userId: string, accountStatus: string) => {
-    try {
-      const res = await setAccountStatus({
-        userId: userId as Id<"users">,
-        status: accountStatus as "active" | "suspicious" | "restricted" | "banned",
-      });
-      if (res) return;
-      toast.success(`Account ${accountStatus}.`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update.");
-    }
-  };
-
   const [pendingAction, setPendingAction] = useState<{
     userId: string;
     kind: "restrict" | "ban" | "silence";
   } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingReinstate, setPendingReinstate] = useState<string | null>(null);
+  const [reinstateBusy, setReinstateBusy] = useState(false);
+
+  const confirmReinstate = async (
+    userId: string,
+    standardId: string,
+    note: string,
+  ) => {
+    setReinstateBusy(true);
+    try {
+      const res = await reinstateAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+      });
+      setPendingReinstate(null);
+      if (res) return;
+      toast.success("Account reinstated — their profile is fully active again.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not reinstate.");
+    } finally {
+      setReinstateBusy(false);
+    }
+  };
 
   // Unsilencing is a restore (no citation needed); silencing opens the
   // Standard citation dialog.
@@ -1075,11 +1194,11 @@ function SecurityPanel() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void setStatus(u._id, "active")}
-              title="Clear flags and restore this account to active"
+              onClick={() => setPendingReinstate(u._id)}
+              title="Restore this account to full active status, recording the reason"
             >
               <UserCheck className="size-4" />
-              Approve
+              Reinstate
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -1159,6 +1278,17 @@ function SecurityPanel() {
           void confirmRemove(userId, standardId, note)
         }
       />
+      <ReinstateAccountDialog
+        open={pendingReinstate !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingReinstate(null);
+        }}
+        user={accounts.find((u) => u._id === pendingReinstate) ?? null}
+        busy={reinstateBusy}
+        onConfirm={(userId, standardId, note) =>
+          void confirmReinstate(userId, standardId, note)
+        }
+      />
     </div>
   );
 }
@@ -1208,6 +1338,7 @@ const ACTION_LABELS: Record<string, string> = {
   restrict: "Restricted",
   ban: "Banned",
   approve: "Approved",
+  reinstate: "Reinstated",
   flag: "Flagged",
 };
 
@@ -1305,6 +1436,10 @@ function AuditTrail({ userId }: { userId: string }) {
  */
 function SilencedPanel() {
   const bulkUnsilence = useOfflineMutation(api.security.bulkUnsilence, "security.bulkUnsilence");
+  const reinstateAccount = useOfflineMutation(
+    api.security.reinstateAccount,
+    "security.reinstateAccount",
+  );
   const removeAccount = useOfflineMutation(api.admin.removeAccount, "admin.removeAccount");
   const { results, status, loadMore } = usePaginatedQuery(
     api.security.listSilencedAccounts,
@@ -1317,6 +1452,36 @@ function SilencedPanel() {
   const [busy, setBusy] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [pendingReinstate, setPendingReinstate] = useState<string | null>(null);
+  const [reinstateBusy, setReinstateBusy] = useState(false);
+
+  const confirmReinstate = async (
+    userId: string,
+    standardId: string,
+    note: string,
+  ) => {
+    setReinstateBusy(true);
+    try {
+      const res = await reinstateAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+      });
+      setPendingReinstate(null);
+      if (res) return;
+      toast.success("Account reinstated — their profile is fully active again.");
+      setSelected((prev) => {
+        if (prev.size === 0) return prev;
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not reinstate.");
+    } finally {
+      setReinstateBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (inView && status === "CanLoadMore") {
@@ -1515,6 +1680,13 @@ function SilencedPanel() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
+                      onClick={() => setPendingReinstate(u._id)}
+                      disabled={busy || removing}
+                    >
+                      <UserCheck className="size-4" />
+                      Reinstate
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       variant="destructive"
                       onClick={() => setPendingRemove(u._id)}
                       disabled={busy || removing}
@@ -1602,6 +1774,17 @@ function SilencedPanel() {
           void confirmRemove(userId, standardId, note)
         }
       />
+      <ReinstateAccountDialog
+        open={pendingReinstate !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingReinstate(null);
+        }}
+        user={accounts.find((u) => u._id === pendingReinstate) ?? null}
+        busy={reinstateBusy}
+        onConfirm={(userId, standardId, note) =>
+          void confirmReinstate(userId, standardId, note)
+        }
+      />
     </div>
   );
 }
@@ -1630,6 +1813,7 @@ function AiReviewPanel() {
     _id: string;
     _creationTime: number;
     content: string;
+    aiStatusReason?: string | null;
     author: { username?: string | null; name?: string | null } | null;
   }[];
 
@@ -1740,6 +1924,12 @@ function AiReviewPanel() {
               {timeAgo(p._creationTime)}
             </p>
             <p className="mt-1 line-clamp-2 text-sm">{p.content}</p>
+            {p.aiStatusReason ? (
+              <p className="mt-1 flex items-start gap-1 text-[11px] text-oxide dark:text-oxide-light">
+                <ScanSearch className="mt-0.5 size-3 shrink-0" />
+                <span className="line-clamp-2">{p.aiStatusReason}</span>
+              </p>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Link

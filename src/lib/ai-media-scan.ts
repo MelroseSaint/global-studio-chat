@@ -59,6 +59,26 @@ const IMAGE_GENERATOR_MARKERS = [
   "cfg scale",
   "negative prompt:",
   "seed: ",
+  // Newer generators and model families
+  "dall-e-3",
+  "gpt-image",
+  "gpt image",
+  "google imagen",
+  "imagen 3",
+  "imagen-v3",
+  "ideogram",
+  "recraft",
+  "seedream",
+  "nano-banana",
+  "flux dev",
+  "flux-dev",
+  "schnell",
+  "sd3",
+  "sd3.5",
+  "tensorart",
+  "txt2img",
+  "img2img",
+  "workflow:",
 ];
 
 /**
@@ -78,6 +98,7 @@ const DEEPFAKE_MARKERS = [
   "roop",
   "inswap",
   "swapface",
+  "facefusion",
 ];
 
 /** Ambiguous wording/filter names — flagged for a human check, not blocked. */
@@ -100,6 +121,7 @@ const PROVENANCE_REVIEW_MARKERS = [
   "synthid", // Google's AI-media watermark tooling
   "contentcredentials", // C2PA reader/verifier signatures
   "c2pa.actions", // C2PA action log (contains the AI assertion)
+  "c2pa", // C2PA manifest / reader signatures
 ];
 
 /**
@@ -141,6 +163,18 @@ const AV_GENERATOR_MARKERS = [
   "play.ht",
   "tts-1",
   "tts-1-hd",
+  // Newer video/audio generators
+  "suno ai",
+  "suno-v3",
+  "sora 2",
+  "veo 2",
+  "veo 2.0",
+  "wan 2.1",
+  "wan2.1",
+  "hunyuan",
+  "hedra",
+  "gpt-image-1",
+  "chatgpt-4o image",
 ];
 
 /** Standalone brand names — flagged for a human check, not blocked. */
@@ -158,16 +192,28 @@ const AV_REVIEW_MARKERS = [
 ];
 
 const SCAN_HEAD_BYTES = 256 * 1024; // metadata lives at the head of the file
+const SCAN_TAIL_BYTES = 128 * 1024; // …and at the tail (MP4 moov/udta boxes)
 
+/**
+ * Read the scan window as latin-1 text. Samples the head AND the tail of
+ * the file: JPEG/PNG metadata lives at the head, but MP4/MOV generator and
+ * tool tags live in the moov/udta box, which after a large mdat (the video
+ * data) sits at the tail. Scanning only the head would miss them.
+ */
 function bytesToLatin1(bytes: ArrayBuffer): string {
-  const head = new Uint8Array(
-    bytes,
-    0,
-    Math.min(bytes.byteLength, SCAN_HEAD_BYTES),
-  );
+  const total = bytes.byteLength;
+  const headLen = Math.min(total, SCAN_HEAD_BYTES);
   let text = "";
+  const head = new Uint8Array(bytes, 0, headLen);
   for (let i = 0; i < head.length; i++) {
     text += String.fromCharCode(head[i]);
+  }
+  if (total > SCAN_HEAD_BYTES) {
+    const tailStart = Math.max(SCAN_HEAD_BYTES, total - SCAN_TAIL_BYTES);
+    const tail = new Uint8Array(bytes, tailStart, total - tailStart);
+    for (let i = 0; i < tail.length; i++) {
+      text += String.fromCharCode(tail[i]);
+    }
   }
   return text.toLowerCase();
 }

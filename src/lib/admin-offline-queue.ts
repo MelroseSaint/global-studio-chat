@@ -33,6 +33,7 @@ export const ADMIN_ACTIONS = {
   "admin.resolveAiReviewBatch": api.admin.resolveAiReviewBatch,
   "security.setAccountStatus": api.security.setAccountStatus,
   "security.setShadowban": api.security.setShadowban,
+  "security.reinstateAccount": api.security.reinstateAccount,
   "security.bulkUnsilence": api.security.bulkUnsilence,
   "support.respondToTicket": api.support.respondToTicket,
 } as const;

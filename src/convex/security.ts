@@ -68,6 +68,7 @@ const KNOWN_MODERATION_ACTIONS = new Set([
   "restrict",
   "ban",
   "approve",
+  "reinstate",
   "flag",
 ]);
 
@@ -1015,8 +1016,9 @@ export const setShadowban = mutation({
  * Restore a silently silenced account to the public surface and reconcile
  * the follow counts for phantom follows made while silenced — capped so a
  * prolific phantom follower can't blow up a single mutation's write budget.
+ * Exported so admin reinstatement can reuse the same restore path.
  */
-async function unsilenceAccount(
+export async function unsilenceAccount(
   ctx: MutationCtx,
   userId: Id<"users">,
 ): Promise<void> {
@@ -1044,3 +1046,78 @@ async function unsilenceAccount(
     followingCount: (user.followingCount ?? 0) + phantomFollows.length,
   });
 }
+
+/**
+ * Admin: fully reinstate a moderated account, recording the reason.
+ *
+ * Restores an account that still exists but was taken down — banned,
+ * restricted, suspicious (pending approval), or quietly silenced — to full
+ * active status in one action: status back to "active", any quiet
+ * shadowban lifted, the silent-flag counter reset (the lifetime total
+ * stays as the permanent record), and phantom-follow counts reconciled.
+ * The reinstatement reason is REQUIRED and is recorded on the account's
+ * moderation trail, so every restore leaves a "who, when, why" like every
+ * restriction does.
+ *
+ * Deliberately does not resurrect permanently removed accounts: the erasure
+ * sweep destroys the user row and all of its data by design (zero-data
+ * privacy), so there is nothing left to restore — a removed person starts
+ * fresh with a new verified account instead.
+ */
+export const reinstateAccount = mutation({
+  args: {
+    userId: v.id("users"),
+    // Required: why the account is being reinstated ("false positive",
+    // "appeal granted", …) — recorded on the audit trail.
+    note: v.string(),
+    // Optional: the PureWire Standard principle behind the call, when one
+    // applies (e.g. the flag it was taken down under turned out to be a
+    // false positive).
+    standardId: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, note, standardId }) => {
+    const adminId = await getAuthUserId(ctx);
+    if (adminId === null) {
+      throw new Error("Not authenticated");
+    }
+    const admin = await ctx.db.get(adminId);
+    if (admin?.role !== "admin") {
+      throw new Error("Admins only");
+    }
+    if (standardId !== undefined && !isStandardId(standardId)) {
+      throw new Error("That isn't a principle of the PureWire Standard.");
+    }
+    const reason = note.trim();
+    if (reason.length === 0) {
+      throw new Error("A reason is required to reinstate an account.");
+    }
+    const user = await ctx.db.get(userId);
+    if (user === null) {
+      throw new Error(
+        "This account was permanently removed — no data survives to restore. They can sign up again.",
+      );
+    }
+    // The owner account is untouchable — checked by email, not role.
+    if (user.email === ADMIN_EMAIL) {
+      throw new Error("The owner account cannot be changed.");
+    }
+    if (user.role === "admin") {
+      throw new Error("Cannot change an admin account");
+    }
+    // Full restore: lift any quiet silence and reconcile phantom follows,
+    // then flip the status to active and reset the flag counter (the
+    // lifetime total is kept so the account's whole history stays visible).
+    await unsilenceAccount(ctx, userId);
+    await ctx.db.patch(userId, {
+      accountStatus: "active",
+      silentFlags: 0,
+    });
+    await ctx.db.insert("moderationLog", {
+      targetUserId: userId,
+      actorId: adminId,
+      action: "reinstate",
+      standardId,
+      note: reason,
+    });
+  },
+});

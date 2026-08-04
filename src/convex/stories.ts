@@ -64,11 +64,25 @@ export const createStory = mutation({
     await enforceRateLimit(ctx, userId, "post");
     const captionScan = caption !== undefined ? scanText(caption) : null;
     if (captionScan?.status === "blocked") {
+      // Rejected — and the rejection is itself an abuse signal, scheduled
+      // in its own transaction so it survives the throw below.
+      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
+        userId,
+        points: 3,
+        reason: "ai",
+        source: "ai-blocked",
+      });
       throw new Error(
         "AI-generated content isn't allowed on PureWire. Say it in your own words.",
       );
     }
     if (aiMediaStatus === "blocked") {
+      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
+        userId,
+        points: 3,
+        reason: "ai",
+        source: "ai-blocked",
+      });
       throw new Error(
         "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
       );

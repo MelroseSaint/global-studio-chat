@@ -333,11 +333,28 @@ export const createPost = mutation({
     // for a human review in the admin dashboard.
     const textScan = scanText(text);
     if (textScan.status === "blocked") {
+      // Self-identified AI content is rejected — and the rejection itself
+      // is an abuse signal: posting machine-made text is the one shape of
+      // AI abuse that never needed a queue. Escalated in its own scheduled
+      // transaction (a throw would roll back a direct write), so a repeat
+      // offender quietly accumulates toward a shadowban.
+      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
+        userId,
+        points: 3,
+        reason: "ai",
+        source: "ai-blocked",
+      });
       throw new Error(
         "AI-generated content isn't allowed on PureWire. Say it yourself — in your own words.",
       );
     }
     if (aiMediaStatus === "blocked") {
+      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
+        userId,
+        points: 3,
+        reason: "ai",
+        source: "ai-blocked",
+      });
       throw new Error(
         "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
       );
@@ -351,6 +368,23 @@ export const createPost = mutation({
         : (aiMediaStatus ?? "clean");
     const needsReview =
       textScan.status === "review" || mediaVerdict === "review";
+    // Why the post was flagged, surfaced in the admin review queue so a
+    // human can judge the flag at a glance instead of re-reading the post.
+    const aiStatusReason =
+      textScan.status === "review" && mediaVerdict === "review"
+        ? [
+            textScan.reason,
+            aiMediaStatus === undefined
+              ? "Media uploaded without a scan verdict — reviewed by default."
+              : "Media flagged by the AI-generator metadata scan.",
+          ].join(" · ")
+        : textScan.status === "review"
+          ? textScan.reason
+          : mediaVerdict === "review"
+            ? aiMediaStatus === undefined
+              ? "Media uploaded without a scan verdict — reviewed by default."
+              : "Media flagged by the AI-generator metadata scan."
+            : undefined;
     if (needsReview) {
       // Repeated suspicious content moves an account toward a quiet
       // shadowban instead of an abrupt ban.
@@ -368,6 +402,7 @@ export const createPost = mutation({
       // Only claim originality when a fingerprint check actually ran.
       originalityVerified: fp !== undefined,
       aiStatus: needsReview ? "review" : "clean",
+      aiStatusReason: needsReview ? aiStatusReason : undefined,
       likeCount: 0,
       commentCount: 0,
       shareCount: 0,
@@ -703,11 +738,25 @@ export const addComment = mutation({
     }
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "comment");
+    // Comments get the full text scan, not just the block list: formulaic
+    // machine-made comments are automatically detected and quietly counted
+    // toward a shadowban (there is no comment-level review queue), while
+    // self-identified AI comments are rejected outright.
     const textScan = scanText(text);
     if (textScan.status === "blocked") {
+      // Scheduled in its own transaction so the flag survives the throw.
+      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
+        userId,
+        points: 3,
+        reason: "ai",
+        source: "ai-blocked",
+      });
       throw new Error(
         "AI-generated content isn't allowed on PureWire. Say it in your own words.",
       );
+    }
+    if (textScan.status === "review") {
+      await escalateSilently(ctx, userId, 1, "ai", "ai-review-comment");
     }
     const post = await ctx.db.get(postId);
     if (post === null) {
