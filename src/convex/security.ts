@@ -338,7 +338,8 @@ export type SilentFlagReason =
   | "duplicate" // reposted stolen/copied content
   | "ai" // repeated AI-suspicious text or media
   | "farm-reciprocal" // instant mutual follows (network boosting)
-  | "farm-churn"; // quick follow/unfollow churn
+  | "farm-churn" // quick follow/unfollow churn
+  | "scam"; // phishing / credential- or money-harvesting attempts
 
 /**
  * Add points to an account's silent-infraction counter, record why, and
@@ -358,6 +359,7 @@ const SILENT_FLAG_REASON = v.union(
   v.literal("ai"),
   v.literal("farm-reciprocal"),
   v.literal("farm-churn"),
+  v.literal("scam"),
 );
 
 /**

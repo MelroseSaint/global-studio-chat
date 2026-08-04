@@ -14,7 +14,13 @@ import {
   detectFollowChurn,
   detectReciprocalFollow,
 } from "./farmNetwork";
-import { enforceActive, enforceRateLimit, isSandboxed } from "./security";
+import { scanForPhishing } from "./phishing";
+import {
+  enforceActive,
+  enforceRateLimit,
+  escalateSilently,
+  isSandboxed,
+} from "./security";
 
 import { internal } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
@@ -101,6 +107,24 @@ export const getProfile = query({
   },
 });
 
+/**
+ * Normalize a profile link for scanning so the scanner always sees a real
+ * destination: bare hostnames AND scheme-less host+path forms ("twitter.com/me",
+ * "bit.ly/xyz", "purewire-login.xyz/verify") get https:// — the sloppy
+ * paste is exactly how a scammer would dodge an https://-only check.
+ * Non-web schemes (mailto:, tel:) are left alone.
+ */
+function normalizeProfileUrl(raw: string): string {
+  const u = raw.trim();
+  if (u.length === 0) return u;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) return u;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(u)) return u;
+  if (u.startsWith("www.") || (!/\s/.test(u) && u.includes("."))) {
+    return `https://${u}`;
+  }
+  return u;
+}
+
 export const updateProfile = mutation({
   args: {
     name: v.optional(v.string()),
@@ -152,6 +176,56 @@ export const updateProfile = mutation({
         (nextUsername !== undefined && nextUsername !== (current.username ?? ""))
       ) {
         throw new Error("The owner account cannot be changed.");
+      }
+    }
+    // Phishing and account-integrity enforcement: profiles are prime real
+    // estate for credential and money harvesting ("free followers, link in
+    // bio"), so the bio and every link are scanned before the edit lands.
+    // The rejection is a structured result, NOT a throw — the quiet-flag
+    // escalation must commit, and Convex rolls every write back when a
+    // mutation throws. Same atomicity pattern as createPost.
+    if (args.bio !== undefined && args.bio.trim().length > 0) {
+      const bioScan = scanForPhishing(args.bio);
+      if (bioScan.status !== "clean") {
+        await escalateSilently(
+          ctx,
+          userId,
+          bioScan.status === "blocked" ? 3 : 2,
+          "scam",
+          bioScan.status === "blocked"
+            ? "phish-block-profile"
+            : "phish-review-profile",
+        );
+        return {
+          ok: false,
+          error:
+            bioScan.status === "blocked"
+              ? "That bio looks like a phishing or scam message — it can't be saved."
+              : "That bio can't be saved as-is — please rephrase. Some links and phrases aren't allowed on profiles for your safety.",
+        };
+      }
+    }
+    if (args.links !== undefined && args.links.length > 0) {
+      for (const link of args.links) {
+        const linkScan = scanForPhishing(normalizeProfileUrl(link.url));
+        if (linkScan.status !== "clean") {
+          await escalateSilently(
+            ctx,
+            userId,
+            linkScan.status === "blocked" ? 3 : 2,
+            "scam",
+            linkScan.status === "blocked"
+              ? "phish-block-profile"
+              : "phish-review-profile",
+          );
+          return {
+            ok: false,
+            error:
+              linkScan.status === "blocked"
+                ? "That link looks like a phishing or scam link — it can't be added to your profile."
+                : "That link can't be added to your profile — use the direct link instead of a shortened or hidden one.",
+          };
+        }
       }
     }
     const patch: Record<string, unknown> = {};
@@ -251,7 +325,7 @@ export const updateProfile = mutation({
     }
     await ctx.db.patch(userId, patch);
     const updated = await ctx.db.get(userId);
-    return updated ? publicUser(updated) : null;
+    return updated ? { ok: true as const, user: publicUser(updated) } : null;
   },
 });
 

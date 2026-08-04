@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import { scanForPhishing } from "./phishing";
 import { cleanupMediaItems } from "./mediaCleanup";
 import { publicUser } from "./privacy";
 import {
@@ -63,6 +64,18 @@ export const createStory = mutation({
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "post");
     const captionScan = caption !== undefined ? scanText(caption) : null;
+    const phishScan = caption !== undefined ? scanForPhishing(caption) : null;
+    if (phishScan?.status === "blocked") {
+      // Rejected — and the rejection is itself an abuse signal, escalated
+      // INLINE (a thrown error would roll the flag back), so repeat
+      // scammers quietly shadowban.
+      await escalateSilently(ctx, userId, 3, "scam", "phish-block-story");
+      return {
+        ok: false,
+        error:
+          "That looks like a phishing or scam link — nothing on PureWire may try to steal accounts, money, or personal information.",
+      };
+    }
     if (captionScan?.status === "blocked") {
       // Rejected — and the rejection is itself an abuse signal. Escalated
       // INLINE with the structured result (a thrown error would roll the
@@ -87,9 +100,18 @@ export const createStory = mutation({
     const needsReview =
       captionScan?.status === "review" ||
       aiMediaStatus === undefined ||
-      aiMediaStatus === "review";
+      aiMediaStatus === "review" ||
+      phishScan?.status === "review";
     if (needsReview) {
-      await escalateSilently(ctx, userId, 2, "ai", "ai-review");
+      // Phishing-suspicious captions count as their own signal so the
+      // Silenced tab shows the mix behind a quiet shadowban.
+      await escalateSilently(
+        ctx,
+        userId,
+        2,
+        phishScan?.status === "review" ? "scam" : "ai",
+        phishScan?.status === "review" ? "phish-review-story" : "ai-review",
+      );
     }
     const expiresAt = Date.now() + 24 * 3600_000; // 24 hours
     const storyId = await ctx.db.insert("stories", {
@@ -98,6 +120,10 @@ export const createStory = mutation({
       caption,
       expiresAt,
       aiStatus: needsReview ? "review" : "clean",
+      aiStatusReason:
+        phishScan?.status === "review"
+          ? `Suspected phishing — ${phishScan.reason}`
+          : undefined,
     });
     if (media.kind === "video") {
       await ctx.scheduler.runAfter(

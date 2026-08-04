@@ -53,6 +53,12 @@ export const STANDARD_PRINCIPLES: StandardPrinciple[] = [
     detail: "Share what matters. Repetition and clutter crowd out real voices.",
   },
   {
+    id: "no-scams",
+    title: "No scams or phishing.",
+    detail:
+      "Never trick people out of accounts, money, or personal information.",
+  },
+  {
     id: "no-taking-freedom",
     title:
       "Don't use freedom as an excuse to take someone else's freedom away.",

@@ -1315,6 +1315,10 @@ const REASON_LABELS: Record<string, { label: string; cls: string }> = {
     label: "Follow churn",
     cls: "bg-moss/10 text-moss",
   },
+  scam: {
+    label: "Scams & phishing",
+    cls: "bg-destructive/10 text-destructive",
+  },
 };
 
 /** Where a silent flag came from — the surface that tripped the signal. */
@@ -1329,6 +1333,14 @@ const SOURCE_LABELS: Record<string, string> = {
   "rateLimit:upload": "Upload budget",
   "follow-reciprocal": "Instant mutual follow",
   "follow-churn": "Follow churn",
+  "phish-block-post": "Blocked phishing post",
+  "phish-review-post": "Phishing-suspicious post",
+  "phish-block-comment": "Blocked phishing comment",
+  "phish-review-comment": "Phishing-suspicious comment",
+  "phish-block-story": "Blocked phishing story",
+  "phish-review-story": "Phishing-suspicious story",
+  "phish-block-profile": "Blocked phishing profile edit",
+  "phish-review-profile": "Phishing-suspicious profile edit",
 };
 
 /** Human labels for admin moderation actions on the audit trail. */

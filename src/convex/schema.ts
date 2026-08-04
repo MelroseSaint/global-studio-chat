@@ -191,6 +191,9 @@ const schema = defineSchema({
     // Anti-AI enforcement, same policy as posts: "review" keeps the story
     // off everyone else's ring until a human clears it.
     aiStatus: v.optional(v.union(v.literal("clean"), v.literal("review"))),
+    // Why the story was flagged (AI signals, suspected phishing) — shown in
+    // the admin review queue so a human can judge without re-reading it.
+    aiStatusReason: v.optional(v.string()),
   })
     .index("by_author", ["authorId"])
     .index("by_expiration", ["expiresAt"])

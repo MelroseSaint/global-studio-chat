@@ -11,6 +11,7 @@
     "postinstall": "node -e \"const{cpSync,chmodSync,existsSync,mkdirSync}=require('fs');if(existsSync('.githooks/pre-push')){mkdirSync('.git/hooks',{recursive:true});cpSync('.githooks/pre-push','.git/hooks/pre-push');try{chmodSync('.git/hooks/pre-push',0o755)}catch(_){}}\"",
     "icons": "node scripts/generate-icons.mjs",
     "qa:shadowban": "node scripts/shadowban-qa.mjs",
+    "qa:phishing": "node scripts/phishing-qa.mjs",
     "qa:reinstate": "node scripts/reinstate-qa.mjs",
     "qa:salt": "node scripts/salt-rotation-qa.mjs",
     "qa:video-privacy": "node scripts/video-privacy-qa.mjs",

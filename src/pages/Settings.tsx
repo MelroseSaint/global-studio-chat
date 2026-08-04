@@ -103,7 +103,7 @@ function SettingsForm({ user }: { user: Profile }) {
   const save = async () => {
     setSaving(true);
     try {
-      await updateProfile({
+      const res = await updateProfile({
         name: name.trim() || undefined,
         username: username.trim() || undefined,
         bio: bio.trim() || undefined,
@@ -118,6 +118,12 @@ function SettingsForm({ user }: { user: Profile }) {
         // An empty label is the same as none — null clears it.
         location: location?.label?.trim() ? location : null,
       });
+      // A structured rejection (e.g. a link the phishing scan refuses)
+      // comes back as a result, not a thrown error — surface the reason.
+      if (res && res.ok === false) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Profile updated.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save.");

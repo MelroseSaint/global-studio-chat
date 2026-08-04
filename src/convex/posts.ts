@@ -6,6 +6,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { mediaHashesMatch } from "@/lib/perceptual-hash";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import { scanForPhishing } from "./phishing";
 import {
   boundingBox,
   cleanLocationLabel,
@@ -354,6 +355,20 @@ export const createPost = mutation({
           "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
       };
     }
+    // Phishing and account-integrity enforcement: links and phrasing that
+    // try to harvest accounts, passwords, money, or personal information
+    // are rejected outright — and the rejection is itself an abuse signal,
+    // escalated INLINE with the structured result (a thrown error would
+    // roll the flag back), so repeat scammers quietly shadowban.
+    const phishScan = scanForPhishing(text);
+    if (phishScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "phish-block-post");
+      return {
+        ok: false,
+        error:
+          "That looks like a phishing or scam link — nothing on PureWire may try to steal accounts, money, or personal information.",
+      };
+    }
     // If media is present but no scan verdict was provided (e.g. a client
     // that never ran the scan action), send it to the human review queue
     // instead of trusting it as clean.
@@ -362,10 +377,12 @@ export const createPost = mutation({
         ? "review"
         : (aiMediaStatus ?? "clean");
     const needsReview =
-      textScan.status === "review" || mediaVerdict === "review";
+      textScan.status === "review" ||
+      mediaVerdict === "review" ||
+      phishScan.status === "review";
     // Why the post was flagged, surfaced in the admin review queue so a
     // human can judge the flag at a glance instead of re-reading the post.
-    const aiStatusReason =
+    let aiStatusReason =
       textScan.status === "review" && mediaVerdict === "review"
         ? [
             textScan.reason,
@@ -380,10 +397,24 @@ export const createPost = mutation({
               ? "Media uploaded without a scan verdict — reviewed by default."
               : "Media flagged by the AI-generator metadata scan."
             : undefined;
+    // A phishing-suspicious post goes to the same human queue, with its
+    // own honest reason — the author learns *why* their post is waiting.
+    if (phishScan.status === "review") {
+      aiStatusReason = `Suspected phishing — ${phishScan.reason}${
+        aiStatusReason !== undefined ? ` · ${aiStatusReason}` : ""
+      }`;
+    }
     if (needsReview) {
       // Repeated suspicious content moves an account toward a quiet
-      // shadowban instead of an abrupt ban.
-      await escalateSilently(ctx, userId, 2, "ai", "ai-review");
+      // shadowban instead of an abrupt ban. Phishing-suspicious content
+      // counts as its own signal so the Silenced tab can show the mix.
+      await escalateSilently(
+        ctx,
+        userId,
+        2,
+        phishScan.status === "review" ? "scam" : "ai",
+        phishScan.status === "review" ? "phish-review-post" : "ai-review",
+      );
     }
     const postId = await ctx.db.insert("posts", {
       authorId: userId,
@@ -772,6 +803,27 @@ export const addComment = mutation({
     }
     if (textScan.status === "review") {
       await escalateSilently(ctx, userId, 1, "ai", "ai-review-comment");
+    }
+    // Comments get the phishing scan too. Blocked-tier is rejected outright
+    // and escalated; review-tier (shorteners, unfamiliar login pages) is
+    // also rejected — comments have no human queue, so the honest guidance
+    // is to share the direct link instead.
+    const phishScan = scanForPhishing(text);
+    if (phishScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "phish-block-comment");
+      return {
+        ok: false,
+        error:
+          "That looks like a phishing or scam link — links that could compromise someone's account aren't allowed.",
+      };
+    }
+    if (phishScan.status === "review") {
+      await escalateSilently(ctx, userId, 2, "scam", "phish-review-comment");
+      return {
+        ok: false,
+        error:
+          "This link can't be posted as-is — share the direct link instead.",
+      };
     }
     const post = await ctx.db.get(postId);
     if (post === null) {
