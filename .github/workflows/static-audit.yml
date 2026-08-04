@@ -107,15 +107,17 @@ jobs:
           name: session-audit-log
           path: session-audit.log
 
-      # users.postsCount is a denormalized counter that a past bug let
-      # drift (deletePost removed the row without decrementing). This gate
-      # reconciles every user's counter against the actual posts table and
-      # FAILS the push if anything drifted — the mutation self-heals the
-      # count first (it is derived state), then the check reports who, so
-      # the regression surfaces instead of silently inflating profiles.
+      # users.postsCount / followersCount / followingCount are
+      # denormalized counters that past bugs let drift (deletePost removed
+      # the row without decrementing; follows rows referencing deleted
+      # accounts could survive erasure). This gate reconciles every user's
+      # counters against the actual posts and follows tables and FAILS the
+      # push if anything drifted — the mutations self-heal the counts first
+      # (they are derived state), then the checks report who, so the
+      # regression surfaces instead of silently inflating profiles.
       # Harness-gated like the session audit: no secret configured means
       # the static gates stay green.
-      - name: Assert no post-count drift
+      - name: Assert no post/follow count drift
         if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}

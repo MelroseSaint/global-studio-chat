@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 /**
- * PureWire post-count drift QA.
+ * PureWire counter-drift QA (posts + follows).
  *
- * `users.postsCount` is a denormalized counter: incremented when a post is
- * created, decremented when one is removed. A past bug let the
- * user-facing deletePost remove the row without decrementing, so accounts
- * that deleted their own posts showed an inflated "posts made" number.
+ * `users.postsCount`, `followersCount`, and `followingCount` are
+ * denormalized counters: incremented on create/follow, decremented on
+ * remove/unfollow. Past bugs let them drift — the user-facing deletePost
+ * removed the row without decrementing postsCount, and follow rows
+ * referencing deleted accounts (orphans) could survive account erasure
+ * while counters diverged from the follows table.
  *
- * This QA runs the harness-gated `reconcilePostsCounts` mutation against
- * production and FAILS if any user's counter was drifted — the mutation
- * self-heals the count first (it is derived state; idempotent), then the
- * check reports exactly who drifted so the gate surfaces the regression
+ * This QA runs the harness-gated `reconcilePostsCounts` and
+ * `reconcileFollowCounts` mutations against production and FAILS if any
+ * user's counter was drifted or any orphan follow row existed — each
+ * mutation self-heals the derived state first (idempotent), then the
+ * checks report exactly what changed so the gate surfaces the regression
  * instead of silently absorbing it.
  *
  * Run (gated on the harness secret, like the other production QAs):
@@ -52,7 +55,7 @@ async function main() {
     );
     process.exit(2);
   }
-  console.log(`\nPureWire post-count drift QA (${CONVEX_URL})\n`);
+  console.log(`\nPureWire counter-drift QA (posts + follows) (${CONVEX_URL})\n`);
   const client = new ConvexHttpClient(CONVEX_URL);
   const { enabled } = await client.query(api.testHarness.isEnabled);
   check("harness enabled", enabled === true);
@@ -61,7 +64,7 @@ async function main() {
     api.testHarness.reconcilePostsCounts,
     { secret: SECRET },
   );
-  check("reconciliation ran over the user table", usersSeen >= 0);
+  check("post reconciliation ran over the user table", usersSeen >= 0);
   check(
     "no user's postsCount drifted from their real posts",
     fixed.length === 0,
@@ -70,6 +73,40 @@ async function main() {
           .map((f) => `user ${f.userId} ${f.was}→${f.now}`)
           .join(" | ")}`
       : `all ${usersSeen} users consistent`,
+  );
+
+  const {
+    orphanFollows,
+    followsSeen,
+    fixed: followFixed,
+    usersSeen: followUsersSeen,
+  } = await client.mutation(api.testHarness.reconcileFollowCounts, {
+    secret: SECRET,
+  });
+  check("follow reconciliation ran over the follows table", followsSeen >= 0);
+  check(
+    "no orphan follow rows (follows of deleted accounts)",
+    orphanFollows.length === 0,
+    orphanFollows.length > 0
+      ? `${orphanFollows.length} swept: ${orphanFollows
+          .map(
+            (o) =>
+              `row ${o.rowId} (${o.followerId}→${o.followingId}) pointed at a deleted account`,
+          )
+          .join(" | ")}`
+      : `all ${followsSeen} follows reference live accounts`,
+  );
+  check(
+    "no user's followersCount/followingCount drifted from the follows table",
+    followFixed.length === 0,
+    followFixed.length > 0
+      ? `${followFixed.length} fixed: ${followFixed
+          .map(
+            (f) =>
+              `user ${f.userId} followers ${f.wasFollowers}→${f.nowFollowers}, following ${f.wasFollowing}→${f.nowFollowing}`,
+          )
+          .join(" | ")}`
+      : `all ${followUsersSeen} users consistent`,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

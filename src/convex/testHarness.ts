@@ -385,6 +385,153 @@ async function countPostsByAuthor(
 }
 
 /**
+ * Count one direction of a user's follows exactly, without loading them
+ * all into memory: pages the relevant follows index in 500-row chunks with
+ * an _id cursor filter, the same bounded pattern countPostsByAuthor uses.
+ * (The deployed Convex runtime has no query `.count()`.)
+ */
+async function countFollowRows(
+  ctx: MutationCtx,
+  kind: "followers" | "following",
+  userId: Id<"users">,
+): Promise<number> {
+  let total = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const rows =
+      kind === "followers"
+        ? await ctx.db
+            .query("follows")
+            .withIndex("by_following", (q) => q.eq("followingId", userId))
+            .order("asc")
+            .filter((q) =>
+              q.gt(q.field("_id"), (cursor ?? "") as Id<"follows">),
+            )
+            .take(500)
+        : await ctx.db
+            .query("follows")
+            .withIndex("by_follower", (q) => q.eq("followerId", userId))
+            .order("asc")
+            .filter((q) =>
+              q.gt(q.field("_id"), (cursor ?? "") as Id<"follows">),
+            )
+            .take(500);
+    if (rows.length === 0) break;
+    total += rows.length;
+    cursor = rows[rows.length - 1]._id;
+  }
+  return total;
+}
+
+/**
+ * Sweep orphan follow rows and reconcile every user's followers/following
+ * counters against the follows table. Two jobs, one pass each:
+ *
+ * 1. Orphan sweep — a follows row whose follower OR following account no
+ *    longer exists (left behind when a QA account was removed by a path
+ *    that skipped the full erasure, or by an interrupted cleanup). Each is
+ *    deleted and reported, so "followers/following of deleted test users"
+ *    can never keep the dashboard's totals lying.
+ *
+ * 2. Counter reconcile — same denormalized-counter discipline as
+ *    reconcilePostsCounts: users.followersCount / followingCount are
+ *    incremented on follow and decremented on unfollow, so any write path
+ *    that touched the follows table without the counters (phantom follows,
+ *    erasure edge cases) leaves drift. Every user is patched to the exact
+ *    surviving-row count.
+ *
+ * Idempotent — a clean run changes nothing and returns empty lists, so
+ * the count-drift QA can assert clean state and this can be re-run any
+ * time. Gated by the same two env gates as the rest of the module.
+ */
+export const reconcileFollowCounts = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    try {
+      requireHarness(secret);
+      const orphanFollows: Array<{
+        rowId: Id<"follows">;
+        followerId: Id<"users">;
+        followingId: Id<"users">;
+      }> = [];
+      let followsSeen = 0;
+      let cursor: string | null = null;
+      for (;;) {
+        const rows = await ctx.db
+          .query("follows")
+          .order("asc")
+          .filter((q) =>
+            q.gt(q.field("_id"), (cursor ?? "") as Id<"follows">),
+          )
+          .take(500);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          followsSeen++;
+          const [follower, following] = await Promise.all([
+            ctx.db.get(row.followerId),
+            ctx.db.get(row.followingId),
+          ]);
+          if (follower === null || following === null) {
+            await ctx.db.delete(row._id);
+            orphanFollows.push({
+              rowId: row._id,
+              followerId: row.followerId,
+              followingId: row.followingId,
+            });
+          }
+          cursor = row._id;
+        }
+      }
+      const fixed: Array<{
+        userId: Id<"users">;
+        wasFollowers: number;
+        nowFollowers: number;
+        wasFollowing: number;
+        nowFollowing: number;
+      }> = [];
+      let usersSeen = 0;
+      let userCursor: string | null = null;
+      for (;;) {
+        const users = await ctx.db
+          .query("users")
+          .order("asc")
+          .filter((q) =>
+            q.gt(q.field("_id"), (userCursor ?? "") as Id<"users">),
+          )
+          .take(500);
+        if (users.length === 0) break;
+        for (const user of users) {
+          usersSeen++;
+          const followers = await countFollowRows(ctx, "followers", user._id);
+          const following = await countFollowRows(ctx, "following", user._id);
+          const wasFollowers = user.followersCount ?? 0;
+          const wasFollowing = user.followingCount ?? 0;
+          if (wasFollowers !== followers || wasFollowing !== following) {
+            await ctx.db.patch(user._id, {
+              followersCount: followers,
+              followingCount: following,
+            });
+            fixed.push({
+              userId: user._id,
+              wasFollowers,
+              nowFollowers: followers,
+              wasFollowing,
+              nowFollowing: following,
+            });
+          }
+          userCursor = user._id;
+        }
+      }
+      return { orphanFollows, followsSeen, fixed, usersSeen };
+    } catch (e) {
+      // Convex masks plain Error messages as "Server Error"; rethrow as a
+      // ConvexError so the runner script reports the real reason.
+      throw new ConvexError(e instanceof Error ? e.message : String(e));
+    }
+  },
+});
+
+/**
  * Read the calling session's expiry horizon: the authSessions row's
  * expirationTime and how far out it is from now. Lets the session-lifetime
  * QA assert both paths of the "Keep me signed in" toggle against the real
