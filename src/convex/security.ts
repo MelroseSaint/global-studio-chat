@@ -1122,12 +1122,19 @@ export const reinstateAccount = mutation({
     // Tell the member the outcome: a wrongly-taken-down account learns it's
     // active again without having to contact support. The Notifications
     // page renders the "system" case with the message verbatim; no actor is
-    // set (it's from the platform, not a member).
-    await ctx.db.insert("notifications", {
-      userId,
-      type: "system",
-      message: "Your account was reinstated — welcome back.",
-      read: false,
-    });
+    // set (it's from the platform, not a member). Only when the account was
+    // actually moderated (pre-restore state) — a reinstate of an
+    // already-active account is a no-op restore and must not send a
+    // spurious welcome-back.
+    const wasModerated =
+      (user.accountStatus ?? "active") !== "active" || user.shadowban === true;
+    if (wasModerated) {
+      await ctx.db.insert("notifications", {
+        userId,
+        type: "system",
+        message: "Your account was reinstated — welcome back.",
+        read: false,
+      });
+    }
   },
 });
