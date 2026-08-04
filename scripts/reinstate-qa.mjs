@@ -237,6 +237,22 @@ async function main() {
     client.setAuth(A.token);
     const meA = await client.query(api.users.getCurrentUser);
     check("reinstated account still loads its own session", meA !== null);
+
+    // The member is told the outcome: a system notification lands in their
+    // inbox so they learn they're active again without contacting support.
+    // The message must match reinstateAccount's verbatim, or a refactor that
+    // drops the notification (or rewrites the copy) fails this gate.
+    const notifsA = await client.query(api.notifications.listNotifications, {
+      paginationOpts: pag,
+    });
+    check(
+      "reinstated account receives a system notification",
+      notifsA.page.some(
+        (n) =>
+          n.type === "system" &&
+          n.message === "Your account was reinstated — welcome back.",
+      ),
+    );
     const postAgain = await client.mutation(api.posts.createPost, {
       content: `Posting again after reinstatement — ${stamp}.`,
     });

@@ -1119,5 +1119,15 @@ export const reinstateAccount = mutation({
       standardId,
       note: reason,
     });
+    // Tell the member the outcome: a wrongly-taken-down account learns it's
+    // active again without having to contact support. The Notifications
+    // page renders the "system" case with the message verbatim; no actor is
+    // set (it's from the platform, not a member).
+    await ctx.db.insert("notifications", {
+      userId,
+      type: "system",
+      message: "Your account was reinstated — welcome back.",
+      read: false,
+    });
   },
 });
