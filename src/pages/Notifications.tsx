@@ -10,13 +10,15 @@ import {
   MessageCircle,
   Repeat2,
   UserPlus,
+  Users,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { Link } from "react-router";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { FollowsList, type FollowsTab } from "@/components/FollowsList";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
@@ -50,6 +52,13 @@ export function Notifications() {
       void loadMore(20);
     }
   }, [inView, status, loadMore]);
+
+  // The circle of the person who just followed you: which account's
+  // Followers/Following dialog is open, if any.
+  const [circle, setCircle] = useState<{
+    username: string;
+    tab: FollowsTab;
+  } | null>(null);
 
   const notifications = results as unknown as {
     _id: string;
@@ -157,6 +166,11 @@ export function Notifications() {
 
       {notifications.map((n, i) => {
         const Icon = ICONS[n.type];
+        // The username of the person who followed you — lets the follow row
+        // open their circle without repeating non-null assertions. Null for
+        // every other notification type (or when the actor is gone).
+        const followUsername =
+          n.type === "follow" ? (n.actor?.username ?? null) : null;
         return (
           <motion.div
             key={n._id}
@@ -210,9 +224,33 @@ export function Notifications() {
                 Open
               </Link>
             ) : null}
+            {followUsername !== null ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCircle({ username: followUsername, tab: "followers" });
+                }}
+                className="flex shrink-0 items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <Users className="size-3" />
+                Circle
+              </button>
+            ) : null}
           </motion.div>
         );
       })}
+
+      <FollowsList
+        // A changing key remounts the dialog fresh for each opened circle.
+        key={circle ? `${circle.username}:${circle.tab}` : "closed"}
+        username={circle?.username ?? ""}
+        initialTab={circle?.tab ?? "followers"}
+        open={circle !== null}
+        onOpenChange={(open) => {
+          if (!open) setCircle(null);
+        }}
+      />
 
       <div ref={ref} className="flex justify-center py-4">
         {status === "LoadingMore" && (
