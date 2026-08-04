@@ -246,6 +246,14 @@ const TAB_CONTROLS = [
 async function inspectAdmin(page, widthLabel) {
   await page.goto(`${SITE_URL}/admin`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector('[data-slot="tabs-list"]', { timeout: TIMEOUT });
+  // The Fire-tablet pass simulates Silk's font inflation (~1.3x root font
+  // scaling) that headless Chrome doesn't reproduce on its own. Every
+  // measurePage below then proves the grids survive the larger rem sizes.
+  if (widthLabel === "fire tablet") {
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "21px";
+    });
+  }
   // Wait for the default Users panel (the stats strip + rows stream in
   // after the shell mounts) before measuring the initial view.
   await waitForPanel(page, TAB_CONTROLS[0]);
@@ -280,7 +288,9 @@ async function inspectAdmin(page, widthLabel) {
   const cols = await page
     .locator('[data-slot="tabs-list"]')
     .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-  const expectedCols = widthLabel.includes("tablet") ? 4 : 3;
+  // Phones (< sm) spread the tabs 2-across; tablets (md band, incl. the
+  // 800px Fire portrait) 4-across; desktops (lg+) the full 7-across row.
+  const expectedCols = widthLabel.includes("tablet") ? 4 : 2;
   check(
     `${widthLabel}: tabs grid-cols-${expectedCols} (not cramped 7-across)`,
     cols === expectedCols,
