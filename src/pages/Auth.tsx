@@ -187,21 +187,37 @@ export function Auth() {
    * Apply the "Keep me signed in" preference to the session that was just
    * created. ON keeps the permanent 10-year session PureWire promises; OFF
    * caps this device's session at 30 days via account.setSessionLifetime.
+   *
+   * This call runs the instant sign-in resolves, and the freshly minted
+   * session token can lag one tick behind inside the Convex client — the
+   * mutation then goes out unauthenticated, getAuthSessionId returns null,
+   * and the preference write is silently dropped (seen as a "Server Error"
+   * in the console). The race clears in milliseconds, so the call retries
+   * briefly; the permanent default is already enforced by the auth config,
+   * so only the opt-out depends on the write actually landing.
+   *
    * Best-effort: a failure must never block sign-in — the session simply
    * keeps its platform default (permanent).
    */
   const applySessionLifetime = async () => {
-    try {
-      await setSessionLifetime({ remember });
-    } catch {
-      // Best-effort — a preference write must never block sign-in. But a
-      // user who turned the toggle OFF asked for a shorter session; if the
-      // write failed, the session keeps the permanent default, the opposite
-      // of their choice — say so instead of staying silent.
-      if (!remember) {
-        toast.error(
-          "Couldn't set your session preference — you'll stay signed in for 10 years. Try again later.",
-        );
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await setSessionLifetime({ remember });
+        return;
+      } catch {
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 350));
+          continue;
+        }
+        // Best-effort — a preference write must never block sign-in. But a
+        // user who turned the toggle OFF asked for a shorter session; if the
+        // write still failed, the session keeps the permanent default, the
+        // opposite of their choice — say so instead of staying silent.
+        if (!remember) {
+          toast.error(
+            "Couldn't set your session preference — you'll stay signed in for 10 years. Try again later.",
+          );
+        }
       }
     }
   };
