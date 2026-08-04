@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
-import { scanForPhishing } from "./phishing";
+import { scanBlockedContent } from "./blocklist";
 import { publicUser } from "./privacy";
 import {
   enforceActive,
@@ -63,7 +63,8 @@ export const createStory = mutation({
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "post");
     const captionScan = caption !== undefined ? scanText(caption) : null;
-    const phishScan = caption !== undefined ? scanForPhishing(caption) : null;
+    const phishScan =
+      caption !== undefined ? await scanBlockedContent(ctx, caption) : null;
     if (phishScan?.status === "blocked") {
       // Rejected — and the rejection is itself an abuse signal, escalated
       // INLINE (a thrown error would roll the flag back), so repeat

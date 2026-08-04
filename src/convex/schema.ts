@@ -415,6 +415,100 @@ const schema = defineSchema({
   })
     .index("by_conversation", ["conversationId"])
     .index("by_user_conversation", ["userId", "conversationId"]),
+  // Data-driven blocklist engine: banned domains live in the database (not
+  // only in code) so admins can add, re-categorize, or re-enable entries
+  // without a deploy, and external blocklist sources can sync into them.
+  // The static core list in phishing.ts seeds this table (see
+  // blocklist.importCoreBlocklist); the scan layer checks code AND this
+  // table on every post, story, comment, bio, link, and pre-encryption DM.
+  blockedDomains: defineTable({
+    // Canonical registrable domain, lowercased, no scheme/trailing dot.
+    domain: v.string(),
+    category: v.union(
+      v.literal("adult_explicit"),
+      v.literal("adult_creator"),
+      v.literal("adult_porn"),
+      v.literal("adult_cam"),
+      v.literal("adult_clips"),
+      v.literal("adult_chat"),
+      v.literal("adult_escort"),
+      v.literal("adult_dating"),
+      v.literal("adult_fetish"),
+      v.literal("adult_community"),
+      v.literal("adult_redirect"),
+      v.literal("adult_other"),
+    ),
+    // What happens when a URL on this domain is found: rejected outright
+    // (block) or sent to the human review queue (review).
+    action: v.union(v.literal("block"), v.literal("review")),
+    // Where the entry came from: "core" (seeded from phishing.ts),
+    // "manual" (admin-added), or the name of a synced external source.
+    source: v.string(),
+    // 0..1 confidence in the block, from the source that supplied it.
+    confidence: v.number(),
+    // Whether subdomains inherit the block (m.onlyfans.com counts when the
+    // registrable onlyfans.com is listed and this is true).
+    blockSubdomains: v.boolean(),
+    active: v.boolean(),
+    addedAt: v.number(),
+    updatedAt: v.number(),
+    lastVerifiedAt: v.optional(v.number()),
+  })
+    .index("by_domain", ["domain"])
+    .index("by_category", ["category"])
+    .index("by_active", ["active"]),
+  // Pattern-level blocks (e.g. a whole scam TLD or a URL shape). Each
+  // pattern is matched against the raw URL as a case-insensitive substring;
+  // a cheap supplement to exact-domain blocking.
+  blockedUrlPatterns: defineTable({
+    pattern: v.string(),
+    category: v.string(),
+    action: v.union(v.literal("block"), v.literal("review")),
+    active: v.boolean(),
+    source: v.string(),
+    addedAt: v.number(),
+  }).index("by_active", ["active"]),
+  // External blocklist feeds that sync into blockedDomains. Formats:
+  // "domain" = one domain per line, "hosts" = hosts-file "0.0.0.0 domain",
+  // "adguard" = adblock-style "||domain^", "json" = array of strings.
+  domainSources: defineTable({
+    name: v.string(),
+    url: v.string(),
+    format: v.union(
+      v.literal("domain"),
+      v.literal("hosts"),
+      v.literal("adguard"),
+      v.literal("json"),
+      v.literal("custom"),
+    ),
+    enabled: v.boolean(),
+    lastFetchedAt: v.optional(v.number()),
+    lastSuccessfulSyncAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+  }).index("by_enabled", ["enabled"]),
+  // Cache of the last scan verdict per URL. urlHash is an FNV-1a hash of
+  // the normalized URL; the row remembers what the platform decided the
+  // last time a link appeared, so admins can audit why a link was blocked
+  // and the scanner can skip re-checking known-safe URLs.
+  linkScanResults: defineTable({
+    urlHash: v.string(),
+    originalUrl: v.string(),
+    normalizedUrl: v.string(),
+    hostname: v.optional(v.string()),
+    finalHostname: v.optional(v.string()),
+    verdict: v.union(
+      v.literal("allowed"),
+      v.literal("blocked"),
+      v.literal("review"),
+      v.literal("unreachable"),
+    ),
+    category: v.optional(v.string()),
+    matchedDomain: v.optional(v.string()),
+    redirectChain: v.optional(v.array(v.string())),
+    scannedAt: v.number(),
+  })
+    .index("by_url_hash", ["urlHash"])
+    .index("by_verdict", ["verdict"]),
 });
 
 export default schema;

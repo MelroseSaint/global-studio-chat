@@ -21,7 +21,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { scanForPhishing } from "@/convex/phishing";
+import { scanWithBlocklist } from "@/convex/phishing";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { Button } from "@/components/ui/button";
@@ -160,6 +160,10 @@ export function Messages() {
     api.users.searchUsers,
     search.trim().length >= 2 ? { query: search.trim() } : "skip",
   );
+  // The DB-backed blocklist (static core + admin/synced entries), so the
+  // pre-encryption DM gate rejects platform-rule domains the same way the
+  // public surfaces do — without the server ever seeing the plaintext.
+  const activeBlocklist = useQuery(api.blocklist.getActiveBlocklist);
 
   // Device key bootstrap: ensure this account has an ECDH keypair on THIS
   // device, and that the public half is registered so others can encrypt to
@@ -386,7 +390,11 @@ export function Messages() {
     // happen before the first byte leaves the browser. Hard scam signals
     // are blocked outright; merely-suspicious links ask the sender first.
     if (text) {
-      const verdict = scanForPhishing(text);
+      const verdict = scanWithBlocklist(
+        text,
+        activeBlocklist?.domains ?? [],
+        activeBlocklist?.patterns ?? [],
+      );
       if (verdict.status === "blocked") {
         // Platform-rule blocks (e.g. adult platforms) carry a full sentence;
         // scam signals fall back to the reason.

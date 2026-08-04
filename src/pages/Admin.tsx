@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AdminOfflineBanner } from "@/components/AdminOfflineBanner";
+import { BlocklistPanel } from "@/components/BlocklistPanel";
 import { StandardViolationDialog } from "@/components/StandardViolationDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Badge } from "@/components/ui/badge";
@@ -440,13 +441,14 @@ function AdminDashboard({ meId }: { meId: string }) {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-3 lg:grid-cols-6">
+        <TabsList className="grid w-full grid-cols-3 lg:grid-cols-7">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>
           <TabsTrigger value="aiReview">AI review</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="silenced">Silenced</TabsTrigger>
+          <TabsTrigger value="blocklist">Blocklist</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -456,6 +458,7 @@ function AdminDashboard({ meId }: { meId: string }) {
       {tab === "aiReview" && <AiReviewPanel />}
       {tab === "security" && <SecurityPanel />}
       {tab === "silenced" && <SilencedPanel />}
+      {tab === "blocklist" && <BlocklistPanel />}
     </div>
   );
 }

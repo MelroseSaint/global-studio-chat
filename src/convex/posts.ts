@@ -6,7 +6,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { mediaHashesMatch } from "@/lib/perceptual-hash";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
-import { scanForPhishing } from "./phishing";
+import { scanBlockedContent } from "./blocklist";
 import {
   boundingBox,
   cleanLocationLabel,
@@ -359,8 +359,10 @@ export const createPost = mutation({
     // try to harvest accounts, passwords, money, or personal information
     // are rejected outright — and the rejection is itself an abuse signal,
     // escalated INLINE with the structured result (a thrown error would
-    // roll the flag back), so repeat scammers quietly shadowban.
-    const phishScan = scanForPhishing(text);
+    // roll the flag back), so repeat scammers quietly shadowban. The scan
+    // combines the static heuristics with the DB-backed blocklist (admins
+    // add/sync domains there), and caches each URL's verdict hashed.
+    const phishScan = await scanBlockedContent(ctx, text);
     if (phishScan.status === "blocked") {
       await escalateSilently(ctx, userId, 3, "scam", "phish-block-post");
       return {
@@ -809,11 +811,12 @@ export const addComment = mutation({
     if (textScan.status === "review") {
       await escalateSilently(ctx, userId, 1, "ai", "ai-review-comment");
     }
-    // Comments get the phishing scan too. Blocked-tier is rejected outright
-    // and escalated; review-tier (shorteners, unfamiliar login pages) is
-    // also rejected — comments have no human queue, so the honest guidance
-    // is to share the direct link instead.
-    const phishScan = scanForPhishing(text);
+    // Comments get the phishing scan too (static + DB blocklist).
+    // Blocked-tier is rejected outright and escalated; review-tier
+    // (shorteners, unfamiliar login pages) is also rejected — comments
+    // have no human queue, so the honest guidance is to share the direct
+    // link instead.
+    const phishScan = await scanBlockedContent(ctx, text);
     if (phishScan.status === "blocked") {
       await escalateSilently(ctx, userId, 3, "scam", "phish-block-comment");
       return {

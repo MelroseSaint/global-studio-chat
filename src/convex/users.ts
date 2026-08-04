@@ -15,7 +15,7 @@ import {
   detectFollowChurn,
   detectReciprocalFollow,
 } from "./farmNetwork";
-import { scanForPhishing } from "./phishing";
+import { scanBlockedContent } from "./blocklist";
 import {
   enforceActive,
   enforceRateLimit,
@@ -193,7 +193,7 @@ export const updateProfile = mutation({
     // escalation must commit, and Convex rolls every write back when a
     // mutation throws. Same atomicity pattern as createPost.
     if (args.bio !== undefined && args.bio.trim().length > 0) {
-      const bioScan = scanForPhishing(args.bio);
+      const bioScan = await scanBlockedContent(ctx, args.bio);
       if (bioScan.status !== "clean") {
         await escalateSilently(
           ctx,
@@ -216,7 +216,10 @@ export const updateProfile = mutation({
     }
     if (args.links !== undefined && args.links.length > 0) {
       for (const link of args.links) {
-        const linkScan = scanForPhishing(normalizeProfileUrl(link.url));
+        const linkScan = await scanBlockedContent(
+          ctx,
+          normalizeProfileUrl(link.url),
+        );
         if (linkScan.status !== "clean") {
           await escalateSilently(
             ctx,

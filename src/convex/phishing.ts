@@ -165,6 +165,163 @@ export function bannedAdultCategory(host: string): AdultHostCategory | null {
 }
 
 /**
+ * The blocklist engine's category taxonomy — the 12 DB-backed categories
+ * used by the blockedDomains table (and the admin UI). The static adult
+ * list above is seeded INTO the DB mapped onto these (see
+ * STATIC_TO_DB_CATEGORY), and admins can add entries in any category.
+ */
+export type BlockCategory =
+  | "adult_explicit"
+  | "adult_creator"
+  | "adult_porn"
+  | "adult_cam"
+  | "adult_clips"
+  | "adult_chat"
+  | "adult_escort"
+  | "adult_dating"
+  | "adult_fetish"
+  | "adult_community"
+  | "adult_redirect"
+  | "adult_other";
+
+/** Human label per DB category, used in block reasons and messages. */
+export const BLOCK_CATEGORY_LABEL: Record<BlockCategory, string> = {
+  adult_explicit: "adult explicit site",
+  adult_creator: "adult creator subscription site",
+  adult_porn: "adult video site",
+  adult_cam: "adult cam site",
+  adult_clips: "adult clip store",
+  adult_chat: "adult chat service",
+  adult_escort: "adult escort service",
+  adult_dating: "adult dating site",
+  adult_fetish: "adult fetish site",
+  adult_community: "adult community board",
+  adult_redirect: "adult link redirector",
+  adult_other: "adult platform",
+};
+
+/**
+ * Map the static categories in BANNED_ADULT_HOSTS onto the DB taxonomy so
+ * importCoreBlocklist can seed the blockedDomains table without a hand
+ * rewrite. Categories are semantically closest by intent: subscription
+ * platforms → creator, tube sites → porn, image boards → community.
+ */
+export const STATIC_TO_DB_CATEGORY: Record<AdultHostCategory, BlockCategory> = {
+  adult_subscription: "adult_creator",
+  adult_clips: "adult_clips",
+  adult_cams: "adult_cam",
+  adult_tube: "adult_porn",
+  adult_social: "adult_community",
+  adult_chat: "adult_chat",
+  adult_dating: "adult_dating",
+  adult_escorts: "adult_escort",
+  adult_link_redirect: "adult_redirect",
+};
+
+/**
+ * One entry of the DB-backed blockedDomains table, as the pure scan layer
+ * consumes it (both server-side and in the client DM gate, which fetches
+ * getActiveBlocklist and re-checks pre-encryption).
+ */
+export interface BlockedDomainEntry {
+  domain: string;
+  category: BlockCategory;
+  action: "block" | "review";
+  blockSubdomains: boolean;
+}
+
+/**
+ * Match a host against a set of DB entries. Exact matches always count;
+ * subdomain matches count only when the entry has blockSubdomains set — so
+ * listing onlyfans.com with blockSubdomains covers m.onlyfans.com, and a
+ * deliberately-scoped entry (sub.thing.com, blockSubdomains false) never
+ * overreaches. The most specific match (longest domain) wins.
+ */
+export function matchBlockedHost(
+  host: string,
+  entries: readonly BlockedDomainEntry[],
+): BlockedDomainEntry | null {
+  const h = host.toLowerCase().replace(/^www\./, "").replace(/\.+$/, "");
+  let best: BlockedDomainEntry | null = null;
+  for (const entry of entries) {
+    const d = entry.domain.toLowerCase().replace(/^www\./, "").replace(/\.+$/, "");
+    if (d.length === 0) continue;
+    const exact = h === d;
+    const sub = entry.blockSubdomains && h.endsWith(`.${d}`);
+    if ((exact || sub) && (best === null || d.length > best.domain.length)) {
+      best = entry;
+    }
+  }
+  return best;
+}
+
+/** One active pattern from the blockedUrlPatterns table. */
+export interface BlockedPatternEntry {
+  pattern: string;
+  action: "block" | "review";
+}
+
+/**
+ * Scan text combining the DB-backed blocklist (domains + URL patterns) with
+ * the static heuristics. DB entries are checked first (an admin-added or
+ * synced domain blocks outright), then the existing static scan handles
+ * phrasing, lookalikes, shorteners, and login-page shapes. Used server-side
+ * (entries/patterns loaded from the DB) and client-side (the DM gate, with
+ * the list from getActiveBlocklist) — pure string logic, no ctx, so both
+ * run anywhere. Patterns are matched case-insensitively as a substring of
+ * each raw URL — the cheap supplement to exact-domain blocking.
+ */
+export function scanWithBlocklist(
+  content: string,
+  entries: readonly BlockedDomainEntry[],
+  patterns: readonly BlockedPatternEntry[] = [],
+): PhishingVerdict {
+  const text = content.trim();
+  if (text.length === 0) {
+    return { status: "clean" };
+  }
+  for (const raw of extractUrls(text)) {
+    const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = parseUrl(withScheme);
+    if (parsed === null) continue;
+    const hit = matchBlockedHost(parsed.host, entries);
+    if (hit !== null) {
+      const label = BLOCK_CATEGORY_LABEL[hit.category];
+      if (hit.action === "review") {
+        return {
+          status: "review",
+          reason: `listed for review: ${hit.domain} (${label})`,
+        };
+      }
+      return {
+        status: "blocked",
+        reason: `banned ${label} (${hit.domain})`,
+        message: `Adult platforms aren't allowed on PureWire — this ${label} can't be shared, posted, or linked.`,
+      };
+    }
+    // Pattern match: the whole raw URL (scheme + host + path) against each
+    // active pattern as a case-insensitive substring.
+    const lower = withScheme.toLowerCase();
+    for (const pattern of patterns) {
+      if (lower.includes(pattern.pattern.toLowerCase())) {
+        if (pattern.action === "review") {
+          return {
+            status: "review",
+            reason: `listed for review: “${pattern.pattern}”`,
+          };
+        }
+        return {
+          status: "blocked",
+          reason: `banned URL pattern “${pattern.pattern}”`,
+          message: `That link isn't allowed on PureWire — it matches a blocked URL pattern.`,
+        };
+      }
+    }
+  }
+  return scanForPhishing(text);
+}
+
+/**
  * Phrasing that is overwhelmingly a credential/payment harvest. Each entry
  * is matched case-insensitively as a substring; entries are chosen so
  * ordinary human speech ("free views" as in opinions, "get verified" as an
@@ -517,12 +674,20 @@ function parseUrl(raw: string): { host: string; path: string; raw: string } | nu
   return { host, path, raw: s };
 }
 
+/** Manual authority parse exposed for callers that need the host of a
+ * single raw link (e.g. the link-scan cache). Same rules as the internal
+ * parser: strips userinfo, port, and trailing dots. */
+export function parseUrlHost(raw: string): string | null {
+  const parsed = parseUrl(raw);
+  return parsed === null ? null : parsed.host;
+}
+
 /** Extract http(s)/www URLs AND bare "domain.tld[/path]" links from text,
  * trimming trailing punctuation. The bare form is the sloppy paste that
  * would otherwise dodge an https://-only regex ("visit purewire-login.xyz
  * now"); sentence noise like "end.now" or "u.s. history" resolves to a
  * clean verdict, so the extra scans are harmless. */
-function extractUrls(text: string): string[] {
+export function extractUrls(text: string): string[] {
   const urls: string[] = [];
   const push = (u: string) => {
     let v = u.replace(/[.,;:!?'")\]}>]+$/, "");
