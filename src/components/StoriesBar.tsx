@@ -66,11 +66,15 @@ export function StoriesBar() {
           },
         ],
       });
-      await createStory({
+      const res = await createStory({
         media: cleaned[0],
         caption: caption.trim() || undefined,
         aiMediaStatus: scan.status,
       });
+      if (!res.ok) {
+        toast.error(res.error ?? "Could not add story.");
+        return;
+      }
       toast.success("Story added!");
       setAddOpen(false);
       setMedia([]);

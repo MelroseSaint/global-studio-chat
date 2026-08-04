@@ -58,34 +58,29 @@ export const createStory = mutation({
           { storyId, media: [media] },
         );
       }
-      return storyId;
+      return { ok: true, storyId };
     }
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "post");
     const captionScan = caption !== undefined ? scanText(caption) : null;
     if (captionScan?.status === "blocked") {
-      // Rejected — and the rejection is itself an abuse signal, scheduled
-      // in its own transaction so it survives the throw below.
-      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
-        userId,
-        points: 3,
-        reason: "ai",
-        source: "ai-blocked",
-      });
-      throw new Error(
-        "AI-generated content isn't allowed on PureWire. Say it in your own words.",
-      );
+      // Rejected — and the rejection is itself an abuse signal. Escalated
+      // INLINE with the structured result (a thrown error would roll the
+      // flag back), so repeat offenders quietly shadowban.
+      await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      return {
+        ok: false,
+        error:
+          "AI-generated content isn't allowed on PureWire. Say it in your own words.",
+      };
     }
     if (aiMediaStatus === "blocked") {
-      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
-        userId,
-        points: 3,
-        reason: "ai",
-        source: "ai-blocked",
-      });
-      throw new Error(
-        "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
-      );
+      await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      return {
+        ok: false,
+        error:
+          "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
+      };
     }
     // A missing scan verdict means the client never ran the scan action —
     // route to the human review queue instead of trusting it as clean.
@@ -111,7 +106,7 @@ export const createStory = mutation({
         { storyId, media: [media] },
       );
     }
-    return storyId;
+    return { ok: true, storyId };
   },
 });
 

@@ -69,7 +69,11 @@ export function PostDetail() {
     if (!text || submitting) return;
     setSubmitting(true);
     try {
-      await addComment({ postId: postIdTyped, content: text });
+      const res = await addComment({ postId: postIdTyped, content: text });
+      if (!res.ok) {
+        toast.error(res.error ?? "Could not comment.");
+        return;
+      }
       setComment("");
       toast.success("Comment posted.");
     } catch (err) {

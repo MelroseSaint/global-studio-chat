@@ -335,29 +335,24 @@ export const createPost = mutation({
     if (textScan.status === "blocked") {
       // Self-identified AI content is rejected — and the rejection itself
       // is an abuse signal: posting machine-made text is the one shape of
-      // AI abuse that never needed a queue. Escalated in its own scheduled
-      // transaction (a throw would roll back a direct write), so a repeat
-      // offender quietly accumulates toward a shadowban.
-      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
-        userId,
-        points: 3,
-        reason: "ai",
-        source: "ai-blocked",
-      });
-      throw new Error(
-        "AI-generated content isn't allowed on PureWire. Say it yourself — in your own words.",
-      );
+      // AI abuse that never needed a queue. Escalated INLINE with the
+      // structured result (a thrown error would roll the flag back — the
+      // same atomicity the duplicate path handles), so a repeat offender
+      // quietly accumulates toward a shadowban.
+      await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      return {
+        ok: false,
+        error:
+          "AI-generated content isn't allowed on PureWire. Say it yourself — in your own words.",
+      };
     }
     if (aiMediaStatus === "blocked") {
-      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
-        userId,
-        points: 3,
-        reason: "ai",
-        source: "ai-blocked",
-      });
-      throw new Error(
-        "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
-      );
+      await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      return {
+        ok: false,
+        error:
+          "This media looks AI-generated, which isn't allowed on PureWire. Upload your own original work.",
+      };
     }
     // If media is present but no scan verdict was provided (e.g. a client
     // that never ran the scan action), send it to the human review queue
@@ -734,7 +729,7 @@ export const addComment = mutation({
           content: text,
         });
       }
-      return;
+      return { ok: true };
     }
     await enforceActive(ctx, userId);
     await enforceRateLimit(ctx, userId, "comment");
@@ -744,16 +739,15 @@ export const addComment = mutation({
     // self-identified AI comments are rejected outright.
     const textScan = scanText(text);
     if (textScan.status === "blocked") {
-      // Scheduled in its own transaction so the flag survives the throw.
-      await ctx.scheduler.runAfter(0, internal.security.escalateSilentlyInternal, {
-        userId,
-        points: 3,
-        reason: "ai",
-        source: "ai-blocked",
-      });
-      throw new Error(
-        "AI-generated content isn't allowed on PureWire. Say it in your own words.",
-      );
+      // Rejected — and the rejection is itself an abuse signal. Escalated
+      // INLINE with the structured result (a thrown error would roll the
+      // flag back), so repeat AI commenters quietly shadowban.
+      await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      return {
+        ok: false,
+        error:
+          "AI-generated content isn't allowed on PureWire. Say it in your own words.",
+      };
     }
     if (textScan.status === "review") {
       await escalateSilently(ctx, userId, 1, "ai", "ai-review-comment");
@@ -777,6 +771,7 @@ export const addComment = mutation({
         read: false,
       });
     }
+    return { ok: true };
   },
 });
 
