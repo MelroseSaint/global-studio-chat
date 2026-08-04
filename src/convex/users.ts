@@ -19,11 +19,18 @@ import {
   enforceActive,
   enforceRateLimit,
   escalateSilently,
+  hiddenAuthorIds,
   isSandboxed,
+  silencedAuthorIds,
 } from "./security";
 
 import { internal } from "./_generated/api";
-import { mutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  mutation,
+  query,
+  type QueryCtx,
+} from "./_generated/server";
 
 export const getCurrentUser = query({
   handler: async (ctx) => {
@@ -460,6 +467,132 @@ export const isFollowing = query({
       )
       .first();
     return follow !== null;
+  },
+});
+
+/**
+ * Shared tail for the follow-list queries (listFollowers / listFollowing):
+ * filter by the search text, hide accounts the viewer can't see (blocked in
+ * either direction, quietly shadowbanned, pending-approval, restricted, or
+ * banned), resolve the avatar, and mark which accounts the viewer follows
+ * and which is the viewer themself. Capped so a celebrity-scale list stays
+ * cheap — search is the tool for finding one person in a big list.
+ */
+async function withFollowListMeta(
+  ctx: QueryCtx,
+  viewerId: Id<"users"> | null,
+  people: Doc<"users">[],
+  query: string,
+) {
+  const q = query.toLowerCase().trim();
+  const hidden = new Set<Id<"users">>([
+    ...(await hiddenAuthorIds(ctx, viewerId)),
+    ...(await silencedAuthorIds(ctx, viewerId)),
+  ]);
+  // Batch the viewer's own follow state in one pass over their follows,
+  // instead of one lookup per row.
+  const following = new Set<Id<"users">>();
+  if (viewerId !== null) {
+    const mine = await ctx.db
+      .query("follows")
+      .withIndex("by_follower", (q) => q.eq("followerId", viewerId))
+      .take(500);
+    for (const f of mine) {
+      following.add(f.followingId);
+    }
+  }
+  const matches = people
+    .filter(
+      (u) =>
+        // The same visibility rule every other user-listing surface uses
+        // (searchUsers, suggestedUsers): nothing pending approval,
+        // restricted, banned, or quietly shadowbanned appears — and
+        // blocked accounts (either direction) are excluded too.
+        !hidden.has(u._id) &&
+        u.shadowban !== true &&
+        (u.accountStatus === undefined || u.accountStatus === "active") &&
+        (q.length === 0 ||
+          (u.username ?? "").includes(q) ||
+          (u.name ?? "").toLowerCase().includes(q)),
+    )
+    .slice(0, 100);
+  return Promise.all(
+    matches.map(async (u) => ({
+      ...publicUser(u),
+      // Dual-mode: an external Cloudinary URL wins; otherwise resolve the
+      // Convex storage id (legacy/fallback path).
+      avatarUrl:
+        u.avatarUrl ??
+        (u.avatarStorageId ? await ctx.storage.getUrl(u.avatarStorageId) : null),
+      isFollowing: following.has(u._id),
+      isViewer: u._id === viewerId,
+    })),
+  );
+}
+
+/**
+ * The same shadowban gate getProfile uses: a quietly shadowbanned profile's
+ * lists are only visible to the account itself and admins, so the list
+ * queries can't be used to enumerate a hidden user's circle directly.
+ */
+async function canViewTarget(
+  ctx: QueryCtx,
+  viewerId: Id<"users"> | null,
+  target: Doc<"users">,
+): Promise<boolean> {
+  if (target.shadowban !== true) {
+    return true;
+  }
+  if (viewerId === target._id) {
+    return true;
+  }
+  const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
+  return viewer?.role === "admin";
+}
+
+/** The people following a profile, searchable by name or @username. */
+export const listFollowers = query({
+  args: { username: v.string(), query: v.optional(v.string()) },
+  handler: async (ctx, { username, query }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const target = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", username.toLowerCase()))
+      .first();
+    if (target === null || !(await canViewTarget(ctx, viewerId, target))) {
+      return [];
+    }
+    const rows = await ctx.db
+      .query("follows")
+      .withIndex("by_following", (q) => q.eq("followingId", target._id))
+      .take(300);
+    const people = (
+      await Promise.all(rows.map((r) => ctx.db.get(r.followerId)))
+    ).filter((u): u is Doc<"users"> => u !== null);
+    return withFollowListMeta(ctx, viewerId, people, query ?? "");
+  },
+});
+
+/** The people a profile follows, searchable by name or @username. */
+export const listFollowing = query({
+  args: { username: v.string(), query: v.optional(v.string()) },
+  handler: async (ctx, { username, query }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const target = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", username.toLowerCase()))
+      .first();
+    if (target === null || !(await canViewTarget(ctx, viewerId, target))) {
+      return [];
+    }
+    const rows = await ctx.db
+      .query("follows")
+      .withIndex("by_follower", (q) => q.eq("followerId", target._id))
+      .take(300);
+    const people = (
+      await Promise.all(rows.map((r) => ctx.db.get(r.followingId)))
+    ).filter((u): u is Doc<"users"> => u !== null);
+    return withFollowListMeta(ctx, viewerId, people, query ?? "");
   },
 });
 

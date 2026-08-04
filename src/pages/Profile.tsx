@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import { FollowButton } from "@/components/FollowButton";
+import { FollowsList, type FollowsTab } from "@/components/FollowsList";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -23,6 +24,9 @@ export function Profile() {
   const unblockUser = useMutation(api.security.unblockUser);
   const blocked = useQuery(api.security.isBlocked, { username });
   const [blocking, setBlocking] = useState(false);
+  // Which follow list is open (if any): the Followers/Following counts open
+  // a searchable dialog, and each row links through to that person's profile.
+  const [followsTab, setFollowsTab] = useState<FollowsTab | null>(null);
   const { results, status, loadMore } = usePaginatedQuery(
     api.posts.listUserPosts,
     profile?._id ? { userId: profile._id } : "skip",
@@ -203,20 +207,44 @@ export function Profile() {
             </span>{" "}
             <span className="text-muted-foreground">Posts</span>
           </span>
-          <span>
+          <button
+            type="button"
+            onClick={() => setFollowsTab("followers")}
+            className="group transition-opacity hover:opacity-80"
+          >
             <span className="font-bold">
               {formatCount(profile.followersCount ?? 0)}
             </span>{" "}
-            <span className="text-muted-foreground">Followers</span>
-          </span>
-          <span>
+            <span className="text-muted-foreground group-hover:underline">
+              Followers
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setFollowsTab("following")}
+            className="group transition-opacity hover:opacity-80"
+          >
             <span className="font-bold">
               {formatCount(profile.followingCount ?? 0)}
             </span>{" "}
-            <span className="text-muted-foreground">Following</span>
-          </span>
+            <span className="text-muted-foreground group-hover:underline">
+              Following
+            </span>
+          </button>
         </div>
       </div>
+
+      <FollowsList
+        // A changing key remounts the dialog on every open, so the tab and
+        // search box reset cleanly each time a count is clicked.
+        key={followsTab ?? "closed"}
+        username={profile.username ?? ""}
+        initialTab={followsTab ?? "followers"}
+        open={followsTab !== null}
+        onOpenChange={(open) => {
+          if (!open) setFollowsTab(null);
+        }}
+      />
 
       <div className="mt-5 border-t">
         {status === "LoadingFirstPage" && (
