@@ -87,6 +87,10 @@ export interface PostItem {
   // attached item's manifest declared a camera capture — the file's own
   // provenance, shown as a "Content Credentials verified" label.
   c2paVerifiedHuman?: boolean | null;
+  // The creator's own declaration during upload: how the work was made.
+  // "ai-assisted" gets a visible disclosure chip; "ai-generated" is
+  // rejected at createPost and can never appear here.
+  creatorDisclosure?: string | null;
 }
 
 /** Render @mentions and URLs inside post text. */
@@ -415,6 +419,15 @@ export function PostCard({
             >
               <ShieldCheck className="size-3" />
               Content Credentials verified
+            </span>
+          ) : null}
+          {post.creatorDisclosure === "ai-assisted" ? (
+            <span
+              className="mt-0.5 flex shrink-0 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400"
+              title="The creator disclosed AI tools were used — this work is primarily human-made with AI assistance."
+            >
+              <Pencil className="size-3" />
+              AI-assisted
             </span>
           ) : null}
         </div>

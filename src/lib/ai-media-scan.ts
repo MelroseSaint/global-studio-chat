@@ -55,6 +55,11 @@ export type C2paInfo = {
   present: boolean;
   humanCapture: boolean;
   aiAsserted: boolean;
+  /** The claim_generator value from the manifest — who created the
+   * credentials (e.g. "Adobe Photoshop 26.0", "Google SynthID"). Shown
+   * in the admin evidence panel so moderators know the provenance source,
+   * not just the verdict. Parsed from the manifest text (latin-1 safe). */
+  claimGenerator?: string;
 };
 
 // ─────────────────────────── Marker catalogs ───────────────────────────
@@ -344,7 +349,16 @@ function classifyC2pa(text: string): C2paInfo {
   const lower = text.toLowerCase();
   const aiAsserted = C2PA_AI_SOURCES.some((s) => lower.includes(s));
   const humanCapture = !aiAsserted && C2PA_HUMAN_SOURCES.some((s) => lower.includes(s));
-  return { present: true, humanCapture, aiAsserted };
+  // Extract claim_generator: the tool that created the credentials.
+  // "claim_generator"\s*:\s*"([^"]+)" — a loose match over the latin-1
+  // bytes; JSON-aware parsing is overkill since the value is always a
+  // short ASCII tool name.
+  let claimGenerator: string | undefined;
+  const cg = /"claim_generator"\s*:\s*"([^"]+?)"/i.exec(text);
+  if (cg !== null && cg[1].length > 0 && cg[1].length <= 200) {
+    claimGenerator = cg[1];
+  }
+  return { present: true, humanCapture, aiAsserted, claimGenerator };
 }
 
 /**

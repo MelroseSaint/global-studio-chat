@@ -157,6 +157,19 @@ const schema = defineSchema({
     // only — an AI-asserting manifest blocks at upload, so this field can
     // never be set on a post whose media declared machine-made.
     c2paVerifiedHuman: v.optional(v.boolean()),
+    // The tool that created the C2PA manifest (claim_generator from the
+    // Content Credentials). E.g. "Adobe Photoshop 26.0" or "Google SynthID".
+    // Null when C2PA was absent or unreadable.
+    c2paClaimGenerator: v.optional(v.string()),
+    // The creator's own declaration during upload: how the work was made.
+    // Required on every NEW post. "ai-generated" is rejected at createPost;
+    // "ai-assisted" is allowed but flagged for review with a visible chip.
+    // Optional so existing posts without this field don't break validation.
+    creatorDisclosure: v.optional(v.union(
+      v.literal("human-made"),
+      v.literal("ai-assisted"),
+      v.literal("ai-generated"),
+    )),
     likeCount: v.number(),
     commentCount: v.number(),
     shareCount: v.number(),

@@ -906,6 +906,10 @@ function PostsPanel() {
     _id: string;
     _creationTime: number;
     content: string;
+    aiStatusReason?: string | null;
+    c2paVerifiedHuman?: boolean | null;
+    c2paClaimGenerator?: string | null;
+    creatorDisclosure?: string | null;
     reportCount?: number | null;
     author: { username?: string | null; name?: string | null } | null;
   }[];
@@ -915,6 +919,7 @@ function PostsPanel() {
     author: string | null;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [evidenceIds, setEvidenceIds] = useState<Set<string>>(new Set());
 
   const confirmRemove = async (standardId: string, note: string) => {
     if (pendingRemove === null) return;
@@ -989,6 +994,88 @@ function PostsPanel() {
               <Trash2 className="size-4" />
             </Button>
           </div>
+          <button
+            type="button"
+            onClick={() =>
+              setEvidenceIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(p._id)) next.delete(p._id);
+                else next.add(p._id);
+                return next;
+              })
+            }
+            className="mt-2 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {evidenceIds.has(p._id) ? (
+              <ChevronUp className="size-3.5" />
+            ) : (
+              <ChevronDown className="size-3.5" />
+            )}
+            Evidence
+          </button>
+          {evidenceIds.has(p._id) ? (
+            <div className="mt-2 rounded-lg border bg-muted/30 p-3 text-xs">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                <span className="font-medium text-muted-foreground">
+                  AI detector
+                </span>
+                <span>
+                  {p.aiStatusReason ? (
+                    <span className="text-oxide">{p.aiStatusReason}</span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      Statistical scan — no specific signal
+                    </span>
+                  )}
+                </span>
+                <span className="font-medium text-muted-foreground">
+                  C2PA provenance
+                </span>
+                <span>
+                  {p.c2paVerifiedHuman ? (
+                    <span className="text-copper">
+                      Present — camera capture
+                      {p.c2paClaimGenerator
+                        ? ` · Signed by ${p.c2paClaimGenerator}`
+                        : ""}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      Not present
+                    </span>
+                  )}
+                </span>
+                <span className="font-medium text-muted-foreground">
+                  Creator disclosure
+                </span>
+                <span>
+                  {p.creatorDisclosure === "ai-assisted" ? (
+                    <span className="text-amber-600 dark:text-amber-400">
+                      AI-assisted
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      Human-made
+                    </span>
+                  )}
+                </span>
+                <span className="font-medium text-muted-foreground">
+                  User reports
+                </span>
+                <span>
+                  {(p.reportCount ?? 0) > 0 ? (
+                    <span className="font-medium">
+                      {p.reportCount} open
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      None
+                    </span>
+                  )}
+                </span>
+              </div>
+            </div>
+          ) : null}
         </motion.div>
       ))}
       <div ref={ref} className="py-2 text-center text-sm text-muted-foreground">
@@ -1876,11 +1963,14 @@ function AiReviewPanel() {
     content: string;
     aiStatusReason?: string | null;
     c2paVerifiedHuman?: boolean | null;
+    c2paClaimGenerator?: string | null;
+    creatorDisclosure?: string | null;
     reportCount?: number | null;
     author: { username?: string | null; name?: string | null } | null;
   }[];
 
   const [approvingPage, setApprovingPage] = useState(false);
+  const [evidenceIds, setEvidenceIds] = useState<Set<string>>(new Set());
 
   // Genuine human creators with formal writing styles trip the statistical
   // scan; approving the whole loaded page keeps the queue fast for them.
@@ -2040,6 +2130,88 @@ function AiReviewPanel() {
               <Trash2 className="size-4" />
             </Button>
           </div>
+          <button
+            type="button"
+            onClick={() =>
+              setEvidenceIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(p._id)) next.delete(p._id);
+                else next.add(p._id);
+                return next;
+              })
+            }
+            className="mt-2 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {evidenceIds.has(p._id) ? (
+              <ChevronUp className="size-3.5" />
+            ) : (
+              <ChevronDown className="size-3.5" />
+            )}
+            Evidence
+          </button>
+          {evidenceIds.has(p._id) ? (
+            <div className="mt-2 rounded-lg border bg-muted/30 p-3 text-xs">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                <span className="font-medium text-muted-foreground">
+                  AI detector
+                </span>
+                <span>
+                  {p.aiStatusReason ? (
+                    <span className="text-oxide">{p.aiStatusReason}</span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      Statistical scan — no specific signal
+                    </span>
+                  )}
+                </span>
+                <span className="font-medium text-muted-foreground">
+                  C2PA provenance
+                </span>
+                <span>
+                  {p.c2paVerifiedHuman ? (
+                    <span className="text-copper">
+                      Present — camera capture
+                      {p.c2paClaimGenerator
+                        ? ` · Signed by ${p.c2paClaimGenerator}`
+                        : ""}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      Not present
+                    </span>
+                  )}
+                </span>
+                <span className="font-medium text-muted-foreground">
+                  Creator disclosure
+                </span>
+                <span>
+                  {p.creatorDisclosure === "ai-assisted" ? (
+                    <span className="text-amber-600 dark:text-amber-400">
+                      AI-assisted
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      Human-made
+                    </span>
+                  )}
+                </span>
+                <span className="font-medium text-muted-foreground">
+                  User reports
+                </span>
+                <span>
+                  {(p.reportCount ?? 0) > 0 ? (
+                    <span className="font-medium">
+                      {p.reportCount} open
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      None
+                    </span>
+                  )}
+                </span>
+              </div>
+            </div>
+          ) : null}
         </motion.div>
       ))}
       <div ref={ref} className="py-2 text-center text-sm text-muted-foreground">

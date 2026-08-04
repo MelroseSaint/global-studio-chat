@@ -122,6 +122,7 @@ async function main() {
     client.setAuth(C1.token);
     const plainRes = await client.action(api.posts.createPost, {
       content: `Reading this today — https://example.com/article ${stamp}`,
+      creatorDisclosure: "human-made",
     });
     check("a normal article link posts clean", plainRes.ok === true);
     check(
@@ -130,6 +131,7 @@ async function main() {
     );
     const officialRes = await client.action(api.posts.createPost, {
       content: `The platform lives at purewire.vercel.app — ${stamp}`,
+      creatorDisclosure: "human-made",
     });
     check(
       "the official PureWire domain posts clean",
@@ -141,6 +143,7 @@ async function main() {
     client.setAuth(adultUser.token);
     const adultRes = await client.action(api.posts.createPost, {
       content: `New content on my page — https://onlyfans.com/fanclub ${stamp}`,
+      creatorDisclosure: "human-made",
     });
     check("an adult subscription link is blocked in a post", adultRes.ok === false);
     check(
@@ -150,6 +153,7 @@ async function main() {
     );
     const adultSubRes = await client.action(api.posts.createPost, {
       content: `Live now — https://m.chaturbate.com/${stamp}`,
+      creatorDisclosure: "human-made",
     });
     check(
       "a subdomain of an adult cam site is blocked too",
@@ -171,6 +175,7 @@ async function main() {
     // blocked or review-queued.
     const adviceRes = await client.action(api.posts.createPost, {
       content: `Always verify your email after signing up — it protects your account. ${stamp}`,
+      creatorDisclosure: "human-made",
     });
     check(
       "legit security advice posts clean",
@@ -178,6 +183,7 @@ async function main() {
     );
     const praiseRes = await client.action(api.posts.createPost, {
       content: `You have won my respect today, friends. ${stamp}`,
+      creatorDisclosure: "human-made",
     });
     check(
       "innocent 'you have won' phrasing posts clean",
@@ -187,6 +193,7 @@ async function main() {
     // ── 2. Review-tier post: link shortener → human queue, honest why ──────
     const reviewRes = await client.action(api.posts.createPost, {
       content: `Found something interesting — https://bit.ly/xYz123 ${stamp}`,
+      creatorDisclosure: "human-made",
     });
     const reviewPostId = reviewRes.ok === true ? reviewRes.postId : null;
     check("a link shortener post is accepted into review", reviewRes.ok === true);
@@ -224,6 +231,7 @@ async function main() {
     client.setAuth(C1.token);
     const blockRes = await client.action(api.posts.createPost, {
       content: `FREE followers!! Verify your account at http://purew1re-verify.com/login now ${stamp}`,
+      creatorDisclosure: "human-made",
     });
     check(
       "a scam post with a lookalike PureWire login is rejected",
@@ -285,6 +293,7 @@ async function main() {
     client.setAuth(B.token);
     const bPostRes = await client.action(api.posts.createPost, {
       content: `A post from the QA viewer to comment on — ${stamp}`,
+      creatorDisclosure: "human-made",
     });
     const bPostId = bPostRes.ok === true ? bPostRes.postId : null;
     client.setAuth(C2.token);

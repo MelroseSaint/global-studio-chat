@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { Loader2, MapPin, Send, Sparkles } from "lucide-react";
+import { Loader2, MapPin, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -25,6 +25,9 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
   const [location, setLocation] = useState<PickedLocation | undefined>(undefined);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [creatorDisclosure, setCreatorDisclosure] = useState<
+    "human-made" | "ai-assisted" | "ai-generated"
+  >("human-made");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
@@ -100,6 +103,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
       }
       const result = await createPost({
         content: content.trim(),
+        creatorDisclosure,
         media: postMedia,
         // Perceptual hashes computed during upload — the server uses them
         // to catch flipped/cropped/re-encoded copies of existing media.
@@ -133,6 +137,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
       setContent("");
       setMedia([]);
       setLocation(undefined);
+      setCreatorDisclosure("human-made");
       setPickerOpen(false);
       if (result.aiReviewReason) {
         // Honest "why": the post was flagged for a human check — tell the
@@ -236,7 +241,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
             </span>
             <Button
               size="sm"
-              disabled={!canPost || submitting || overLimit}
+              disabled={!canPost || submitting || overLimit || creatorDisclosure === "ai-generated"}
               onClick={() => void submit()}
               className="rounded-full px-5"
             >
@@ -249,11 +254,47 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
             </Button>
           </div>
         </div>
-        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <Sparkles className="size-3" />
-          Your own original work only — AI-generated content is not allowed on
-          PureWire.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            This work is:
+          </span>
+          <div className="flex rounded-lg border p-0.5">
+            {(
+              [
+                { value: "human-made", label: "Human-made" },
+                { value: "ai-assisted", label: "AI-assisted" },
+                { value: "ai-generated", label: "AI-generated" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() =>
+                  setCreatorDisclosure(
+                    opt.value as "human-made" | "ai-assisted" | "ai-generated",
+                  )
+                }
+                className={cn(
+                  "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                  creatorDisclosure === opt.value
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {creatorDisclosure === "ai-generated" ? (
+            <span className="text-[11px] font-medium text-destructive">
+              AI-generated content is not allowed on PureWire.
+            </span>
+          ) : creatorDisclosure === "ai-assisted" ? (
+            <span className="text-[11px] text-muted-foreground">
+              AI tools helped, but the work is yours. Will be reviewed.
+            </span>
+          ) : null}
+        </div>
       </div>
     </div>
   );

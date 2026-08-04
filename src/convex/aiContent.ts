@@ -379,12 +379,15 @@ export const scanMediaForAi = action({
       // post so viewers see "Content Credentials verified" — the label the
       // file itself asserted.
       c2paVerifiedHuman: v.optional(v.boolean()),
+      // The claim_generator from the first C2PA-positive item — which tool
+      // created the credentials (e.g. "Adobe Photoshop 26.0").
+      c2paClaimGenerator: v.optional(v.string()),
     }),
     v.object({ status: v.literal("review"), reason: v.string() }),
     v.object({ status: v.literal("blocked"), reason: v.string() }),
   ),
   handler: async (ctx, { media }): Promise<
-    | { status: "clean"; c2paVerifiedHuman?: boolean }
+    | { status: "clean"; c2paVerifiedHuman?: boolean; c2paClaimGenerator?: string }
     | { status: "review"; reason: string }
     | { status: "blocked"; reason: string }
   > => {
@@ -392,6 +395,7 @@ export const scanMediaForAi = action({
     // Content Credentials declare camera capture, the post can be marked
     // "Content Credentials verified" — the label the file itself asserted.
     let anyHumanCapture = false;
+    let c2paClaimGenerator: string | undefined;
     for (const item of media) {
       let bytes: ArrayBuffer | null = null;
       if (item.url !== undefined) {
@@ -421,7 +425,12 @@ export const scanMediaForAi = action({
       if ((result as { c2pa?: C2paInfo }).c2pa?.humanCapture === true) {
         anyHumanCapture = true;
       }
+      // Capture the credential issuer from the first item that has one — the
+      // admin evidence panel shows which tool signed the content.
+      if (c2paClaimGenerator === undefined) {
+        c2paClaimGenerator = (result as { c2pa?: C2paInfo }).c2pa?.claimGenerator;
+      }
     }
-    return { status: "clean", c2paVerifiedHuman: anyHumanCapture };
+    return { status: "clean", c2paVerifiedHuman: anyHumanCapture, c2paClaimGenerator };
   },
 });

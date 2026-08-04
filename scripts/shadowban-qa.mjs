@@ -99,6 +99,7 @@ async function main() {
     const original = `An original thought from the QA run — ${stamp}.`;
     const bRes = await client.action(api.posts.createPost, {
       content: original,
+      creatorDisclosure: "human-made",
     });
     const bPostId = bRes.ok === true ? bRes.postId : null;
     client.setAuth(A.token);
@@ -106,6 +107,7 @@ async function main() {
     // error) so the quiet flag commits — check the result, not an exception.
     const dupRes = await client.action(api.posts.createPost, {
       content: original,
+      creatorDisclosure: "human-made",
     });
     const duplicateRejected =
       dupRes.ok === false && /already exists/i.test(dupRes.error);
@@ -119,6 +121,7 @@ async function main() {
       "significantly this matters overall.";
     const aiRes = await client.action(api.posts.createPost, {
       content: aiText,
+      creatorDisclosure: "human-made",
     });
     const aiPostId = aiRes.ok === true ? aiRes.postId : null;
     check("AI-suspicious post accepted into review", aiRes.ok === true);
@@ -159,6 +162,7 @@ async function main() {
     for (let i = 0; i < 40; i++) {
       await client.action(api.posts.createPost, {
         content: `QA filler ${i} — a plain human note ${stamp}.`,
+        creatorDisclosure: "human-made",
       });
     }
 
@@ -185,6 +189,7 @@ async function main() {
     // ── 4. Post-shadowban activity: everything is silently absorbed ─────────
     const phantomRes = await client.action(api.posts.createPost, {
       content: `A quiet post after the silence — ${stamp}.`,
+      creatorDisclosure: "human-made",
     });
     const phantomPostId = phantomRes.ok === true ? phantomRes.postId : null;
     await client.mutation(api.posts.addComment, {

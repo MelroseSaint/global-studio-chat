@@ -223,6 +223,14 @@ type CreatePostResult =
 export const createPost = action({
   args: {
     content: v.string(),
+    // Required creator declaration: how this work was made. "ai-generated"
+    // is rejected outright; "ai-assisted" is allowed but flagged for review
+    // with a visible disclosure chip on the post.
+    creatorDisclosure: v.union(
+      v.literal("human-made"),
+      v.literal("ai-assisted"),
+      v.literal("ai-generated"),
+    ),
     media: v.optional(
       v.array(
         v.object({
@@ -258,7 +266,7 @@ export const createPost = action({
   },
   handler: async (
     ctx,
-    { content, media, mediaHashes, location },
+    { content, creatorDisclosure, media, mediaHashes, location },
   ): Promise<CreatePostResult> => {
     // The action is the public gate for post creation. It authenticates,
     // then VERIFIES the media itself (reading the actual stored bytes via
@@ -276,6 +284,7 @@ export const createPost = action({
     // the stored bytes (never accepted from the client), then stored on the
     // post so viewers see the "Content Credentials verified" label.
     let c2paVerifiedHuman: boolean | undefined;
+    let c2paClaimGenerator: string | undefined;
     if (media !== undefined && media.length > 0) {
       const scan = await ctx.runAction(api.aiContent.scanMediaForAi, {
         media: media.map((m) => ({
@@ -287,16 +296,19 @@ export const createPost = action({
       verifiedStatus = scan.status;
       if (scan.status === "clean") {
         c2paVerifiedHuman = scan.c2paVerifiedHuman;
+        c2paClaimGenerator = (scan as { c2paClaimGenerator?: string }).c2paClaimGenerator;
       }
     }
     return (await ctx.runMutation(
       internal.posts.createPostInternal,
       {
         content,
+        creatorDisclosure,
         media,
         mediaHashes,
         aiMediaStatus: verifiedStatus,
         c2paVerifiedHuman,
+        c2paClaimGenerator,
         location,
       },
     )) as CreatePostResult;
@@ -306,6 +318,11 @@ export const createPost = action({
 export const createPostInternal = internalMutation({
   args: {
     content: v.string(),
+    creatorDisclosure: v.union(
+      v.literal("human-made"),
+      v.literal("ai-assisted"),
+      v.literal("ai-generated"),
+    ),
     media: v.optional(
       v.array(
         v.object({
@@ -341,12 +358,15 @@ export const createPostInternal = internalMutation({
     // the client can never set it). Stored so viewers see the
     // "Content Credentials verified" label.
     c2paVerifiedHuman: v.optional(v.boolean()),
+    // The claim_generator from the C2PA manifest — which tool created the
+    // credentials. Shown in the admin evidence panel.
+    c2paClaimGenerator: v.optional(v.string()),
     // Optional place the post was shared from (see the Local feed).
     location: v.optional(locationValidator),
   },
   handler: async (
     ctx,
-    { content, media, mediaHashes, aiMediaStatus, c2paVerifiedHuman, location },
+    { content, creatorDisclosure, media, mediaHashes, aiMediaStatus, c2paVerifiedHuman, c2paClaimGenerator, location },
   ) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
@@ -360,6 +380,13 @@ export const createPostInternal = internalMutation({
     }
     if (text.length > 1000) {
       throw new ConvexError("Post is too long (max 1000 characters).");
+    }
+    // Creator disclosure: "ai-generated" is rejected outright — the policy
+    // is zero tolerance for AI-generated content.
+    if (creatorDisclosure === "ai-generated") {
+      throw new ConvexError(
+        "AI-generated content is not allowed on PureWire. If you made this with AI tools, select 'AI-assisted' instead.",
+      );
     }
     // ── Server-side media gate (enforced here, in the write path, so a
     // direct API caller gets exactly the same checks as the UI) ───────────
@@ -457,6 +484,8 @@ export const createPostInternal = internalMutation({
         media,
         aiStatus: "clean",
         c2paVerifiedHuman,
+        c2paClaimGenerator,
+        creatorDisclosure,
         likeCount: 0,
         commentCount: 0,
         shareCount: 0,
@@ -567,7 +596,7 @@ export const createPostInternal = internalMutation({
       media !== undefined && media.length > 0 && aiMediaStatus === undefined
         ? "review"
         : (aiMediaStatus ?? "clean");
-    const needsReview =
+    let needsReview =
       textScan.status === "review" ||
       mediaVerdict === "review" ||
       phishScan.status === "review";
@@ -596,6 +625,17 @@ export const createPostInternal = internalMutation({
       aiStatusReason = `${phishScan.reason}${
         aiStatusReason !== undefined ? ` · ${aiStatusReason}` : ""
       }`;
+    }
+    // AI-assisted disclosure: allowed but flagged for human review (a human
+    // used tools; the work is primarily theirs, but the platform verifies —
+    // the disclosure chip is visible on the post and the review queue sees
+    // the declaration). Triggers only when no other scan already flagged it.
+    if (creatorDisclosure === "ai-assisted" && !needsReview) {
+      needsReview = true;
+      aiStatusReason =
+        aiStatusReason !== undefined
+          ? `${aiStatusReason} · Creator disclosed AI assistance`
+          : "Creator disclosed AI assistance";
     }
     if (needsReview) {
       // Repeated suspicious content moves an account toward a quiet
@@ -630,6 +670,8 @@ export const createPostInternal = internalMutation({
       // Content Credentials provenance the server verified from the stored
       // bytes — the "Content Credentials verified" label on the post.
       c2paVerifiedHuman,
+      c2paClaimGenerator,
+      creatorDisclosure,
       likeCount: 0,
       commentCount: 0,
       shareCount: 0,
