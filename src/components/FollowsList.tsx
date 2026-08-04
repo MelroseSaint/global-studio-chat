@@ -95,7 +95,7 @@ export function FollowsList({
         </DialogHeader>
 
         {/* Tab switch */}
-        <div className="grid shrink-0 grid-cols-2 gap-1 px-5">
+        <div className="grid shrink-0 grid-cols-1 gap-1 px-5 sm:grid-cols-2">
           {(["followers", "following"] as const).map((value) => (
             <button
               key={value}

@@ -255,15 +255,15 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
           </div>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">
+          <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
             This work is:
           </span>
-          <div className="flex rounded-lg border p-0.5">
+          <div className="flex rounded-lg border p-0.5 text-[11px] sm:text-xs">
             {(
               [
-                { value: "human-made", label: "Human-made" },
-                { value: "ai-assisted", label: "AI-assisted" },
-                { value: "ai-generated", label: "AI-generated" },
+                { value: "human-made", label: "Human", short: "Human" },
+                { value: "ai-assisted", label: "AI-assisted", short: "AI help" },
+                { value: "ai-generated", label: "AI-generated", short: "AI gen" },
               ] as const
             ).map((opt) => (
               <button
@@ -275,13 +275,14 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
                   )
                 }
                 className={cn(
-                  "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                  "rounded-md px-2 py-1 font-medium transition-colors sm:px-3",
                   creatorDisclosure === opt.value
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {opt.label}
+                <span className="hidden sm:inline">{opt.label}</span>
+                <span className="sm:hidden">{opt.short}</span>
               </button>
             ))}
           </div>

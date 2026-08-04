@@ -168,7 +168,7 @@ function PostMediaGrid({
   }
   return (
     <div className="relative mt-3">
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {media.map((m, i) => (
           <div
             key={i}
@@ -340,7 +340,7 @@ export function PostCard({
       )}
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5 text-sm">
             {authorUsername ? (
               <Link

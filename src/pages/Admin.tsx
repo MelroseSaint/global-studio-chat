@@ -402,7 +402,7 @@ function AdminDashboard({ meId }: { meId: string }) {
             className="flex snap-x gap-3 overflow-x-auto pb-1 sm:grid sm:snap-none sm:grid-cols-3 sm:overflow-visible sm:pb-0"
           >
             {STAT_CARDS.map(({ key, label, icon: Icon }) => (
-              <Card key={key} className="min-w-[10.5rem] snap-start sm:min-w-0">
+              <Card key={key} className="min-w-[9rem] snap-start sm:min-w-0">
                 <CardContent className="p-3 sm:p-4">
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <Icon className="size-4" />
@@ -441,7 +441,7 @@ function AdminDashboard({ meId }: { meId: string }) {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-3 lg:grid-cols-7">
+        <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-7">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>
@@ -1015,7 +1015,7 @@ function PostsPanel() {
           </button>
           {evidenceIds.has(p._id) ? (
             <div className="mt-2 rounded-lg border bg-muted/30 p-3 text-xs">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              <div className="grid grid-cols-1 gap-y-1.5 sm:grid-cols-2 sm:gap-x-4">
                 <span className="font-medium text-muted-foreground">
                   AI detector
                 </span>
@@ -2151,7 +2151,7 @@ function AiReviewPanel() {
           </button>
           {evidenceIds.has(p._id) ? (
             <div className="mt-2 rounded-lg border bg-muted/30 p-3 text-xs">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              <div className="grid grid-cols-1 gap-y-1.5 sm:grid-cols-2 sm:gap-x-4">
                 <span className="font-medium text-muted-foreground">
                   AI detector
                 </span>
