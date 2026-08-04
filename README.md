@@ -27,9 +27,11 @@ profiles, creator tools, moderation, and everything in between.
   posts that pass carry the **Original** badge. Near-duplicates (mirrored
   media, light crops, speed shifts, lightly reworded text) are caught too.
 - **Human-made only** — AI-generated text, images, audio, and video are not
-  allowed. Content is scanned for AI text patterns, AI-generator metadata,
-  and deepfake markers; suspicious content goes to a human review queue
-  with an honest "why" shown to the author.
+  allowed. Every post requires a creator disclosure (**Human-made / AI-assisted
+  / AI-generated**). AI-generated is rejected; AI-assisted carries a visible
+  disclosure chip and enters human review. Content is scanned for AI text
+  patterns, AI-generator metadata, and deepfake markers; suspicious content
+  goes to the review queue with an honest "why" shown to the author.
 - **No scams or phishing** — links and phrasing that try to harvest
   accounts, passwords, or money are blocked platform-wide, including in
   profile links and before direct messages are encrypted.
@@ -88,7 +90,16 @@ platform in one place:
 - **Reinstate** — restore a moderated account with a required reason; the
   member gets a "welcome back" system notification
 - **Support tickets** — every report, bug, and question lands here with the
-  post, author, and violated rule attached
+  post, author, and violated rule attached. Tickets can be resolved or
+  **dismissed as false reports**. AI-content reports show the post's AI
+  scan evidence inline beside the ticket.
+- **AI review queue** — flagged posts with honest reasons (formulaic
+  text, AI-generator metadata, creator disclosure). A collapsible
+  **evidence panel** per post shows: AI detector signal, C2PA provenance
+  + credential issuer, creator disclosure, and open user report count —
+  so moderators judge all evidence in one glance instead of jumping tabs.
+- **Creator disclosure** visible on every post: AI-assisted posts carry an
+  amber disclosure chip; human-made posts are trusted by default
 - **Badge & role controls** — verify badges and manage admin roles, except
   for the owner account, which cannot be changed or altered in any way
 
@@ -203,10 +214,26 @@ PureWire treats privacy and safety as architecture, not add-ons.
   hashing of media that survives mirror flips, light crops, re-encodes, and
   speed shifts.
 - **AI detection.** Text is scored for machine patterns; media is checked
-  for C2PA/SynthID-style generator metadata. Self-identified AI is blocked;
+  for C2PA/SynthID-style generator metadata and Content Credentials
+  provenance across JPEG, PNG, MP4, and WebP containers. Self-identified AI
+  and C2PA manifests that declare `trainedAlgorithmicMedia` are blocked;
   suspicious content enters a human review queue — and the author is told
-  honestly why their post is being checked, so genuine creators are never
-  left wondering.
+  honestly why their post is being checked, so genuine creators with formal
+  writing styles are never left wondering.
+- **Content Credentials (C2PA).** When media carries a C2PA manifest
+  declaring a camera capture (`digitalCapture`/`compositeCapture`), the
+  post shows a **"Content Credentials verified"** chip with the credential
+  issuer. Manifests asserting AI creation are blocked on the file's own
+  admission. A bare C2PA manifest on a signed camera photo is never a flag
+  — provenance evidence, not a violation. The admin evidence panel shows
+  the full chain: AI detector signal, C2PA presence + credential issuer,
+  creator disclosure, and open user reports.
+- **User AI reports.** Members can file a one-tap **"Report AI content"**
+  from any post or comment menu. The ticket pre-attaches the post, the
+  author, and the "No AI-generated content" Standard principle, and the
+  admin ticket view shows the post's AI scan evidence beside the report.
+  Reports contribute to a visible `reportCount` on posts — evidence for
+  admins, never an automatic punishment.
 - **Phishing & account-integrity bans.** Known scam phrasing and untrusted
   link hosts are hard-blocked across posts, comments, stories, profile
   links, and DMs. Suspicious-but-unclear links go to human review. Members
@@ -257,6 +284,7 @@ site:
 
 | Command | Checks |
 | --- | --- |
+>| `npm run qa:ai-scan` | Offline AI scanner byte-level checks (C2PA, EXIF, PNG, MP4, WebP) |
 | `npm run qa:secrets` | Scans the repo for leaked secrets |
 | `npm run qa:shadowban` | Silent-moderation escalation paths (duplicate, AI, rate limit) |
 | `npm run qa:phishing` | Phishing scan tiers across surfaces |
@@ -276,7 +304,7 @@ site:
 Three GitHub Actions workflows run on `main`:
 
 - **Static Audit** — typecheck, lint, production build, Convex function
-  typecheck, salt QA, and a secrets scan on every push.
+  typecheck, salt QA, AI-scan QA, and a secrets scan on every push.
 - **Production Health Check** — the sign-up E2E auth loop against the live
   site, nightly and on every push, alerting on failure.
 - **Deploy to Vercel** — ships the frontend to production on every push to
