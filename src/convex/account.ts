@@ -345,6 +345,11 @@ export async function eraseAccount(
   );
 
   // 7. Support tickets, blocks (both directions), and rate-limit rows.
+  //    The tickets' target posts are remembered so their reportCount can
+  //    be recomputed afterwards — erasing a reporter's tickets without
+  //    touching the counts they fed would leave every reported post's
+  //    reportCount permanently inflated.
+  const reportAffected = new Set<Id<"posts">>();
   await sweep(
     ctx,
     async (c) => {
@@ -355,6 +360,10 @@ export async function eraseAccount(
       return rows.map((r) => ({ id: r._id }));
     },
     async (c, { id }) => {
+      const ticket = await c.db.get(id as Id<"supportTickets">);
+      if (ticket !== null && ticket.postId !== undefined) {
+        reportAffected.add(ticket.postId);
+      }
       await c.db.delete(id as Id<"supportTickets">);
     },
   );
@@ -530,6 +539,24 @@ export async function eraseAccount(
       .withIndex("by_follower", (q) => q.eq("followerId", followerId))
       .collect();
     await ctx.db.patch(followerId, { followingCount: following.length });
+  }
+  // …and reportCount on every post this account reported (same cap and
+  //    reasoning). A report count is derived state: the number of tickets
+  //    in open/in_review on the post, so the erased tickets converge the
+  //    count back to the surviving reports.
+  for (const postId of [...reportAffected].slice(0, 500)) {
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      continue;
+    }
+    const tickets = await ctx.db
+      .query("supportTickets")
+      .filter((q) => q.eq(q.field("postId"), postId))
+      .take(SWEEP);
+    const reportCount = tickets.filter(
+      (t) => t.status === "open" || t.status === "in_review",
+    ).length;
+    await ctx.db.patch(postId, { reportCount });
   }
 
   // 9. Profile files, then the account itself. Dual-mode: both the

@@ -322,6 +322,26 @@ export const moderatePost = mutation({
       // The files die with the removed post — Convex storage ids inline,
       // external Cloudinary keys through the fire-and-forget batch delete.
       await cleanupMediaItems(ctx, post.media ?? []);
+      // The engagement rows die with the post too — the same sweep the
+      // user-facing deletePost does, so no orphan likes/comments/shares
+      // rows outlive a moderated post.
+      const [likes, comments, shares] = await Promise.all([
+        ctx.db
+          .query("likes")
+          .withIndex("by_post", (q) => q.eq("postId", postId))
+          .collect(),
+        ctx.db
+          .query("comments")
+          .withIndex("by_post", (q) => q.eq("postId", postId))
+          .collect(),
+        ctx.db
+          .query("shares")
+          .withIndex("by_post", (q) => q.eq("postId", postId))
+          .collect(),
+      ]);
+      for (const row of [...likes, ...comments, ...shares]) {
+        await ctx.db.delete(row._id);
+      }
       await ctx.db.delete(postId);
     }
   },

@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 /**
- * PureWire counter-drift QA (posts + follows).
+ * PureWire counter-drift QA (posts + follows + engagement).
  *
- * `users.postsCount`, `followersCount`, and `followingCount` are
- * denormalized counters: incremented on create/follow, decremented on
- * remove/unfollow. Past bugs let them drift — the user-facing deletePost
- * removed the row without decrementing postsCount, and follow rows
- * referencing deleted accounts (orphans) could survive account erasure
- * while counters diverged from the follows table.
+ * `users.postsCount`, `followersCount`, `followingCount` and
+ * `posts.likeCount` / `commentCount` / `shareCount` / `reportCount` are
+ * denormalized counters: incremented on create/follow/engage, decremented
+ * on remove/unfollow/close. Past bugs let them drift — the user-facing
+ * deletePost removed the row without decrementing postsCount, follow rows
+ * referencing deleted accounts (orphans) could survive account erasure,
+ * post deletions could leave orphan likes/comments/shares behind, and
+ * erasing a reporter's account deleted their tickets without recomputing
+ * the target posts' reportCount.
  *
- * This QA runs the harness-gated `reconcilePostsCounts` and
- * `reconcileFollowCounts` mutations against production and FAILS if any
- * user's counter was drifted or any orphan follow row existed — each
- * mutation self-heals the derived state first (idempotent), then the
- * checks report exactly what changed so the gate surfaces the regression
- * instead of silently absorbing it.
+ * This QA runs the harness-gated `reconcilePostsCounts`,
+ * `reconcileFollowCounts`, and `reconcileEngagementCounts` mutations
+ * against production and FAILS if any counter drifted or any orphan row
+ * existed — each mutation self-heals the derived state first
+ * (idempotent), then the checks report exactly what changed so the gate
+ * surfaces the regression instead of silently absorbing it.
  *
  * Run (gated on the harness secret, like the other production QAs):
  *
@@ -55,7 +58,7 @@ async function main() {
     );
     process.exit(2);
   }
-  console.log(`\nPureWire counter-drift QA (posts + follows) (${CONVEX_URL})\n`);
+  console.log(`\nPureWire counter-drift QA (posts + follows + engagement) (${CONVEX_URL})\n`);
   const client = new ConvexHttpClient(CONVEX_URL);
   const { enabled } = await client.query(api.testHarness.isEnabled);
   check("harness enabled", enabled === true);
@@ -107,6 +110,62 @@ async function main() {
           )
           .join(" | ")}`
       : `all ${followUsersSeen} users consistent`,
+  );
+
+  const {
+    orphanLikes,
+    orphanComments,
+    orphanShares,
+    likesSeen,
+    commentsSeen,
+    sharesSeen,
+    fixed: engageFixed,
+    postsSeen,
+  } = await client.mutation(api.testHarness.reconcileEngagementCounts, {
+    secret: SECRET,
+  });
+  check(
+    "engagement reconciliation ran over the posts/likes/comments/shares tables",
+    likesSeen >= 0 && commentsSeen >= 0 && sharesSeen >= 0,
+  );
+  check(
+    "no orphan like rows (likes on deleted posts)",
+    orphanLikes.length === 0,
+    orphanLikes.length > 0
+      ? `${orphanLikes.length} swept: ${orphanLikes
+          .map((o) => `like ${o.rowId} on deleted post ${o.postId}`)
+          .join(" | ")}`
+      : `all ${likesSeen} likes reference live posts`,
+  );
+  check(
+    "no orphan comment rows (comments on deleted posts)",
+    orphanComments.length === 0,
+    orphanComments.length > 0
+      ? `${orphanComments.length} swept: ${orphanComments
+          .map((o) => `comment ${o.rowId} on deleted post ${o.postId}`)
+          .join(" | ")}`
+      : `all ${commentsSeen} comments reference live posts`,
+  );
+  check(
+    "no orphan share rows (shares on deleted posts)",
+    orphanShares.length === 0,
+    orphanShares.length > 0
+      ? `${orphanShares.length} swept: ${orphanShares
+          .map((o) => `share ${o.rowId} on deleted post ${o.postId}`)
+          .join(" | ")}`
+      : `all ${sharesSeen} shares reference live posts`,
+  );
+  check(
+    "no post's like/comment/share/report counts drifted from the real tables",
+    engageFixed.length === 0,
+    engageFixed.length > 0
+      ? `${engageFixed.length} fixed: ${engageFixed
+          .map(
+            (f) =>
+              `post ${f.postId} ${JSON.stringify(f.was)}→${JSON.stringify(f.now)}`,
+          )
+          .join(" | ")}`
+      : `all ${postsSeen} posts consistent`,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

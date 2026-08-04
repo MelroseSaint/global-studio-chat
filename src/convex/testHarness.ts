@@ -424,6 +424,228 @@ async function countFollowRows(
 }
 
 /**
+ * Count one post's engagement rows exactly (likes, comments, or shares),
+ * without loading them all into memory: pages the by_post index in
+ * 500-row chunks with an _id cursor filter, the same bounded pattern the
+ * other count helpers use. (The deployed Convex runtime has no query
+ * `.count()`.)
+ */
+async function countByPostIndex(
+  ctx: MutationCtx,
+  table: "likes" | "comments" | "shares",
+  postId: Id<"posts">,
+): Promise<number> {
+  let total = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const rows = await ctx.db
+      .query(table)
+      .withIndex("by_post", (q) => q.eq("postId", postId))
+      .order("asc")
+      .filter((q) =>
+        q.gt(
+          q.field("_id"),
+          (cursor ?? "") as Id<"likes"> | Id<"comments"> | Id<"shares">,
+        ),
+      )
+      .take(500);
+    if (rows.length === 0) break;
+    total += rows.length;
+    cursor = rows[rows.length - 1]._id;
+  }
+  return total;
+}
+
+/**
+ * Sweep orphan engagement rows and reconcile every post's engagement
+ * counters against the actual tables. Two jobs:
+ *
+ * 1. Orphan sweep — likes/comments/shares rows whose post no longer
+ *    exists (left behind by post deletions made before the delete paths
+ *    swept them, or by interrupted erasures). Each is deleted and
+ *    reported, so the admin dashboard's totals can never be inflated by
+ *    engagement on deleted posts.
+ *
+ * 2. Counter reconcile — posts.likeCount / commentCount / shareCount are
+ *    denormalized counters incremented on like/comment/share and
+ *    decremented on unlike; posts.reportCount is the number of open
+ *    (open/in_review) support tickets targeting the post. Every post is
+ *    patched to the exact surviving-row totals. Phantom engagement rows
+ *    (a sandboxed account's absorbed like/comment) are counted like the
+ *    follows reconcile counts phantom follows — the rows table is truth,
+ *    matching the platform's unsilence behavior of retroactively counting
+ *    phantom follows.
+ *
+ * Idempotent — a clean run changes nothing and returns empty lists, so
+ * the count-drift QA can assert clean state and this can be re-run any
+ * time. Gated by the same two env gates as the rest of the module.
+ */
+export const reconcileEngagementCounts = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    try {
+      requireHarness(secret);
+      const orphanLikes: Array<{ rowId: Id<"likes">; postId: Id<"posts"> }> =
+        [];
+      const orphanComments: Array<{
+        rowId: Id<"comments">;
+        postId: Id<"posts">;
+      }> = [];
+      const orphanShares: Array<{ rowId: Id<"shares">; postId: Id<"posts"> }> =
+        [];
+      let likesSeen = 0;
+      let commentsSeen = 0;
+      let sharesSeen = 0;
+      let cursor: string | null = null;
+      for (;;) {
+        const rows = await ctx.db
+          .query("likes")
+          .order("asc")
+          .filter((q) => q.gt(q.field("_id"), (cursor ?? "") as Id<"likes">))
+          .take(500);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          likesSeen++;
+          if ((await ctx.db.get(row.postId)) === null) {
+            await ctx.db.delete(row._id);
+            orphanLikes.push({ rowId: row._id, postId: row.postId });
+          }
+          cursor = row._id;
+        }
+      }
+      let commentCursor: string | null = null;
+      for (;;) {
+        const rows = await ctx.db
+          .query("comments")
+          .order("asc")
+          .filter((q) =>
+            q.gt(q.field("_id"), (commentCursor ?? "") as Id<"comments">),
+          )
+          .take(500);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          commentsSeen++;
+          if ((await ctx.db.get(row.postId)) === null) {
+            await ctx.db.delete(row._id);
+            orphanComments.push({ rowId: row._id, postId: row.postId });
+          }
+          commentCursor = row._id;
+        }
+      }
+      let shareCursor: string | null = null;
+      for (;;) {
+        const rows = await ctx.db
+          .query("shares")
+          .order("asc")
+          .filter((q) =>
+            q.gt(q.field("_id"), (shareCursor ?? "") as Id<"shares">),
+          )
+          .take(500);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          sharesSeen++;
+          if ((await ctx.db.get(row.postId)) === null) {
+            await ctx.db.delete(row._id);
+            orphanShares.push({ rowId: row._id, postId: row.postId });
+          }
+          shareCursor = row._id;
+        }
+      }
+      // One pass over the tickets table builds the truthful reportCount
+      // for every post: the number of open/in_review tickets targeting it.
+      const openReports = new Map<string, number>();
+      let ticketCursor: string | null = null;
+      for (;;) {
+        const rows = await ctx.db
+          .query("supportTickets")
+          .order("asc")
+          .filter((q) =>
+            q.gt(q.field("_id"), (ticketCursor ?? "") as Id<"supportTickets">),
+          )
+          .take(500);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          if (
+            row.postId !== undefined &&
+            (row.status === "open" || row.status === "in_review")
+          ) {
+            openReports.set(row.postId, (openReports.get(row.postId) ?? 0) + 1);
+          }
+          ticketCursor = row._id;
+        }
+      }
+      const fixed: Array<{
+        postId: Id<"posts">;
+        was: {
+          likeCount: number;
+          commentCount: number;
+          shareCount: number;
+          reportCount: number;
+        };
+        now: {
+          likeCount: number;
+          commentCount: number;
+          shareCount: number;
+          reportCount: number;
+        };
+      }> = [];
+      let postsSeen = 0;
+      let postCursor: string | null = null;
+      for (;;) {
+        const posts = await ctx.db
+          .query("posts")
+          .order("asc")
+          .filter((q) =>
+            q.gt(q.field("_id"), (postCursor ?? "") as Id<"posts">),
+          )
+          .take(500);
+        if (posts.length === 0) break;
+        for (const post of posts) {
+          postsSeen++;
+          const [likeCount, commentCount, shareCount] = await Promise.all([
+            countByPostIndex(ctx, "likes", post._id),
+            countByPostIndex(ctx, "comments", post._id),
+            countByPostIndex(ctx, "shares", post._id),
+          ]);
+          const reportCount = openReports.get(post._id) ?? 0;
+          const was = {
+            likeCount: post.likeCount ?? 0,
+            commentCount: post.commentCount ?? 0,
+            shareCount: post.shareCount ?? 0,
+            reportCount: post.reportCount ?? 0,
+          };
+          const now = { likeCount, commentCount, shareCount, reportCount };
+          if (
+            was.likeCount !== now.likeCount ||
+            was.commentCount !== now.commentCount ||
+            was.shareCount !== now.shareCount ||
+            was.reportCount !== now.reportCount
+          ) {
+            await ctx.db.patch(post._id, now);
+            fixed.push({ postId: post._id, was, now });
+          }
+          postCursor = post._id;
+        }
+      }
+      return {
+        orphanLikes,
+        orphanComments,
+        orphanShares,
+        likesSeen,
+        commentsSeen,
+        sharesSeen,
+        fixed,
+        postsSeen,
+      };
+    } catch (e) {
+      // Convex masks plain Error messages as "Server Error"; rethrow as a
+      // ConvexError so the runner script reports the real reason.
+      throw new ConvexError(e instanceof Error ? e.message : String(e));
+    }
+  },
+});
+
+/**
  * Sweep orphan follow rows and reconcile every user's followers/following
  * counters against the follows table. Two jobs, one pass each:
  *

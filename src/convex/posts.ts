@@ -725,6 +725,28 @@ export const deletePost = mutation({
     // The files die with the post — Convex storage ids inline, external
     // Cloudinary keys through the fire-and-forget batch delete.
     await cleanupMediaItems(ctx, post.media ?? []);
+    // The engagement rows die with the post too. Likes, comments, and
+    // shares pointing at it are removed so no orphan rows linger (they
+    // would inflate the admin dashboard's totals and never be reachable
+    // again). The post's own like/comment/share counters die with the
+    // row — nothing else needs decrementing here.
+    const [likes, comments, shares] = await Promise.all([
+      ctx.db
+        .query("likes")
+        .withIndex("by_post", (q) => q.eq("postId", postId))
+        .collect(),
+      ctx.db
+        .query("comments")
+        .withIndex("by_post", (q) => q.eq("postId", postId))
+        .collect(),
+      ctx.db
+        .query("shares")
+        .withIndex("by_post", (q) => q.eq("postId", postId))
+        .collect(),
+    ]);
+    for (const row of [...likes, ...comments, ...shares]) {
+      await ctx.db.delete(row._id);
+    }
     await ctx.db.delete(postId);
     // Keep the author's postsCount honest — the admin's moderatePost
     // decrements, and so must the user-facing delete, or the profile count
