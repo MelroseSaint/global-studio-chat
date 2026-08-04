@@ -234,12 +234,6 @@ export function setDeviceKeypair(
   safeSetItem(PUB_PREFIX + userId, keypair.publicJwk);
 }
 
-/** Forget everything this device knows about an account's DMs. */
-export function clearDeviceKeys(userId: string): void {
-  safeRemoveItem(PRIV_PREFIX + userId);
-  safeRemoveItem(PUB_PREFIX + userId);
-}
-
 /* ---- small guarded helpers ---- */
 
 function safeGetItem(key: string): string | null {
@@ -256,14 +250,6 @@ function safeSetItem(key: string, value: string): void {
   } catch {
     // No storage (private mode, sandboxed frame) — the thread still works
     // for the session; keys just won't survive a reload.
-  }
-}
-
-function safeRemoveItem(key: string): void {
-  try {
-    window.localStorage.removeItem(key);
-  } catch {
-    // Ignore — nothing to remove.
   }
 }
 

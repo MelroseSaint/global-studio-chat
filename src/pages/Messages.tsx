@@ -231,8 +231,12 @@ export function Messages() {
     activeId ? { conversationId: activeId as Id<"dmConversations"> } : "skip",
     { initialNumItems: 30 },
   );
+  // The server pages newest-first so the initial page is the live end of
+  // the thread; reversing the concatenated pages restores chronological
+  // order (oldest at the top, newest at the bottom), and loadMore pulls
+  // progressively older pages into the top.
   const messages = useMemo(
-    () => (results ?? []) as unknown as MessageRow[],
+    () => [...((results ?? []) as unknown as MessageRow[])].reverse(),
     [results],
   );
 
@@ -299,12 +303,14 @@ export function Messages() {
     [],
   );
 
-  // Auto-scroll to the newest message when a thread opens or gains one.
+  // Auto-scroll to the newest message when a thread opens or a new message
+  // lands — not when older pages load in at the top.
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const newestId = messages.length > 0 ? messages[messages.length - 1]._id : null;
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, activeId]);
+  }, [newestId, activeId]);
 
   const openThread = (conversationId: string) => {
     setActiveId(conversationId);

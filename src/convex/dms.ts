@@ -300,10 +300,13 @@ export const listMessages = query({
     ) {
       return { page: [], isDone: true, continueCursor: "" };
     }
+    // Newest first so the initial page is the LIVE end of the thread; the
+    // client reverses the concatenated pages for chronological display and
+    // loadMore pulls progressively older pages.
     const result = await ctx.db
       .query("dmMessages")
       .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
-      .order("asc")
+      .order("desc")
       .paginate(paginationOpts);
     // Resolve attachment URLs (a Convex storage id becomes a readable URL;
     // Cloudinary items already carry one). The bytes stay encrypted either
@@ -366,6 +369,9 @@ export const sendMessage = mutation({
     if (
       recipientId === undefined ||
       hidden.includes(recipientId) ||
+      // No empty husks: every message carries either encrypted text or an
+      // encrypted attachment (or both).
+      (ciphertext.length === 0 && media === undefined) ||
       ciphertext.length > 200_000 ||
       iv.length > 64
     ) {

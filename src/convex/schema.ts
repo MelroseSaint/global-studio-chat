@@ -403,7 +403,6 @@ const schema = defineSchema({
     userId: v.id("users"),
     lastReadAt: v.number(),
   })
-    .index("by_user", ["userId"])
     .index("by_conversation", ["conversationId"])
     .index("by_user_conversation", ["userId", "conversationId"]),
 });

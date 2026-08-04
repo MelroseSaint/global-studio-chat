@@ -79,7 +79,7 @@ const stored = [
   {
     title: "Your direct messages",
     detail:
-      "Encrypted message bodies and attachments (ciphertext only), plus who messaged whom and when — the metadata the mailbox needs to route them. The keys live only on the devices of the two people talking: the private half of your encryption key is generated in your browser and never sent to PureWire. A device that has never opened a conversation cannot decrypt it, by design — and no server, admin, or authority can read it either.",
+      "Encrypted message bodies and attachments (ciphertext only), plus who messaged whom and when — the metadata the mailbox needs to route them. The keys live only on the devices of the two people talking: the private half of your encryption key is generated in your browser and never sent to PureWire. A device that has never opened a conversation cannot decrypt it, by design — and no server, admin, or authority can read it either. The conversation key for each thread you open is cached on that device so history stays readable; anything that can read your device's storage can read your unlocked conversations, so sign out of your account on shared machines.",
   },
   {
     title: "Your activity",
