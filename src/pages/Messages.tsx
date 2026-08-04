@@ -10,6 +10,7 @@ import {
   Plus,
   Search,
   Send,
+  ShieldAlert,
   ShieldCheck,
   Trash2,
   X,
@@ -20,6 +21,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { scanForPhishing } from "@/convex/phishing";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { Button } from "@/components/ui/button";
@@ -131,6 +133,9 @@ export function Messages() {
   const [activeId, setActiveId] = useState<string | null>(convoParam);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [phishConfirm, setPhishConfirm] = useState<{ reason: string } | null>(
+    null,
+  );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -373,9 +378,25 @@ export function Messages() {
     });
   };
 
-  const send = async () => {
+  const send = async (force = false) => {
     const text = draft.trim();
     if ((!text && !pendingMedia) || !convKey || !activeId || sending) return;
+    // The phishing gate runs HERE, on this device, before anything is
+    // encrypted — PureWire never sees plaintext, so the check has to
+    // happen before the first byte leaves the browser. Hard scam signals
+    // are blocked outright; merely-suspicious links ask the sender first.
+    if (text) {
+      const verdict = scanForPhishing(text);
+      if (verdict.status === "blocked") {
+        toast.error(`Not sent — ${verdict.reason}.`);
+        return;
+      }
+      if (verdict.status === "review" && !force) {
+        setPhishConfirm({ reason: verdict.reason });
+        return;
+      }
+    }
+    setPhishConfirm(null);
     setSending(true);
     let uploaded: { storageId?: Id<"_storage">; key?: string } | undefined;
     try {
@@ -791,6 +812,33 @@ export function Messages() {
 
               {/* Composer */}
               <div className="border-t p-3">
+                {phishConfirm ? (
+                  <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-oxide/30 bg-oxide/10 px-3 py-2 text-xs text-oxide dark:text-oxide-light">
+                    <ShieldAlert className="mr-1 inline size-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      This looks like it might be a scam link —{" "}
+                      {phishConfirm.reason}. Send anyway?
+                    </span>
+                    <span className="flex shrink-0 gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-7 px-2.5 text-xs"
+                        onClick={() => void send(true)}
+                      >
+                        Send anyway
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2.5 text-xs"
+                        onClick={() => setPhishConfirm(null)}
+                      >
+                        Keep editing
+                      </Button>
+                    </span>
+                  </div>
+                ) : null}
                 {pendingMedia ? (
                   <div className="mb-2 flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
                     <span className="flex items-center gap-1.5 text-xs font-medium">
@@ -827,7 +875,12 @@ export function Messages() {
                   </Button>
                   <Textarea
                     value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    onChange={(e) => {
+                      setDraft(e.target.value);
+                      // The review bar's reason must match the draft — once
+                      // the message changes, the warning is stale.
+                      if (phishConfirm) setPhishConfirm(null);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
@@ -865,7 +918,8 @@ export function Messages() {
                 <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
                   <Lock className="size-3" />
                   Encrypted on your device. PureWire can&apos;t read it — and
-                  can&apos;t hand it over.
+                  can&apos;t hand it over. Scam-link checks run here, before
+                  anything is encrypted.
                 </p>
               </div>
             </>

@@ -50,7 +50,7 @@ const neverStored = [
     icon: Lock,
     title: "No readable direct messages",
     detail:
-      "Direct messages are end-to-end encrypted in your browser before a single byte leaves your device. PureWire stores only unreadable ciphertext — never the plaintext, never the keys. Even a full database copy contains nothing that can be read, so there is nothing to hand over, subpoena, or pull.",
+      "Direct messages are end-to-end encrypted in your browser before a single byte leaves your device. PureWire stores only unreadable ciphertext — never the plaintext, never the keys. Even a full database copy contains nothing that can be read, so there is nothing to hand over, subpoena, or pull. A safety check runs on your own device before a message is encrypted: links that match known scam patterns — pages posing as PureWire, credential-harvesting lures — are caught or flagged right there, so even the protection never makes the plaintext leave the browser.",
   },
   {
     icon: ShieldCheck,
@@ -79,7 +79,7 @@ const stored = [
   {
     title: "Your direct messages",
     detail:
-      "Encrypted message bodies and attachments (ciphertext only), plus who messaged whom and when — the metadata the mailbox needs to route them. The keys live only on the devices of the two people talking: the private half of your encryption key is generated in your browser and never sent to PureWire. A device that has never opened a conversation cannot decrypt it, by design — and no server, admin, or authority can read it either. The conversation key for each thread you open is cached on that device so history stays readable; anything that can read your device's storage can read your unlocked conversations, so sign out of your account on shared machines.",
+      "Encrypted message bodies and attachments (ciphertext only), plus who messaged whom and when — the metadata the mailbox needs to route them. The keys live only on the devices of the two people talking: the private half of your encryption key is generated in your browser and never sent to PureWire. A device that has never opened a conversation cannot decrypt it, by design — and no server, admin, or authority can read it either. The conversation key for each thread you open is cached on that device so history stays readable; anything that can read your device's storage can read your unlocked conversations, so sign out of your account on shared machines. A scam-link check runs on your device before each message is encrypted; it inspects only the message you're about to send and records nothing.",
   },
   {
     title: "Your activity",

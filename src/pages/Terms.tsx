@@ -155,7 +155,7 @@ const sections: TermsSection[] = [
       },
       {
         heading: "Encrypted Direct Messages",
-        body: "Direct messages are end-to-end encrypted. Message bodies and attachments are encrypted in the sender's browser with keys that exist only on the participants' devices; PureWire stores only ciphertext plus the routing metadata needed to deliver it. PureWire cannot read, scan, or produce the contents of a direct message in response to any request, including legal process, and deleting a conversation or account permanently removes every copy. Because keys are device-bound, a device that has never opened a conversation cannot decrypt it — that is a design guarantee, not a limitation.",
+        body: "Direct messages are end-to-end encrypted. Message bodies and attachments are encrypted in the sender's browser with keys that exist only on the participants' devices; PureWire stores only ciphertext plus the routing metadata needed to deliver it. A built-in safety check runs on the sender's own device before a message is encrypted — links matching known scam patterns are blocked or flagged there, and no record of that check is kept — so the plaintext never leaves the device and the servers never see it. PureWire cannot read, scan, or produce the contents of a direct message in response to any request, including legal process, and deleting a conversation or account permanently removes every copy. Because keys are device-bound, a device that has never opened a conversation cannot decrypt it — that is a design guarantee, not a limitation.",
       },
       {
         heading: "No Backdoors & Report-Driven Moderation",
