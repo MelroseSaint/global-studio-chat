@@ -1,5 +1,5 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { Loader2, MessageCircle, Send } from "lucide-react";
+import { Loader2, MessageCircle, MoreHorizontal, Send, ShieldAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { useParams } from "react-router";
@@ -10,9 +10,78 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
+import { phishingTicketArgs } from "@/lib/phishing-report";
+
+/**
+ * The actions on a single comment. Comments had no menu before; the one
+ * action that matters for the platform's integrity is the one-tap phishing
+ * report — a ticket pre-attached to the post, the commenter, and the
+ * "No scams or phishing" Standard principle.
+ */
+function CommentMenu({
+  postId,
+  comment,
+}: {
+  postId: Id<"posts">;
+  comment: {
+    _id: string;
+    author: { _id: string } | null;
+    content: string;
+  };
+}) {
+  const createTicket = useMutation(api.support.createTicket);
+  const [reporting, setReporting] = useState(false);
+
+  const reportPhishing = async () => {
+    if (reporting) return;
+    setReporting(true);
+    try {
+      await createTicket(
+        phishingTicketArgs({
+          postId,
+          offenderId: comment.author?._id as Id<"users"> | undefined,
+          content: comment.content,
+          kind: "comment",
+        }),
+      );
+      toast.success("Phishing report sent — our team will review it.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not send report.");
+    } finally {
+      setReporting(false);
+    }
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0 rounded-full opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+          aria-label="Comment actions"
+        >
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => void reportPhishing()}>
+          <ShieldAlert className="size-4 text-destructive" />
+          Report phishing
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 export function PostDetail() {
   const { postId = "" } = useParams();
@@ -141,7 +210,7 @@ export function PostDetail() {
       )}
 
       {comments.map((c) => (
-        <div key={c._id} className="flex gap-3 px-4 py-3 sm:px-5">
+        <div key={c._id} className="group flex gap-3 px-4 py-3 sm:px-5">
           <UserAvatar user={c.author} className="size-9" />
           <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-2.5">
             <p className="text-sm font-semibold">
@@ -151,6 +220,7 @@ export function PostDetail() {
               {c.content}
             </p>
           </div>
+          <CommentMenu postId={postIdTyped} comment={c} />
         </div>
       ))}
 

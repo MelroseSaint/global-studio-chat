@@ -11,6 +11,7 @@ import {
   Pencil,
   ScanSearch,
   Share2,
+  ShieldAlert,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -33,8 +34,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
-import { cn } from "@/lib/utils";
 import { extractFirstUrl, formatCount, postUrl, timeAgo } from "@/lib/format";
+import { phishingTicketArgs } from "@/lib/phishing-report";
+import { cn } from "@/lib/utils";
 
 export interface PostMedia {
   storageId: Id<"_storage">;
@@ -192,11 +194,13 @@ export function PostCard({
   const unlikePost = useMutation(api.posts.unlikePost);
   const sharePost = useMutation(api.posts.sharePost);
   const deletePost = useMutation(api.posts.deletePost);
+  const createTicket = useMutation(api.support.createTicket);
 
   const [liked, setLiked] = useState(post.likedByMe);
   const [likeCount, setLikeCount] = useState(post.likeCount);
   const [shareCount, setShareCount] = useState(post.shareCount);
   const [reportOpen, setReportOpen] = useState(false);
+  const [reportingPhish, setReportingPhish] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const isMine = me?._id === post.authorId;
@@ -260,6 +264,30 @@ export function PostCard({
     }
   };
 
+  // One-tap phishing report: files a ticket pre-attached to this post, the
+  // author, and the "No scams or phishing" Standard principle — no form, no
+  // explaining the situation. The subject/message come from the shared
+  // helper so the post and comment menus file identical tickets.
+  const reportPhishing = async () => {
+    if (reportingPhish) return;
+    setReportingPhish(true);
+    try {
+      await createTicket(
+        phishingTicketArgs({
+          postId: post._id,
+          offenderId: post.authorId,
+          content: post.content,
+          kind: "post",
+        }),
+      );
+      toast.success("Phishing report sent — our team will review it.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not send report.");
+    } finally {
+      setReportingPhish(false);
+    }
+  };
+
   const linkUrl = extractFirstUrl(post.content);
 
   const authorUsername = post.author?.username;
@@ -320,6 +348,10 @@ export function PostCard({
                   <DropdownMenuSeparator />
                 </>
               )}
+              <DropdownMenuItem onClick={() => void reportPhishing()}>
+                <ShieldAlert className="size-4 text-destructive" />
+                Report phishing
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setReportOpen(true)}>
                 <Flag className="size-4" />
                 Report post

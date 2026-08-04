@@ -317,6 +317,34 @@ async function main() {
     });
     check("admin can still open the silenced profile", profileAdmin !== null);
 
+    // ── 7b. One-tap phishing report: a ticket pre-attached to the post, ───
+    // the offender, and the "No scams or phishing" principle reaches the
+    // admin queue (the exact contract the post/comment menu quick action
+    // uses).
+    client.setAuth(B.token);
+    const ticketId = await client.mutation(api.support.createTicket, {
+      subject: "Report: No scams or phishing.",
+      message: `Reported as suspected phishing in a post — ${stamp}`,
+      postId: reviewPostId,
+      offenderId: C1.userId,
+      violation: "No scams or phishing.",
+      standardId: "no-scams",
+    });
+    check("a phishing report files a ticket immediately", typeof ticketId === "string");
+    client.setAuth(admin.token);
+    const tickets = await client.query(api.support.listTickets, {
+      paginationOpts: pag,
+    });
+    const ticket = tickets.page.find((t) => t._id === ticketId);
+    check(
+      "the admin queue shows the ticket pre-attached to the post and offender",
+      ticket !== undefined &&
+        ticket.standardId === "no-scams" &&
+        ticket.post?._id === reviewPostId &&
+        ticket.offender?._id === C1.userId &&
+        ticket.status === "open",
+    );
+
     // ── 8. Cleanup: real erasure removes every throwaway ───────────────────
     client.setAuth(C1.token);
     await client.mutation(api.account.deleteAccount);
