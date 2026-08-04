@@ -1,0 +1,108 @@
+#!/usr/bin/env node
+/**
+ * Clean up leftover QA test users from the production deployment.
+ *
+ * The QA suite creates throwaway accounts under the reserved `qa_` prefix
+ * (testHarness.createTestUser enforces it) and normally erases them in a
+ * finally block. A run that crashes hard — or a script bug — can leave one
+ * behind. This script finds every remaining `qa_*` account and erases it
+ * with the same full sweep the admin uses (removeAccount: posts, comments,
+ * follows, files, auth sessions, notifications — everything), so nothing
+ * QA-generated lingers in a real deployment.
+ *
+ * Safety: the harness gate (TEST_HARNESS_ENABLED=1 + TEST_HARNESS_SECRET)
+ * must be on, exactly like every other QA script. Only usernames matching
+ * the reserved `qa_` prefix are ever touched — a real account can never
+ * be matched. The owner/admin accounts are protected server-side too.
+ *
+ * Run:
+ *   TEST_HARNESS_SECRET=<secret> node scripts/cleanup-test-users.mjs
+ *   TEST_HARNESS_SECRET=<secret> npm run qa:cleanup-test-users
+ */
+import { ConvexHttpClient } from "convex/browser";
+
+import { api } from "../src/convex/_generated/api.js";
+
+const CONVEX_URL =
+  process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
+const HARNESS_SECRET = process.env.TEST_HARNESS_SECRET;
+
+if (!HARNESS_SECRET) {
+  console.error("Missing TEST_HARNESS_SECRET — set it to run the cleanup.");
+  process.exit(1);
+}
+
+const client = new ConvexHttpClient(CONVEX_URL);
+
+async function main() {
+  const { enabled } = await client.query(api.testHarness.isEnabled);
+  if (!enabled) {
+    console.log("(skip) the QA harness is disabled on this deployment —");
+    console.log("  enable TEST_HARNESS_ENABLED=1 + TEST_HARNESS_SECRET to run.");
+    return;
+  }
+  console.log(`Connected to ${CONVEX_URL}`);
+
+  // Mint an admin session through the harness so removeAccount's requireAdmin
+  // gate passes.
+  const admin = await client.mutation(api.testHarness.mintAdminSession, {
+    secret: HARNESS_SECRET,
+  });
+  if (!admin?.token) {
+    console.error("Could not mint an admin session.");
+    process.exit(1);
+  }
+  const adminClient = new ConvexHttpClient(CONVEX_URL);
+  adminClient.setAuth(admin.token);
+
+  // Paginate every user, collecting qa_* usernames.
+  const targets = [];
+  let cursor = null;
+  for (let page = 0; page < 200; page++) {
+    const res = await adminClient.query(api.admin.listUsers, {
+      paginationOpts: { numItems: 100, cursor },
+    });
+    for (const u of res.page) {
+      const username = (u.username ?? "").toLowerCase();
+      if (username.startsWith("qa_")) {
+        targets.push(u);
+      }
+    }
+    if (res.isDone) break;
+    cursor = res.continueCursor;
+  }
+
+  if (targets.length === 0) {
+    console.log("No leftover QA test users found — the deployment is clean.");
+    return;
+  }
+
+  console.log(`Found ${targets.length} QA test user(s) to erase:`);
+  for (const u of targets) {
+    console.log(`  - @${u.username} (${u.name ?? "no name"}, joined ${new Date(u._creationTime).toISOString()})`);
+  }
+
+  // Erase each with the full removeAccount sweep, citing a Standard principle.
+  let removed = 0;
+  for (const u of targets) {
+    try {
+      await adminClient.mutation(api.admin.removeAccount, {
+        userId: u._id,
+        standardId: "no-spam",
+        note: "Automated cleanup of leftover QA test account.",
+      });
+      removed++;
+      console.log(`  ✅ @${u.username} erased`);
+    } catch (err) {
+      console.error(
+        `  ❌ @${u.username} failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+  console.log(`\nDone: ${removed}/${targets.length} QA test users erased.`);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

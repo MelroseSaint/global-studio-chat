@@ -31,6 +31,7 @@
     "qa:session-lifetime": "node scripts/session-lifetime-qa.mjs",
     "qa:session-audit": "node scripts/session-audit.mjs",
     "qa:secrets": "node scripts/secrets-scan.mjs",
+    "qa:cleanup-test-users": "node scripts/cleanup-test-users.mjs",
     "turnstile:keys": "node scripts/set-turnstile-keys.mjs",
     "typecheck": "tsc -b --noEmit",
     "deploy": "npm run deploy:backend && npm run upload:version && npm run deploy:web",
