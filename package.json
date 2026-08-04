@@ -25,6 +25,7 @@
     "qa:admin-auth": "node scripts/admin-auth-qa.mjs",
     "qa:admin-auth-browser": "node scripts/admin-auth-browser-qa.mjs",
     "qa:admin-responsive": "node scripts/qa-admin-responsive.mjs",
+    "qa:pages-inflation": "node scripts/qa-pages-inflation.mjs",
     "qa:signup-e2e": "node scripts/signup-e2e-prod.mjs",
     "qa:cloudinary-health": "node scripts/cloudinary-health-probe.mjs",
     "qa:extend-sessions": "node scripts/extend-sessions.mjs",

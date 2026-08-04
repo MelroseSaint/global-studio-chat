@@ -27,8 +27,13 @@
  * browser, BROWSER_TIMEOUT_MS (default 30000).
  * Exit codes: 0 all checks passed, 1 a check failed, 2 missing password.
  */
-import { chromium } from "playwright";
-
+import {
+  createReporter,
+  launchBrowser,
+  measurePage,
+  signIn,
+  simulateSilkInflation,
+} from "./lib/qa-browser.mjs";
 import { passwordHint, resolveAdminPassword } from "./lib/qa-secrets.mjs";
 
 const SITE_URL = process.env.SITE_URL ?? "https://purewire.vercel.app";
@@ -37,6 +42,8 @@ const ADMIN_PASSWORD = resolveAdminPassword();
 const HEADED = process.env.HEADED === "1";
 const TIMEOUT = Number(process.env.BROWSER_TIMEOUT_MS ?? 30000);
 const NAV_TIMEOUT = 45000;
+const reporter = createReporter();
+const { check } = reporter;
 // How long to keep polling for a tab's panel content before giving up. The
 // panels stream in after the shell mounts, so we WAIT for each panel's
 // control-or-empty-state instead of sleeping a fixed amount — a flat sleep
@@ -68,127 +75,7 @@ const isPhoneWidth = (width) => width < 640;
 /** Every admin tab, in the order it appears in the UI. */
 const TABS = ["Users", "Tickets", "Content", "AI review", "Security", "Silenced", "Blocklist"];
 
-let passed = 0;
-let failed = 0;
-const failures = [];
 
-function check(name, ok, detail = "") {
-  if (ok) {
-    passed++;
-    console.log(`  ✅ ${name}`);
-  } else {
-    failed++;
-    failures.push(name);
-    console.log(`  ❌ ${name}${detail ? ` — ${detail}` : ""}`);
-  }
-}
-
-/**
- * Detect the Turnstile gate state. "inactive" when the widget isn't
- * rendered (no site key), "passed" when a token was produced, "blocked"
- * when the widget rendered but no token arrived — headless automation can
- * be challenged, and a human or a test-mode site key would be needed.
- */
-async function detectTurnstile(page) {
-  const widget = page.locator(".cf-turnstile");
-  if ((await widget.count()) === 0) return "inactive";
-  try {
-    await page.waitForSelector(".cf-turnstile iframe", { timeout: 15000 });
-  } catch {
-    return "blocked";
-  }
-  try {
-    await page.waitForFunction(
-      () => {
-        const input = document.querySelector(
-          'input[name="cf-turnstile-response"]',
-        );
-        return input !== null && input.value.length > 0;
-      },
-      { timeout: 20000 },
-    );
-    return "passed";
-  } catch {
-    return "blocked";
-  }
-}
-
-/** Sign in through the real Auth form and land on /home. */
-async function signIn(page) {
-  await page.goto(`${SITE_URL}/auth`, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector("#email", { timeout: TIMEOUT });
-  const gate = await detectTurnstile(page);
-  if (gate === "blocked") {
-    throw new Error(
-      "Turnstile challenge didn't auto-pass under automation — run with HEADED=1 and complete it by hand, or use a test-mode site key.",
-    );
-  }
-  await page.fill("#email", ADMIN_EMAIL);
-  await page.fill("#password", ADMIN_PASSWORD);
-  await page.locator('form button[type="submit"]').click();
-  const outcome = await Promise.race([
-    page.waitForURL("**/home", { timeout: NAV_TIMEOUT }).then(() => "home"),
-    page
-      .waitForSelector('p[class*="text-destructive"]', { timeout: NAV_TIMEOUT })
-      .then(() => "error"),
-  ]);
-  if (outcome !== "home") {
-    const url = page.url();
-    const err = await page
-      .locator('p[class*="text-destructive"]')
-      .first()
-      .textContent()
-      .catch(() => "");
-    throw new Error(`sign-in did not land on /home (${url}${err ? ` — ${err}` : ""})`);
-  }
-}
-
-/**
- * Measure the current page: page-level horizontal overflow plus any
- * non-fixed element whose right edge passes the viewport without a
- * clipping ancestor (overflow hidden/auto/scroll). The stats strip's cards
- * intentionally extend past the fold inside their own scroll container —
- * the clipping-ancestor check is what tells that apart from a real leak.
- */
-async function measurePage(page, label) {
-  const vp = await page.evaluate(() => ({
-    innerW: window.innerWidth,
-    scrollW: document.documentElement.scrollWidth,
-  }));
-  check(
-    `${label}: no horizontal overflow`,
-    vp.scrollW <= vp.innerW,
-    `scrollW=${vp.scrollW} innerW=${vp.innerW}`,
-  );
-  const leaks = await page.evaluate(() => {
-    const vw = window.innerWidth;
-    const out = [];
-    const clippedByAncestor = (el) => {
-      let n = el.parentElement;
-      while (n) {
-        const cs = getComputedStyle(n);
-        if (/(auto|scroll|hidden)/.test(cs.overflowX)) return true;
-        n = n.parentElement;
-      }
-      return false;
-    };
-    document.querySelectorAll("body *").forEach((el) => {
-      const r = el.getBoundingClientRect();
-      if (r.right > vw + 2 && r.width > 0 && !clippedByAncestor(el)) {
-        if (getComputedStyle(el).position === "fixed") return;
-        out.push(
-          `<${el.tagName}> r=${Math.round(r.right)} class="${(el.getAttribute("class") || "").slice(0, 60)}"`,
-        );
-      }
-    });
-    return out.slice(0, 6);
-  });
-  check(
-    `${label}: no elements leak past the viewport`,
-    leaks.length === 0,
-    leaks.join(" | "),
-  );
-}
 
 /**
  * Wait for a tab's panel to actually render. Each panel either shows live
@@ -265,15 +152,13 @@ async function inspectAdmin(page, widthLabel, width) {
   // scaling) that headless Chrome doesn't reproduce on its own. Every
   // measurePage below then proves the grids survive the larger rem sizes.
   if (width === 800) {
-    await page.evaluate(() => {
-      document.documentElement.style.fontSize = "21px";
-    });
+    await simulateSilkInflation(page);
   }
   // Wait for the default Users panel (the stats strip + rows stream in
   // after the shell mounts) before measuring the initial view.
   await waitForPanel(page, TAB_CONTROLS[0]);
 
-  await measurePage(page, `${widthLabel}: /admin`);
+  await measurePage(page, `${widthLabel}: /admin`, check);
 
   // Stats strip: present at every width; the swipe cue only on phones.
   check(
@@ -318,7 +203,7 @@ async function inspectAdmin(page, widthLabel, width) {
   for (const { tab, control, empty } of TAB_CONTROLS) {
     await page.getByRole("tab", { name: tab }).click();
     const state = await waitForPanel(page, { control, empty });
-    await measurePage(page, `${widthLabel}: ${tab} tab`);
+    await measurePage(page, `${widthLabel}: ${tab} tab`, check);
     const hasControl = state === "controls";
     const hasEmpty = state === "empty";
     check(
@@ -371,7 +256,7 @@ async function main() {
     process.exit(2);
   }
   console.log(`\nPureWire admin dashboard responsive QA (${SITE_URL})\n`);
-  const browser = await chromium.launch({ headless: !HEADED });
+  const browser = await launchBrowser({ headed: HEADED });
   try {
     for (const [label, width, height] of WIDTHS) {
       console.log(`\n--- ${label} (${width}px) ---`);
@@ -380,19 +265,21 @@ async function main() {
         deviceScaleFactor: 1,
       });
       page.setDefaultTimeout(TIMEOUT);
-      await signIn(page);
+      await signIn(page, {
+        siteUrl: SITE_URL,
+        email: ADMIN_EMAIL,
+        password: ADMIN_PASSWORD,
+        timeoutMs: TIMEOUT,
+        navTimeoutMs: NAV_TIMEOUT,
+      });
       await inspectAdmin(page, label, width);
       await page.close();
     }
   } finally {
     await browser.close();
   }
-  console.log(`\n${passed} passed, ${failed} failed`);
-  if (failed > 0) {
-    console.log("Failed checks:");
-    for (const f of failures) console.log(`  - ${f}`);
-    process.exit(1);
-  }
+  reporter.summary(SITE_URL);
+  if (reporter.failed > 0) process.exit(1);
 }
 
 main().catch((e) => {
