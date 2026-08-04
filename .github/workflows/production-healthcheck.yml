@@ -264,3 +264,123 @@ jobs:
               });
               console.log(`Closed Cloudinary alert issue #${issue.number}.`);
             }
+
+  moderation-reinstate:
+    # Proves the admin reinstatement loop end-to-end against production:
+    # scripts/reinstate-qa.mjs silences and bans a throwaway account, then
+    # reinstates it with a required reason and asserts it returns to full
+    # active status, the audit trail records the 'reinstate' action with the
+    # note, and its content becomes public again. Catches a regression in
+    # the restore path — or in the reason/audit contract — the moment it
+    # lands. Harness-gated (TEST_HARNESS_SECRET) like the session audit in
+    # the static gate; the job is skipped on repositories that haven't
+    # configured the harness yet, and runs on the same schedule as the
+    # auth loop (every push to main + nightly + manual dispatch).
+    name: Moderation reinstate loop
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the reinstate moderation QA
+        if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+        id: reinstate
+        env:
+          # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
+          # with TEST_HARNESS_ENABLED=1 set on the Convex deployment. Add the
+          # secret under Settings > Secrets > Actions.
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:reinstate 2>&1 | tee reinstate.log
+
+      - name: Upload the reinstate QA log
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: reinstate-log
+          path: reinstate.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own label
+      # so a moderation regression doesn't piggyback on (or get swallowed by)
+      # the auth-loop alert.
+      - name: Alert on failure
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-moderation";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Admin reinstatement check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The admin-reinstatement moderation QA failed against production.",
+                "",
+                "This means the restore path is broken: reinstated accounts may not",
+                "return to active status, the audit trail may not record the reason,",
+                "or reinstated content may not become public again.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the reinstate-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: ${{ success() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-moderation";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open moderation alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed moderation alert issue #${issue.number}.`);
+            }
