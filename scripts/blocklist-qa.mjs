@@ -212,22 +212,42 @@ async function main() {
     );
 
     // ── 4b. A feed with a `# Category:` header syncs into that bucket ────
-    // Points at PureWire's own data/adult feed, served from the deployed
-    // site (public/data/adult is mirrored by npm run data:sync). The parser
-    // must read the header and import a domain into its declared category,
-    // not the adult_other default.
+    // Points at a PureWire-served feed (public/data/adult/qa-routing.txt)
+    // carrying a FRESH domain — one not in the core list — so the sync
+    // actually inserts a row and the header routing is genuinely exercised:
+    // the parser must read `# Category: adult_fetish` and land the new
+    // domain there, not in the adult_other default.
+    const routingDomain = "qa-routing-feed.test";
     const feedSrc = await client.mutation(api.blocklist.upsertDomainSource, {
       name: `qa-feed-${stamp}`,
-      url: `https://purewire.vercel.app/data/adult/cam-domains.txt`,
+      url: `https://purewire.vercel.app/data/adult/qa-routing.txt`,
       format: "domain",
       enabled: true,
     });
     check("admin adds the purewire data/adult feed source", feedSrc?.ok === true);
-    const sync2 = await client.action(api.blocklist.syncExternalSources);
+    // The deployed site can trail the push briefly (a brand-new feed file
+    // 404s into the SPA fallback until the deploy lands), so poll for the
+    // OUTCOME — the fresh domain actually routed into its declared bucket
+    // — not merely a no-error sync. A healthy deploy gap must never fail
+    // the suite; a genuinely broken feed eventually fails the loop.
+    let routedRow = null;
+    let sync2 = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      sync2 = await client.action(api.blocklist.syncExternalSources);
+      const routed = await client.query(api.blocklist.getActiveBlocklist);
+      routedRow =
+        routed?.domains?.find((d) => d.domain === routingDomain) ?? null;
+      if (routedRow?.category === "adult_fetish") break;
+      await sleep(10_000);
+    }
     const feedRow = sync2?.results?.find((r) => r.name === `qa-feed-${stamp}`);
     check(
       "the data feed synced successfully (no error)",
       sync2?.ok === true && feedRow !== undefined && feedRow.error === undefined,
+    );
+    check(
+      "the # Category: header routed the new domain into adult_fetish",
+      routedRow?.category === "adult_fetish",
     );
 
     // ── 5. Pausing a domain un-blocks it ──────────────────────────────────
@@ -255,6 +275,9 @@ async function main() {
     });
     await client.mutation(api.blocklist.deleteDomainSource, {
       name: `qa-feed-${stamp}`,
+    });
+    await client.mutation(api.blocklist.deleteBlockedDomain, {
+      domain: routingDomain,
     });
     const afterCleanup = await client.query(api.blocklist.getActiveBlocklist);
     check(

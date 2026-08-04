@@ -36,6 +36,10 @@ const FILES = [
   { file: "clip-domains.txt", staticKey: "adult_clips", category: "adult_clips" },
   { file: "chat-domains.txt", staticKey: "adult_chat", category: "adult_chat" },
   { file: "escort-domains.txt", staticKey: "adult_escorts", category: "adult_escort" },
+  // fetish has no curated entries yet — the static list has no fetish
+  // bucket, so this file is intentionally created empty (the made-up key
+  // resolves to [] via `?? []`). Kept so the taxonomy is complete and a
+  // future fetish list has a home.
   { file: "fetish-domains.txt", staticKey: "adult_fetish_reserved", category: "adult_fetish" },
   { file: "community-domains.txt", staticKey: "adult_social", category: "adult_community" },
   { file: "redirects-domains.txt", staticKey: "adult_link_redirect", category: "adult_redirect" },

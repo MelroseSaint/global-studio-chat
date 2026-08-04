@@ -60,6 +60,18 @@ jobs:
       - name: Run the salt-rotation QA
         run: npm run qa:salt
 
+      # The blocklist feeds (data/adult/* and the public/ mirror) are
+      # GENERATED from BANNED_ADULT_HOSTS in src/convex/phishing.ts. This
+      # gate re-runs the generator and fails the push if it produces any
+      # diff — so a code-list edit that forgets `npm run data:sync` can
+      # never ship stale feeds (and a hand-edit of a feed file is caught
+      # too).
+      - name: Blocklist feeds match the code list
+        run: |
+          npm run data:sync
+          git diff --exit-code -- data public/data || \
+            (echo "::error::Blocklist data is out of sync with phishing.ts. Run 'npm run data:sync' and commit the result." && exit 1)
+
       # The permanent-session guarantee must never silently regress: if the
       # `session` config in convex/auth.ts is ever reverted to the library's
       # 30-day default, every member gets logged out automatically — the one

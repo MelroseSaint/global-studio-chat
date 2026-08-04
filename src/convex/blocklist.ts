@@ -539,8 +539,10 @@ function parseFeed(
   // A `# Category: adult_creator` header line (used by PureWire's own
   // data/adult feeds) tells us the bucket every entry belongs to, so a
   // synced feed lands in its real category instead of defaulting to
-  // adult_other. Comment lines are otherwise ignored.
-  for (const line of body.split(/\r?\n/)) {
+  // adult_other. Comment lines are otherwise ignored. Only the first few
+  // lines are examined: headers are at the top, and a huge external hosts
+  // feed (100k+ lines) must not be fully split/allocated twice per sync.
+  for (const line of body.split(/\r?\n/, 20)) {
     const m = /^#\s*category\s*:\s*([a-z_]+)\s*$/i.exec(line.trim());
     if (m !== null && validCategory(m[1])) {
       category = m[1];
