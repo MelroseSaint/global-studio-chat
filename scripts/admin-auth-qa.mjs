@@ -179,7 +179,7 @@ async function removeAccountChecks() {
       : typeof mediaUrl === "string"
         ? [{ url: mediaUrl, key: media.key, kind: "image", stripped: true }]
         : undefined;
-    const postRes = await userClient.mutation(api.posts.createPost, {
+    const postRes = await userClient.action(api.posts.createPost, {
       content: `Remove-account QA post ${stamp} — original text written by a human.`,
       ...(mediaItem ? { media: mediaItem } : {}),
       aiMediaStatus: "clean",

@@ -227,7 +227,7 @@ async function backendChecks() {
     );
 
     // Store the cleaned clip through a real post, then read it back.
-    const post = await client.mutation(api.posts.createPost, {
+    const post = await client.action(api.posts.createPost, {
       content: `Pipeline check video ${stamp}`,
       media: [{ storageId: cleanedItem.storageId, kind: "video", stripped: true }],
       aiMediaStatus: "clean",

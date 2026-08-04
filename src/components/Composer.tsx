@@ -1,4 +1,4 @@
-import { useAction, useMutation } from "convex/react";
+import { useAction } from "convex/react";
 import { Loader2, MapPin, Send, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -17,7 +17,7 @@ const MAX_LENGTH = 1000;
 
 export function Composer({ onPosted }: { onPosted?: () => void }) {
   const { user } = useAuth();
-  const createPost = useMutation(api.posts.createPost);
+  const createPost = useAction(api.posts.createPost);
   const scanMedia = useAction(api.aiContent.scanMediaForAi);
   const stripMedia = useAction(api.media.stripVideoMetadata);
   const [content, setContent] = useState("");

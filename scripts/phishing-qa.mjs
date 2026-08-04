@@ -120,7 +120,7 @@ async function main() {
   try {
     // ── 1. Negative controls: ordinary links post clean ────────────────────
     client.setAuth(C1.token);
-    const plainRes = await client.mutation(api.posts.createPost, {
+    const plainRes = await client.action(api.posts.createPost, {
       content: `Reading this today — https://example.com/article ${stamp}`,
     });
     check("a normal article link posts clean", plainRes.ok === true);
@@ -128,7 +128,7 @@ async function main() {
       "a clean link is not routed to review",
       plainRes.ok === true && plainRes.aiReviewReason === undefined,
     );
-    const officialRes = await client.mutation(api.posts.createPost, {
+    const officialRes = await client.action(api.posts.createPost, {
       content: `The platform lives at purewire.vercel.app — ${stamp}`,
     });
     check(
@@ -139,7 +139,7 @@ async function main() {
     // Runs on adultUser (not C1) so the 3-point block escalations don't
     // shadowban the phisher before the review/block tiers below exercise it.
     client.setAuth(adultUser.token);
-    const adultRes = await client.mutation(api.posts.createPost, {
+    const adultRes = await client.action(api.posts.createPost, {
       content: `New content on my page — https://onlyfans.com/fanclub ${stamp}`,
     });
     check("an adult subscription link is blocked in a post", adultRes.ok === false);
@@ -148,7 +148,7 @@ async function main() {
       typeof adultRes.error === "string" &&
         adultRes.error.includes("Adult platforms aren't allowed on PureWire"),
     );
-    const adultSubRes = await client.mutation(api.posts.createPost, {
+    const adultSubRes = await client.action(api.posts.createPost, {
       content: `Live now — https://m.chaturbate.com/${stamp}`,
     });
     check(
@@ -169,14 +169,14 @@ async function main() {
     client.setAuth(C1.token);
     // False-positive negative controls: innocent human speech must never be
     // blocked or review-queued.
-    const adviceRes = await client.mutation(api.posts.createPost, {
+    const adviceRes = await client.action(api.posts.createPost, {
       content: `Always verify your email after signing up — it protects your account. ${stamp}`,
     });
     check(
       "legit security advice posts clean",
       adviceRes.ok === true && adviceRes.aiReviewReason === undefined,
     );
-    const praiseRes = await client.mutation(api.posts.createPost, {
+    const praiseRes = await client.action(api.posts.createPost, {
       content: `You have won my respect today, friends. ${stamp}`,
     });
     check(
@@ -185,7 +185,7 @@ async function main() {
     );
 
     // ── 2. Review-tier post: link shortener → human queue, honest why ──────
-    const reviewRes = await client.mutation(api.posts.createPost, {
+    const reviewRes = await client.action(api.posts.createPost, {
       content: `Found something interesting — https://bit.ly/xYz123 ${stamp}`,
     });
     const reviewPostId = reviewRes.ok === true ? reviewRes.postId : null;
@@ -222,7 +222,7 @@ async function main() {
 
     // ── 3. Blocked-tier post: scam phrasing + PureWire lookalike domain ────
     client.setAuth(C1.token);
-    const blockRes = await client.mutation(api.posts.createPost, {
+    const blockRes = await client.action(api.posts.createPost, {
       content: `FREE followers!! Verify your account at http://purew1re-verify.com/login now ${stamp}`,
     });
     check(
@@ -283,7 +283,7 @@ async function main() {
 
     // ── 5. The comment surface, on a separate throwaway ────────────────────
     client.setAuth(B.token);
-    const bPostRes = await client.mutation(api.posts.createPost, {
+    const bPostRes = await client.action(api.posts.createPost, {
       content: `A post from the QA viewer to comment on — ${stamp}`,
     });
     const bPostId = bPostRes.ok === true ? bPostRes.postId : null;

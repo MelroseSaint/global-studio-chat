@@ -97,14 +97,14 @@ async function main() {
     // ── 1. Duplicate path (+3): B posts original text, A reposts it ────────
     client.setAuth(B.token);
     const original = `An original thought from the QA run — ${stamp}.`;
-    const bRes = await client.mutation(api.posts.createPost, {
+    const bRes = await client.action(api.posts.createPost, {
       content: original,
     });
     const bPostId = bRes.ok === true ? bRes.postId : null;
     client.setAuth(A.token);
     // createPost rejects duplicates with a structured result (not a thrown
     // error) so the quiet flag commits — check the result, not an exception.
-    const dupRes = await client.mutation(api.posts.createPost, {
+    const dupRes = await client.action(api.posts.createPost, {
       content: original,
     });
     const duplicateRejected =
@@ -117,7 +117,7 @@ async function main() {
       "digital space. Furthermore, it is important to note that, additionally, " +
       "in conclusion, we must not overlook how notably, crucially, and " +
       "significantly this matters overall.";
-    const aiRes = await client.mutation(api.posts.createPost, {
+    const aiRes = await client.action(api.posts.createPost, {
       content: aiText,
     });
     const aiPostId = aiRes.ok === true ? aiRes.postId : null;
@@ -157,7 +157,7 @@ async function main() {
     // signal is the flag landing in the history, which the state poll below
     // asserts; these fillers just exhaust the budget.
     for (let i = 0; i < 40; i++) {
-      await client.mutation(api.posts.createPost, {
+      await client.action(api.posts.createPost, {
         content: `QA filler ${i} — a plain human note ${stamp}.`,
       });
     }
@@ -183,7 +183,7 @@ async function main() {
     );
 
     // ── 4. Post-shadowban activity: everything is silently absorbed ─────────
-    const phantomRes = await client.mutation(api.posts.createPost, {
+    const phantomRes = await client.action(api.posts.createPost, {
       content: `A quiet post after the silence — ${stamp}.`,
     });
     const phantomPostId = phantomRes.ok === true ? phantomRes.postId : null;

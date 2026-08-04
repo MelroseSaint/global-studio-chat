@@ -109,7 +109,7 @@ async function main() {
   try {
     // ── 1. The throwaway posts something that must survive to the end ──────
     client.setAuth(A.token);
-    const postRes = await client.mutation(api.posts.createPost, {
+    const postRes = await client.action(api.posts.createPost, {
       content: `A public note from the reinstate QA run — ${stamp}.`,
     });
     const postId = postRes.ok === true ? postRes.postId : null;
@@ -125,7 +125,7 @@ async function main() {
       "digital space. Furthermore, it is important to note that, additionally, " +
       "in conclusion, we must not overlook how notably, crucially, and " +
       "significantly this matters overall.";
-    const aiRes = await client.mutation(api.posts.createPost, {
+    const aiRes = await client.action(api.posts.createPost, {
       content: aiText,
     });
     check("AI-suspicious post accepted into review", aiRes.ok === true);
@@ -253,7 +253,7 @@ async function main() {
           n.message === "Your account was reinstated — welcome back.",
       ),
     );
-    const postAgain = await client.mutation(api.posts.createPost, {
+    const postAgain = await client.action(api.posts.createPost, {
       content: `Posting again after reinstatement — ${stamp}.`,
     });
     check("reinstated account can post again", postAgain.ok === true);

@@ -1,4 +1,4 @@
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { AudioLines, ChevronLeft, ChevronRight, Loader2, Plus, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -21,7 +21,7 @@ import { useAuth } from "@/hooks/use-auth";
 export function StoriesBar() {
   const { user } = useAuth();
   const stories = useQuery(api.stories.listStories);
-  const createStory = useMutation(api.stories.createStory);
+  const createStory = useAction(api.stories.createStory);
   const scanMedia = useAction(api.aiContent.scanMediaForAi);
   const stripMedia = useAction(api.media.stripVideoMetadata);
   const [addOpen, setAddOpen] = useState(false);

@@ -100,7 +100,7 @@ async function main() {
 
     const postUser = await mkUser("p");
     client.setAuth(postUser.token);
-    const postRes = await client.mutation(api.posts.createPost, {
+    const postRes = await client.action(api.posts.createPost, {
       content: `Check my page — https://${testDomain}/hello ${stamp}`,
     });
     check("a post linking the added domain is rejected", postRes?.ok === false);
@@ -109,14 +109,14 @@ async function main() {
       typeof postRes?.error === "string" &&
         postRes.error.includes("Adult platforms aren't allowed"),
     );
-    const subPost = await client.mutation(api.posts.createPost, {
+    const subPost = await client.action(api.posts.createPost, {
       content: `Live at https://${subDomain}/now ${stamp}`,
     });
     check("a subdomain of the added domain is rejected too", subPost?.ok === false);
 
     const commentUser = await mkUser("c");
     client.setAuth(commentUser.token);
-    const host = await client.mutation(api.posts.createPost, {
+    const host = await client.action(api.posts.createPost, {
       content: `host post ${stamp}`,
     });
     const commentRes = await client.mutation(api.posts.addComment, {
@@ -138,13 +138,15 @@ async function main() {
 
     const storyUser = await mkUser("s");
     client.setAuth(storyUser.token);
-    const story = await client.mutation(api.stories.createStory, {
+    const story = await client.action(api.stories.createStory, {
+      // A valid media item on the Cloudinary host — the point of this check
+      // is the CAPTION blocklist, and the media gate now requires a real
+      // item (storage id or https URL), never a degenerate empty object.
       media: {
         kind: "image",
-        storageId: undefined,
-        url: undefined,
-        key: undefined,
-        stripped: false,
+        url: `https://res.cloudinary.com/saintscloud/qa-${stamp}.jpg`,
+        key: `qa-${stamp}`,
+        stripped: true,
       },
       caption: `watch https://${testDomain} ${stamp}`,
     });
@@ -161,7 +163,7 @@ async function main() {
     check("admin adds a URL pattern", patAdd?.ok === true);
     const patUser = await mkUser("pat");
     client.setAuth(patUser.token);
-    const patternPost = await client.mutation(api.posts.createPost, {
+    const patternPost = await client.action(api.posts.createPost, {
       content: `Claim it at https://example.com/${patternText} ${stamp}`,
     });
     check("a post matching a blocked URL pattern is rejected", patternPost?.ok === false);
@@ -293,7 +295,7 @@ async function main() {
     // Pause check runs on the post throwaway — it's only had one block,
     // well under the shadowban threshold.
     client.setAuth(postUser.token);
-    const afterPause = await client.mutation(api.posts.createPost, {
+    const afterPause = await client.action(api.posts.createPost, {
       content: `Check https://${testDomain}/again ${stamp}`,
     });
     check("pausing the entry lets the domain post again", afterPause?.ok === true);
@@ -323,21 +325,21 @@ async function main() {
 
     const idnUserA = await mkUser("idn-u");
     client.setAuth(idnUserA.token);
-    const idnUnicodePost = await client.mutation(api.posts.createPost, {
+    const idnUnicodePost = await client.action(api.posts.createPost, {
       content: `visit https://${idnDomain}/x ${stamp}`,
     });
     check("a Unicode host is caught against its xn-- block", idnUnicodePost?.ok === false);
 
     const idnUserB = await mkUser("idn-p");
     client.setAuth(idnUserB.token);
-    const idnPunyPost = await client.mutation(api.posts.createPost, {
+    const idnPunyPost = await client.action(api.posts.createPost, {
       content: `visit https://${storedIdn.domain}/y ${stamp}`,
     });
     check("the xn-- form is caught identically", idnPunyPost?.ok === false);
 
     const idnUserC = await mkUser("idn-s");
     client.setAuth(idnUserC.token);
-    const idnSubPost = await client.mutation(api.posts.createPost, {
+    const idnSubPost = await client.action(api.posts.createPost, {
       content: `visit https://m.${idnDomain}/z ${stamp}`,
     });
     check("a subdomain of the IDN host is caught too", idnSubPost?.ok === false);
@@ -420,21 +422,21 @@ async function main() {
     // clean — the chain walk, not a substring test, is what enforces this.
     const negUser = await mkUser("neg");
     client.setAuth(negUser.token);
-    const lookalike = await client.mutation(api.posts.createPost, {
+    const lookalike = await client.action(api.posts.createPost, {
       content: `https://notonlyfans.com/post ${stamp}`,
     });
     check(
       "notonlyfans.com is NOT matched (lookalike stays clean)",
       lookalike?.ok === true,
     );
-    const embedded = await client.mutation(api.posts.createPost, {
+    const embedded = await client.action(api.posts.createPost, {
       content: `https://onlyfans.com.example.com/post ${stamp}`,
     });
     check(
       "onlyfans.com.example.com is NOT matched (embedded stays clean)",
       embedded?.ok === true,
     );
-    const cleanDom = await client.mutation(api.posts.createPost, {
+    const cleanDom = await client.action(api.posts.createPost, {
       content: `https://sub.onlyfans.com.example.org/post ${stamp}`,
     });
     check(
@@ -457,7 +459,7 @@ async function main() {
       const u = await mkUser(tag);
       obfUsers.push(u);
       client.setAuth(u.token);
-      const res = await client.mutation(api.posts.createPost, {
+      const res = await client.action(api.posts.createPost, {
         content: `check out ${text} ${stamp}`,
       });
       check(`obfuscated form “${text}” is blocked`, res?.ok === false);
@@ -466,7 +468,7 @@ async function main() {
     // obfuscation detection only fires on REAL blocked entries.
     const obfNeg = await mkUser("obf-neg");
     client.setAuth(obfNeg.token);
-    const obfClean = await client.mutation(api.posts.createPost, {
+    const obfClean = await client.action(api.posts.createPost, {
       content: `notonlyfans dot com is nothing ${stamp}`,
     });
     check("a textual lookalike stays clean (no false positive)", obfClean?.ok === true);
