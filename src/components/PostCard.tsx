@@ -333,7 +333,7 @@ export function PostCard({
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-8 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+                className="size-8 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100 max-sm:opacity-100"
               >
                 <MoreHorizontal className="size-4" />
               </Button>

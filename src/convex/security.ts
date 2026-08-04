@@ -213,6 +213,10 @@ const RATE_LIMITS: Record<string, { windowMs: number; limit: number }> = {
   // Direct messages: a generous budget for real conversations that still
   // blunts bot floods and mass-message spam.
   dm: { windowMs: 60 * 60_000, limit: 300 }, // 300 DMs/hour
+  // Support tickets and reports: a generous per-user budget that still
+  // blunts report-flooding — a malicious member can't drown the admin
+  // queue with one-tap phishing reports.
+  ticket: { windowMs: 60 * 60_000, limit: 10 }, // 10 tickets/hour
 };
 
 /**

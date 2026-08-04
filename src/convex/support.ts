@@ -6,6 +6,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { isStandardId } from "@/lib/standard";
 
 import { publicUser } from "./privacy";
+import { enforceRateLimit } from "./security";
 
 import { mutation, query } from "./_generated/server";
 
@@ -29,6 +30,27 @@ export const createTicket = mutation({
     // A report/ticket can only cite a real PureWire Standard principle.
     if (args.standardId !== undefined && !isStandardId(args.standardId)) {
       throw new Error("That isn't a principle of the PureWire Standard.");
+    }
+    // Reports are an anti-abuse surface — budget them like every other
+    // activity so a malicious member can't flood the admin queue with
+    // one-tap reports (10/hour is far beyond genuine reporting).
+    await enforceRateLimit(ctx, userId, "ticket");
+    // Dedupe: the same member reporting the same target under the same
+    // principle twice (double-tap, a second device) returns the existing
+    // open ticket instead of inserting a duplicate.
+    const mine = await ctx.db
+      .query("supportTickets")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const existing = mine.find(
+      (t) =>
+        t.status === "open" &&
+        t.standardId === args.standardId &&
+        (t.postId ?? null) === (args.postId ?? null) &&
+        (t.offenderId ?? null) === (args.offenderId ?? null),
+    );
+    if (existing !== undefined) {
+      return existing._id;
     }
     return await ctx.db.insert("supportTickets", {
       userId,

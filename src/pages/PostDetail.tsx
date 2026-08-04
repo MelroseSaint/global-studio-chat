@@ -33,7 +33,6 @@ function CommentMenu({
 }: {
   postId: Id<"posts">;
   comment: {
-    _id: string;
     author: { _id: string } | null;
     content: string;
   };
@@ -67,7 +66,7 @@ function CommentMenu({
         <Button
           variant="ghost"
           size="icon"
-          className="size-7 shrink-0 rounded-full opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+          className="size-7 shrink-0 rounded-full opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100 max-sm:opacity-100"
           aria-label="Comment actions"
         >
           <MoreHorizontal className="size-4" />

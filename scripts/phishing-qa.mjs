@@ -331,6 +331,20 @@ async function main() {
       standardId: "no-scams",
     });
     check("a phishing report files a ticket immediately", typeof ticketId === "string");
+    // A second tap on the same target must dedupe to the existing open
+    // ticket instead of flooding the admin queue.
+    const ticketId2 = await client.mutation(api.support.createTicket, {
+      subject: "Report: No scams or phishing.",
+      message: `Reported as suspected phishing in a post — ${stamp}`,
+      postId: reviewPostId,
+      offenderId: C1.userId,
+      violation: "No scams or phishing.",
+      standardId: "no-scams",
+    });
+    check(
+      "a duplicate one-tap report dedupes to the same ticket",
+      ticketId2 === ticketId,
+    );
     client.setAuth(admin.token);
     const tickets = await client.query(api.support.listTickets, {
       paginationOpts: pag,
