@@ -380,9 +380,11 @@ jobs:
             }
 
   blocklist-sync:
-    # Scheduled blocklist refresh: runs syncExternalSources against
-    # production so every enabled external feed (the data/adult/ files plus
-    # admin-added sources) refreshes on the spec's 24h cadence — the action
+    # Scheduled blocklist refresh + bootstrap: the script first runs
+    # registerDefaultBlocklistSources (the self-healing bootstrap that
+    # re-inserts the built-in PureWire data/adult feeds if they were ever
+    # removed), then runs syncExternalSources against production so every
+    # enabled external feed refreshes on the spec's 24h cadence — the action
     # validates, normalizes, dedupes, adds new domains, deactivates domains
     # that vanished from their feed, and records lastVerifiedAt + the sync
     # timestamp for traceability. Runs nightly (plus every push + manual),
@@ -611,4 +613,130 @@ jobs:
                 state_reason: "completed",
               });
               console.log(`Closed moderation alert issue #${issue.number}.`);
+            }
+
+  blocklist-qa:
+    # Serialized AFTER blocklist-sync (needs:) — the QA registers its own
+    # transient qa-feed-* test sources, and the sync refreshes every enabled
+    # source, so a parallel run would let the sync pick up the QA's live test
+    # feed (a documented 10/11 flake from this exact race). Running them in
+    # order keeps the nightly gate deterministic.
+    needs: blocklist-sync
+    # The blocklist engine's full 54-check QA against production:
+    # scripts/blocklist-qa.mjs seeds the core adult list, adds a domain and
+    # asserts it blocks across every surface, verifies IDN->punycode and
+    # obfuscation handling (notonlyfans.com must NOT match, subdomains must),
+    # follows redirect chains to the final host, syncs an external source,
+    # and asserts cleanup leaves the deployment pristine. Runs nightly on the
+    # same schedule as the auth loop — so the TLD/obfuscation guarantees and
+    # the feed lifecycle are asserted against the LIVE deployment every 24h,
+    # not just on push (static-audit only checks the feed files match the
+    # code list; it never runs the engine against production). Harness-gated
+    # (TEST_HARNESS_SECRET) like the phishing and sync jobs; skipped on
+    # repositories that haven't configured the harness yet.
+    name: Blocklist engine QA (54 checks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the blocklist engine QA
+        if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+        id: blocklist-qa
+        env:
+          # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
+          # with TEST_HARNESS_ENABLED=1 set on the Convex deployment.
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:blocklist 2>&1 | tee blocklist-qa.log
+
+      - name: Upload the blocklist QA log
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blocklist-qa-log
+          path: blocklist-qa.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own label
+      # so a blocklist regression doesn't piggyback on another job's alert.
+      - name: Alert on failure
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-blocklist-qa";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Blocklist engine QA failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The blocklist-engine QA (54 checks) failed against production.",
+                "",
+                "This means the domain-blocking layer is broken: a blocked domain",
+                "may be slipping through, an obfuscation/IDN case may regress,",
+                "or the feed lifecycle (sync/cleanup) may be leaving stale state.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the blocklist-qa-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: ${{ success() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-blocklist-qa";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open blocklist QA alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed blocklist QA alert issue #${issue.number}.`);
             }
