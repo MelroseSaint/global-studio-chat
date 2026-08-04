@@ -1,5 +1,12 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { Loader2, MessageCircle, MoreHorizontal, Send, ShieldAlert } from "lucide-react";
+import {
+  Loader2,
+  MessageCircle,
+  MoreHorizontal,
+  ScanSearch,
+  Send,
+  ShieldAlert,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { useParams } from "react-router";
@@ -19,6 +26,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
+import { aiReportTicketArgs } from "@/lib/ai-report";
 import { phishingTicketArgs } from "@/lib/phishing-report";
 
 /**
@@ -39,6 +47,30 @@ function CommentMenu({
 }) {
   const createTicket = useMutation(api.support.createTicket);
   const [reporting, setReporting] = useState(false);
+  const [reportingAi, setReportingAi] = useState(false);
+
+  // One-tap AI-content report on a comment, mirroring the phishing quick
+  // action: files a ticket pre-attached to the post, the commenter, and the
+  // "No AI-generated content" principle.
+  const reportAi = async () => {
+    if (reportingAi) return;
+    setReportingAi(true);
+    try {
+      await createTicket(
+        aiReportTicketArgs({
+          postId,
+          offenderId: comment.author?._id as Id<"users"> | undefined,
+          content: comment.content,
+          kind: "comment",
+        }),
+      );
+      toast.success("AI-content report sent — our team will review it.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not send report.");
+    } finally {
+      setReportingAi(false);
+    }
+  };
 
   const reportPhishing = async () => {
     if (reporting) return;
@@ -73,6 +105,10 @@ function CommentMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => void reportAi()}>
+          <ScanSearch className="size-4 text-oxide" />
+          Report AI content
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => void reportPhishing()}>
           <ShieldAlert className="size-4 text-destructive" />
           Report phishing

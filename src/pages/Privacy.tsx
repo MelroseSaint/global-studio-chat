@@ -5,6 +5,7 @@ import {
   FileDown,
   Fingerprint,
   Lock,
+  ScanSearch,
   ShieldCheck,
   Trash2,
   UserX,
@@ -58,6 +59,12 @@ const neverStored = [
     detail:
       "Photos are processed in your own browser before upload: hidden EXIF metadata — GPS coordinates, camera serials, device info — is stripped, and images are resized and compressed. Raw camera files with embedded location data never reach PureWire's servers. Videos get the same treatment twice: most clips are re-encoded in your browser, and every video is remuxed again on PureWire's servers — GPS, camera, and device atoms are stripped from the container before it is ever served. A video can never leak where or on what it was filmed. Posts whose media was scrubbed carry a tiny \"Metadata stripped\" note on the media itself, so it is always visible that GPS and device data were removed before upload.",
   },
+  {
+    icon: ScanSearch,
+    title: "AI provenance is checked, not collected",
+    detail:
+      "To keep PureWire human-made, uploaded files are inspected in memory for AI-generator metadata, invisible watermarks (like Google's SynthID), and Content Credentials (C2PA) manifests. The scan reads the file's own provenance and returns only a verdict — clean, needs review, or blocked — and, when a manifest declares a camera capture, a \"Content Credentials verified\" label on the post. No image is stored, analyzed, or retained by the scan itself; the checked bytes are your uploaded file and nothing more.",
+  },
 ];
 
 const stored = [
@@ -89,7 +96,7 @@ const stored = [
   {
     title: "Safety signals",
     detail:
-      "Short-lived rate-limit markers and a risk score used only to spot bots, farms, and stolen content. These are used to protect the platform and never leave it.",
+      "Short-lived rate-limit markers, a risk score used only to spot bots, farms, and stolen content, and — when the automated scanners flag a post — the reason it was flagged (what the scan found) and the Content Credentials verdict, so a human reviewer can judge the flag. These are used to protect the platform and never leave it.",
   },
   {
     title: "Support tickets",

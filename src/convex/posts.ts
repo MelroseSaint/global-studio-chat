@@ -21,6 +21,7 @@ import {
   enforceActive,
   enforceRateLimit,
   enforceRateLimitResult,
+  escalateForAiSpam,
   escalateSilently,
   hiddenAuthorIds,
   isSandboxed,
@@ -210,7 +211,13 @@ async function notifyMentions(
  * the action's return never flows through the generated `internal` namespace
  * (TS7022 — see the same pattern in links.ts/media.ts). */
 type CreatePostResult =
-  | { ok: true; postId: Id<"posts">; aiReviewReason?: string }
+  | {
+      ok: true;
+      postId: Id<"posts">;
+      aiReviewReason?: string;
+      // Positive C2PA provenance the server verified (see scanMediaForAi).
+      c2paVerifiedHuman?: boolean;
+    }
   | { ok: false; error: string };
 
 export const createPost = action({
@@ -264,6 +271,11 @@ export const createPost = action({
       throw new Error("Not authenticated");
     }
     let verifiedStatus: "clean" | "review" | "blocked" = "clean";
+    // Positive Content Credentials provenance: true when any attached item's
+    // C2PA manifest declared a camera capture. Verified server-side from
+    // the stored bytes (never accepted from the client), then stored on the
+    // post so viewers see the "Content Credentials verified" label.
+    let c2paVerifiedHuman: boolean | undefined;
     if (media !== undefined && media.length > 0) {
       const scan = await ctx.runAction(api.aiContent.scanMediaForAi, {
         media: media.map((m) => ({
@@ -273,6 +285,9 @@ export const createPost = action({
         })),
       });
       verifiedStatus = scan.status;
+      if (scan.status === "clean") {
+        c2paVerifiedHuman = scan.c2paVerifiedHuman;
+      }
     }
     return (await ctx.runMutation(
       internal.posts.createPostInternal,
@@ -281,6 +296,7 @@ export const createPost = action({
         media,
         mediaHashes,
         aiMediaStatus: verifiedStatus,
+        c2paVerifiedHuman,
         location,
       },
     )) as CreatePostResult;
@@ -320,10 +336,18 @@ export const createPostInternal = internalMutation({
     // ONLY writer of posts — the client claim is never trusted, the action
     // recomputes it against the stored bytes.
     aiMediaStatus: v.optional(AI_MEDIA_STATUS),
+    // Positive Content Credentials provenance verified server-side from the
+    // stored bytes (the createPost action computes it via scanMediaForAi;
+    // the client can never set it). Stored so viewers see the
+    // "Content Credentials verified" label.
+    c2paVerifiedHuman: v.optional(v.boolean()),
     // Optional place the post was shared from (see the Local feed).
     location: v.optional(locationValidator),
   },
-  handler: async (ctx, { content, media, mediaHashes, aiMediaStatus, location }) => {
+  handler: async (
+    ctx,
+    { content, media, mediaHashes, aiMediaStatus, c2paVerifiedHuman, location },
+  ) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       // ConvexError so the message survives the action → client boundary
@@ -432,6 +456,7 @@ export const createPostInternal = internalMutation({
         content: text,
         media,
         aiStatus: "clean",
+        c2paVerifiedHuman,
         likeCount: 0,
         commentCount: 0,
         shareCount: 0,
@@ -497,6 +522,9 @@ export const createPostInternal = internalMutation({
       // same atomicity the duplicate path handles), so a repeat offender
       // quietly accumulates toward a shadowban.
       await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      // Accounts whose whole purpose is AI spam accelerate past the
+      // one-off threshold toward a quiet shadowban (see security.ts).
+      await escalateForAiSpam(ctx, userId);
       return {
         ok: false,
         error:
@@ -505,6 +533,7 @@ export const createPostInternal = internalMutation({
     }
     if (aiMediaStatus === "blocked") {
       await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      await escalateForAiSpam(ctx, userId);
       return {
         ok: false,
         error:
@@ -571,6 +600,11 @@ export const createPostInternal = internalMutation({
       // Repeated suspicious content moves an account toward a quiet
       // shadowban instead of an abrupt ban. Phishing-suspicious content
       // counts as its own signal so the Silenced tab can show the mix.
+      // NOTE: the AI-spam accelerator deliberately does NOT run here — the
+      // review tier exists because the statistical scan false-positives on
+      // genuine formal writers, so a human reviews these posts first and an
+      // account is never accelerated toward a shadowban for merely tripping
+      // the review queue. Only unambiguous AI hard-blocks accelerate.
       await escalateSilently(
         ctx,
         userId,
@@ -592,6 +626,9 @@ export const createPostInternal = internalMutation({
       originalityVerified: fp !== undefined,
       aiStatus: needsReview ? "review" : "clean",
       aiStatusReason: needsReview ? aiStatusReason : undefined,
+      // Content Credentials provenance the server verified from the stored
+      // bytes — the "Content Credentials verified" label on the post.
+      c2paVerifiedHuman,
       likeCount: 0,
       commentCount: 0,
       shareCount: 0,
@@ -621,6 +658,7 @@ export const createPostInternal = internalMutation({
       // watching it silently disappear. Same signal list the admin queue
       // shows.
       aiReviewReason: needsReview ? aiStatusReason : undefined,
+      c2paVerifiedHuman,
     };
   },
 });
@@ -958,6 +996,7 @@ export const addComment = mutation({
       // INLINE with the structured result (a thrown error would roll the
       // flag back), so repeat AI commenters quietly shadowban.
       await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      await escalateForAiSpam(ctx, userId);
       return {
         ok: false,
         error:
@@ -965,6 +1004,7 @@ export const addComment = mutation({
       };
     }
     if (textScan.status === "review") {
+      // Review-tier only — never accelerated (see the post path note).
       await escalateSilently(ctx, userId, 1, "ai", "ai-review-comment");
     }
     // Comments get the phishing scan too (static + DB blocklist).

@@ -1328,6 +1328,7 @@ const REASON_LABELS: Record<string, { label: string; cls: string }> = {
 const SOURCE_LABELS: Record<string, string> = {
   "duplicate-post": "Rejected duplicate post",
   "ai-review": "AI-suspicious content",
+  "ai-spam": "Repeat AI-content pattern (accelerated)",
   "rateLimit:post": "Posting budget",
   "rateLimit:comment": "Commenting budget",
   "rateLimit:like": "Liking budget",
@@ -1829,6 +1830,7 @@ function AiReviewPanel() {
     _creationTime: number;
     content: string;
     aiStatusReason?: string | null;
+    c2paVerifiedHuman?: boolean | null;
     author: { username?: string | null; name?: string | null } | null;
   }[];
 
@@ -1944,6 +1946,15 @@ function AiReviewPanel() {
                 <ScanSearch className="mt-0.5 size-3 shrink-0" />
                 <span className="line-clamp-2">{p.aiStatusReason}</span>
               </p>
+            ) : null}
+            {p.c2paVerifiedHuman ? (
+              <span
+                className="mt-1 inline-flex items-center gap-1 rounded-full border border-copper/40 bg-copper/15 px-2 py-0.5 text-[11px] font-medium text-copper"
+                title="The attached media's C2PA manifest declares a camera capture — positive provenance."
+              >
+                <ShieldCheck className="size-3" />
+                C2PA camera capture
+              </span>
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">

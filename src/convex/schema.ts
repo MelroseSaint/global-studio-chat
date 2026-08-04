@@ -151,6 +151,12 @@ const schema = defineSchema({
     // metadata, a missing scan verdict, …). Shown in the admin AI-review
     // queue so a human can judge the flag without re-reading everything.
     aiStatusReason: v.optional(v.string()),
+    // Content Credentials (C2PA) provenance, verified server-side from the
+    // stored media bytes: true when any attached item's manifest declared a
+    // camera capture (digitalCapture/compositeCapture). Positive provenance
+    // only — an AI-asserting manifest blocks at upload, so this field can
+    // never be set on a post whose media declared machine-made.
+    c2paVerifiedHuman: v.optional(v.boolean()),
     likeCount: v.number(),
     commentCount: v.number(),
     shareCount: v.number(),

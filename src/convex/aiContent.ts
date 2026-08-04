@@ -4,6 +4,7 @@ import {
   scanImageBytes,
   scanMediaBytes,
   type AiScanResult,
+  type C2paInfo,
 } from "@/lib/ai-media-scan";
 
 import { action } from "./_generated/server";
@@ -371,11 +372,26 @@ export const scanMediaForAi = action({
     ),
   },
   returns: v.union(
-    v.object({ status: v.literal("clean") }),
+    v.object({
+      status: v.literal("clean"),
+      // Positive provenance: true when any scanned item's Content
+      // Credentials declared a camera capture. The caller stores it on the
+      // post so viewers see "Content Credentials verified" — the label the
+      // file itself asserted.
+      c2paVerifiedHuman: v.optional(v.boolean()),
+    }),
     v.object({ status: v.literal("review"), reason: v.string() }),
     v.object({ status: v.literal("blocked"), reason: v.string() }),
   ),
-  handler: async (ctx, { media }): Promise<AiScanResult> => {
+  handler: async (ctx, { media }): Promise<
+    | { status: "clean"; c2paVerifiedHuman?: boolean }
+    | { status: "review"; reason: string }
+    | { status: "blocked"; reason: string }
+  > => {
+    // Positive provenance carried from every scanned item: when ANY item's
+    // Content Credentials declare camera capture, the post can be marked
+    // "Content Credentials verified" — the label the file itself asserted.
+    let anyHumanCapture = false;
     for (const item of media) {
       let bytes: ArrayBuffer | null = null;
       if (item.url !== undefined) {
@@ -402,7 +418,10 @@ export const scanMediaForAi = action({
       if (result.status !== "clean") {
         return result;
       }
+      if ((result as { c2pa?: C2paInfo }).c2pa?.humanCapture === true) {
+        anyHumanCapture = true;
+      }
     }
-    return { status: "clean" };
+    return { status: "clean", c2paVerifiedHuman: anyHumanCapture };
   },
 });

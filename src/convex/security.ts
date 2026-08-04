@@ -429,6 +429,58 @@ export async function escalateSilently(
   }
 }
 
+/**
+ * AI-spam accelerator: accounts dedicated to AI-generated spam.
+ *
+ * One AI flag is a mistake; a pattern of them inside a short window is an
+ * account whose whole purpose is machine-made content. Called by the
+ * post/comment paths after each AI BLOCK (self-identified AI text or
+ * AI-generator media — the unambiguous signals with no innocent reading).
+ * It counts the account's recent `ai-blocked` events and, at the repeat
+ * threshold, escalates bonus points with a distinct source (`ai-spam`) so
+ * the Silenced tab's breakdown shows the account wasn't merely unlucky —
+ * it was persistently pushing machine-made content and was silenced for
+ * that pattern.
+ *
+ * Deliberately counts ONLY hard-blocked AI content, never review-tier
+ * flags: the review queue exists precisely because the statistical scan
+ * false-positives on genuine human writers with formal styles, so an
+ * account that merely trips the review tier must never be accelerated
+ * toward a shadowban — a human looks at those posts first.
+ *
+ * Decay is inherited from escalateSilently (same 7-day window), so a
+ * genuine creator who briefly experiments never accumulates toward this.
+ */
+const AI_SPAM_WINDOW_MS = 7 * 24 * 3600_000;
+const AI_SPAM_THRESHOLD = 3; // AI-blocked events before acceleration
+const AI_SPAM_BONUS = 2;
+
+export async function escalateForAiSpam(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+): Promise<void> {
+  const user = await ctx.db.get(userId);
+  if (user === null || user.role === "admin" || user.shadowban === true) {
+    return;
+  }
+  const cutoff = Date.now() - AI_SPAM_WINDOW_MS;
+  const events = await ctx.db
+    .query("silentFlagEvents")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(100);
+  // Only unambiguous hard blocks count toward the accelerator — review
+  // flags (statistical false-positive-prone) never do.
+  const aiBlocks = events.filter(
+    (e) =>
+      e.reason === "ai" &&
+      e.source === "ai-blocked" &&
+      e._creationTime >= cutoff,
+  );
+  if (aiBlocks.length >= AI_SPAM_THRESHOLD) {
+    await escalateSilently(ctx, userId, AI_SPAM_BONUS, "ai", "ai-spam");
+  }
+}
+
 /** Throw unless the account is allowed to post/engage. */
 export async function enforceActive(
   ctx: MutationCtx,

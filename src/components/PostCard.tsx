@@ -12,6 +12,7 @@ import {
   ScanSearch,
   Share2,
   ShieldAlert,
+  ShieldCheck,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -34,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
+import { aiReportTicketArgs } from "@/lib/ai-report";
 import { extractFirstUrl, formatCount, postUrl, timeAgo } from "@/lib/format";
 import { phishingTicketArgs } from "@/lib/phishing-report";
 import { cn } from "@/lib/utils";
@@ -81,6 +83,10 @@ export interface PostItem {
   // posts; the reason below is the signal list that tripped the scan.
   aiStatus?: string | null;
   aiStatusReason?: string | null;
+  // Content Credentials (C2PA): true when the server verified that an
+  // attached item's manifest declared a camera capture — the file's own
+  // provenance, shown as a "Content Credentials verified" label.
+  c2paVerifiedHuman?: boolean | null;
 }
 
 /** Render @mentions and URLs inside post text. */
@@ -201,6 +207,7 @@ export function PostCard({
   const [shareCount, setShareCount] = useState(post.shareCount);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportingPhish, setReportingPhish] = useState(false);
+  const [reportingAi, setReportingAi] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const isMine = me?._id === post.authorId;
@@ -261,6 +268,30 @@ export function PostCard({
       navigate("/home", { replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not delete post.");
+    }
+  };
+
+  // One-tap AI report: files a ticket pre-attached to this post, the
+  // author, and the "No AI-generated content" Standard principle. Members
+  // are the human net on top of the automated scanner — this is how they
+  // flag what the scanner missed, with one click and no form.
+  const reportAi = async () => {
+    if (reportingAi) return;
+    setReportingAi(true);
+    try {
+      await createTicket(
+        aiReportTicketArgs({
+          postId: post._id,
+          offenderId: post.authorId,
+          content: post.content,
+          kind: "post",
+        }),
+      );
+      toast.success("AI-content report sent — our team will review it.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not send report.");
+    } finally {
+      setReportingAi(false);
     }
   };
 
@@ -348,6 +379,10 @@ export function PostCard({
                   <DropdownMenuSeparator />
                 </>
               )}
+              <DropdownMenuItem onClick={() => void reportAi()}>
+                <ScanSearch className="size-4 text-oxide" />
+                Report AI content
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => void reportPhishing()}>
                 <ShieldAlert className="size-4 text-destructive" />
                 Report phishing
@@ -371,6 +406,15 @@ export function PostCard({
             >
               <BadgeCheck className="size-3" />
               Original
+            </span>
+          ) : null}
+          {post.c2paVerifiedHuman ? (
+            <span
+              className="mt-0.5 flex shrink-0 items-center gap-1 rounded-full border border-copper/40 bg-copper/15 px-2 py-0.5 text-[11px] font-semibold text-copper"
+              title="Content Credentials verified — the attached media's C2PA manifest declares it was captured by a camera, not generated."
+            >
+              <ShieldCheck className="size-3" />
+              Content Credentials verified
             </span>
           ) : null}
         </div>

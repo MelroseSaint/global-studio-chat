@@ -29,9 +29,33 @@
  */
 
 export type AiScanResult =
-  | { status: "clean" }
+  | { status: "clean"; c2pa?: C2paInfo }
   | { status: "review"; reason: string }
   | { status: "blocked"; reason: string };
+
+/**
+ * Content Credentials (C2PA) provenance found in a file.
+ *
+ * C2PA is the open standard cameras and editors use to record how a file
+ * was made. Its `digitalSourceType` assertion names the origin: an AI model
+ * (`trainedAlgorithmicMedia`, `compositeWithTrainedAlgorithmicMedia`), a
+ * camera capture (`digitalCapture`, `compositeCapture`), or other automated
+ * processes. Reading it turns a file's own provenance into a verdict:
+ *
+ * - `aiAsserted` — the manifest itself says an AI model created/edited the
+ *   content. Under the platform's zero-tolerance policy that admission is
+ *   BLOCKED (it is the machine's own declaration, stronger than a marker).
+ * - `humanCapture` — the manifest says a camera captured the content. That
+ *   is positive provenance: the post is marked "Content Credentials
+ *   verified" instead of merely passing the scan.
+ * - presence alone, or an unreadable/compressed manifest, is provenance
+ *   only — never a flag on its own.
+ */
+export type C2paInfo = {
+  present: boolean;
+  humanCapture: boolean;
+  aiAsserted: boolean;
+};
 
 // ─────────────────────────── Marker catalogs ───────────────────────────
 
@@ -188,26 +212,30 @@ const DEEPFAKE_REVIEW_MARKERS = ["deepfake", "faceapp"];
  * C2PA / JUMBF provenance and Google SynthID watermark markers.
  *
  * C2PA (Content Credentials) is the open standard cameras and editors use
- * to record how a file was made. `trainedAlgorithmicMedia` is C2PA's
- * explicit declaration that an AI model created or edited the content —
- * under the platform's zero-tolerance policy that declaration is BLOCKED
- * (it is the machine's own admission). A bare `c2pa` manifest is just
- * provenance, not proof of AI, so it stays on the review tier. SynthID is
- * Google's watermarking system for AI-generated media; its presence is a
+ * to record how a file was made. `trainedAlgorithmicMedia` and
+ * `compositeWithTrainedAlgorithmicMedia` are C2PA's explicit declarations
+ * that an AI model created or edited the content — under the platform's
+ * zero-tolerance policy those declarations are BLOCKED (they are the
+ * machine's own admission). These raw-string markers are the fallback net;
+ * the structured C2PA parser (see extractC2pa) is the primary path and
+ * reads the manifest's digitalSourceType properly. SynthID is Google's
+ * invisible watermarking system for AI-generated media; its presence is a
  * hard block.
  */
 const PROVENANCE_BLOCK_MARKERS = [
   "trainedalgorithmicmedia", // C2PA: AI model was involved — explicit admission
-  "synthid", // Google's AI-media watermark
+  "compositewithtrainedalgorithmicmedia", // C2PA: AI was composited into the media
+  "synthid", // Google's invisible AI-media watermark
 ];
 
-/** C2PA presence without an AI assertion — provenance only, human checks. */
-const PROVENANCE_REVIEW_MARKERS = [
-  "contentcredentials", // C2PA reader/verifier signatures
-  "c2pa.actions", // C2PA action log (may contain the AI assertion)
-  "c2pa", // C2PA manifest / reader signatures
-  "jumbf", // JUMBF container C2PA manifests live in
-];
+/**
+ * Deliberately no C2PA-presence review markers: a bare C2PA manifest is
+ * provenance, not a violation — genuine cameras (and editors that sign
+ * content) embed Content Credentials too, and flagging every signed photo
+ * into the human queue would drown real creators. The structured parser
+ * (extractC2pa) decides from the manifest's actual assertion instead, so
+ * nothing C2PA-related is added to the review list here.
+ */
 
 /**
  * Audio/video AI-generator signatures. Compound tool names are
@@ -296,6 +324,210 @@ const AV_REVIEW_MARKERS = [
   "text to video",
   "text-to-video",
 ];
+
+// ─────────────────────────── C2PA / Content Credentials ───────────────────────────
+
+/**
+ * C2PA digitalSourceType values the platform cares about, per the IPTC
+ * newscodes vocabulary. These URIs appear verbatim in the manifest JSON
+ * (CBOR-encoded inside JUMBF, but the strings stay plain ASCII), so a
+ * byte search of the manifest region reads them without decoding CBOR.
+ */
+const C2PA_AI_SOURCES = [
+  "trainedalgorithmicmedia",
+  "compositewithtrainedalgorithmicmedia",
+];
+const C2PA_HUMAN_SOURCES = ["digitalcapture", "compositecapture"];
+
+/** Classify a manifest region's declared source type. */
+function classifyC2pa(text: string): C2paInfo {
+  const lower = text.toLowerCase();
+  const aiAsserted = C2PA_AI_SOURCES.some((s) => lower.includes(s));
+  const humanCapture = !aiAsserted && C2PA_HUMAN_SOURCES.some((s) => lower.includes(s));
+  return { present: true, humanCapture, aiAsserted };
+}
+
+/**
+ * Extract the C2PA manifest region from a JPEG. C2PA lives in an APP11
+ * segment whose payload starts with the 8-byte "JPEG-MBX" signature,
+ * followed by the JUMBF superbox. Camera-signed JPEGs carry one of these;
+ * AI pipelines that embed Content Credentials do too.
+ */
+function jpegC2pa(bytes: ArrayBuffer): C2paInfo | null {
+  const b = u8(bytes);
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let off = 2;
+  for (let seg = 0; seg < 96; seg++) {
+    if (off + 4 > b.length) break;
+    if (b[off] !== 0xff) break;
+    const marker = b[off + 1];
+    if (marker === 0xd9 || marker === 0xda) break;
+    const len = u16(b, off + 2);
+    if (len < 2) break;
+    const payload = off + 4;
+    const end = payload + len - 2;
+    if (end > b.length) break;
+    if (marker === 0xeb) {
+      // APP11: JPEG-MBX + JUMBF superbox payload
+      if (latin1Region(b, payload, 8) === "JPEG-MBX") {
+        const text = latin1Region(b, payload + 8, end - payload - 8);
+        if (text.length > 0) return classifyC2pa(text);
+        return { present: true, humanCapture: false, aiAsserted: false };
+      }
+    }
+    off = end;
+  }
+  return null;
+}
+
+/**
+ * Extract the C2PA manifest region from a PNG. The manifest is stored in
+ * an iTXt chunk whose keyword is "C2PA" (spec; tEXt appears in the wild).
+ * The payload is usually zlib-compressed — we can't inflate in the stripped
+ * isolate, so a compressed manifest is detected as present-but-unreadable
+ * (provenance only, never a verdict). Uncompressed manifests are read and
+ * classified.
+ */
+function pngC2pa(bytes: ArrayBuffer): C2paInfo | null {
+  const b = u8(bytes);
+  if (b.length < 8) return null;
+  let off = 8;
+  for (let chunk = 0; chunk < 64; chunk++) {
+    if (off + 8 > b.length) break;
+    const len = u32(b, off);
+    const type = latin1Region(b, off + 4, 4);
+    const dataOff = off + 8;
+    const dataEnd = dataOff + len;
+    if (dataEnd > b.length) break;
+    if (type === "iTXt" || type === "tEXt") {
+      const nul = b.indexOf(0, dataOff);
+      if (nul !== -1 && nul < dataEnd) {
+        const key = latin1Region(b, dataOff, nul - dataOff).toLowerCase();
+        if (key === "c2pa") {
+          if (type === "tEXt") {
+            const val = latin1Region(b, nul + 1, dataEnd - nul - 1);
+            return val.length > 0
+              ? classifyC2pa(val)
+              : { present: true, humanCapture: false, aiAsserted: false };
+          }
+          // iTXt: keyword\0 compFlag compMethod lang\0 translated\0 text
+          const compFlag = b[nul + 1] ?? 0;
+          if (compFlag !== 0) {
+            // Compressed (zlib) — present, unreadable here.
+            return { present: true, humanCapture: false, aiAsserted: false };
+          }
+          const langStart = nul + 3;
+          const nul2 = b.indexOf(0, langStart);
+          if (nul2 !== -1 && nul2 + 1 < dataEnd) {
+            const transStart = nul2 + 1;
+            const nul3 = b.indexOf(0, transStart);
+            if (nul3 !== -1 && nul3 + 1 <= dataEnd) {
+              const val = utf8Region(b, nul3 + 1, dataEnd - nul3 - 1);
+              if (val.length > 0) return classifyC2pa(val);
+            }
+          }
+          return { present: true, humanCapture: false, aiAsserted: false };
+        }
+      }
+    }
+    off = dataEnd + 4; // skip CRC
+  }
+  return null;
+}
+
+/**
+ * Extract the C2PA manifest region from an MP4/MOV. Manifests are stored
+ * as `jumb` boxes (a JUMBF container), typically inside a `jumbo` box or
+ * nested in udta/meta. Walk the atom tree and read the first jumb payload.
+ */
+function mp4C2pa(bytes: ArrayBuffer): C2paInfo | null {
+  const b = u8(bytes);
+  const find = (start: number, depth: number): string | null => {
+    if (depth > 6 || start + 8 > b.length) return null;
+    let off = start;
+    let boxes = 0;
+    while (off + 8 <= b.length && boxes < 512) {
+      let size = u32(b, off);
+      const type = latin1Region(b, off + 4, 4);
+      let header = 8;
+      if (size === 1) {
+        if (off + 16 > b.length) return null;
+        size = u32(b, off + 8);
+        header = 16;
+      } else if (size === 0) {
+        size = b.length - off;
+      }
+      if (size < header) return null;
+      const payload = off + header;
+      const end = off + size;
+      if (end > b.length) return null;
+      boxes++;
+      if (type === "jumb") {
+        return latin1Region(b, payload, end - payload);
+      }
+      if (CONTAINER_ATOMS.has(type) || type === "jumbo") {
+        const childStart =
+          type === "meta" && payload + 4 <= end ? payload + 4 : payload;
+        const found = find(childStart, depth + 1);
+        if (found !== null) return found;
+      }
+      off = end;
+    }
+    return null;
+  };
+  const text = find(0, 0);
+  if (text === null) return null;
+  return text.length > 0
+    ? classifyC2pa(text)
+    : { present: true, humanCapture: false, aiAsserted: false };
+}
+
+/** Extract the C2PA manifest region from a WebP (RIFF `jumb` chunk). */
+function webpC2pa(bytes: ArrayBuffer): C2paInfo | null {
+  const b = u8(bytes);
+  if (b.length < 20 || latin1Region(b, 0, 4) !== "RIFF") return null;
+  let off = 12;
+  for (let chunk = 0; chunk < 32; chunk++) {
+    if (off + 8 > b.length) break;
+    const fourCC = latin1Region(b, off, 4);
+    const len = u32(b, off + 4);
+    const dataOff = off + 8;
+    const dataEnd = dataOff + len;
+    if (dataEnd + (len % 2) > b.length) break;
+    if (fourCC === "jumb") {
+      const text = latin1Region(b, dataOff, len);
+      if (text.length > 0) return classifyC2pa(text);
+      return { present: true, humanCapture: false, aiAsserted: false };
+    }
+    off = dataEnd + (len % 2);
+  }
+  return null;
+}
+
+/**
+ * Read a file's Content Credentials manifest for the container it really
+ * is. Returns null when the container carries no C2PA/JUMBF region (or the
+ * format doesn't support one). Genuine camera photos and AI files that
+ * embed credentials both show up here — the assertion decides the verdict.
+ */
+function extractC2pa(container: Container, bytes: ArrayBuffer): C2paInfo | null {
+  switch (container) {
+    case "jpeg":
+      return jpegC2pa(bytes);
+    case "png":
+      return pngC2pa(bytes);
+    case "mp4":
+      return mp4C2pa(bytes);
+    case "webp":
+      return webpC2pa(bytes);
+    default:
+      return null;
+  }
+}
+
+/** Reason for a C2PA-declared AI file: the file's own provenance admits it. */
+const C2PA_AI_REASON =
+  "This file's Content Credentials declare it was made or edited with an AI model — that isn't allowed on PureWire.";
 
 // ─────────────────────────── Byte helpers ───────────────────────────
 
@@ -482,7 +714,7 @@ function matchMarkers(
 }
 
 const ALL_BLOCK = [...IMAGE_GENERATOR_MARKERS, ...DEEPFAKE_MARKERS, ...AV_GENERATOR_MARKERS, ...PROVENANCE_BLOCK_MARKERS];
-const ALL_REVIEW = [...DEEPFAKE_REVIEW_MARKERS, ...AV_REVIEW_MARKERS, ...PROVENANCE_REVIEW_MARKERS];
+const ALL_REVIEW = [...DEEPFAKE_REVIEW_MARKERS, ...AV_REVIEW_MARKERS];
 
 /**
  * Short but unambiguous tool signatures that are safe to match in RAW bytes
@@ -583,8 +815,9 @@ function containerMismatch(
 
 /**
  * Scan raw image bytes for generator/deepfake markers. Validates the
- * container first (a renamed file is an evasion tell), then walks the
- * structured metadata, then falls back to the raw head/tail sweep.
+ * container first (a renamed file is an evasion tell), then reads the
+ * Content Credentials manifest — the file's own provenance — then walks
+ * the structured metadata, then falls back to the raw head/tail sweep.
  */
 export function scanImageBytes(bytes: ArrayBuffer): AiScanResult {
   const container = detectContainer(bytes);
@@ -592,30 +825,13 @@ export function scanImageBytes(bytes: ArrayBuffer): AiScanResult {
   if (mismatch !== null) {
     return { status: "review", reason: mismatch };
   }
-  const meta = extractMeta(container, bytes);
-  const raw = bytesToLatin1(bytes);
-  const hit = matchMarkers(
-    meta.fields,
-    meta.free,
-    raw,
-    ALL_BLOCK,
-    ALL_REVIEW,
-    BLOCK_REASON,
-    REVIEW_REASON,
-  );
-  if (hit !== null) return hit;
-  return { status: "clean" };
-}
-
-/**
- * Scan raw audio/video bytes for AI-generator markers. Same pipeline as
- * images: container validation + structured atom/tag parsing + raw sweep.
- */
-export function scanMediaBytes(bytes: ArrayBuffer): AiScanResult {
-  const container = detectContainer(bytes);
-  const mismatch = containerMismatch(container, "media");
-  if (mismatch !== null) {
-    return { status: "review", reason: mismatch };
+  // C2PA first: the manifest's own digitalSourceType is stronger evidence
+  // than any marker — a file that declares itself AI-made is blocked on
+  // its own admission; one that declares camera capture is clean with its
+  // provenance carried on the verdict.
+  const c2pa = extractC2pa(container, bytes);
+  if (c2pa !== null && c2pa.aiAsserted) {
+    return { status: "blocked", reason: C2PA_AI_REASON };
   }
   const meta = extractMeta(container, bytes);
   const raw = bytesToLatin1(bytes);
@@ -629,7 +845,45 @@ export function scanMediaBytes(bytes: ArrayBuffer): AiScanResult {
     REVIEW_REASON,
   );
   if (hit !== null) return hit;
-  return { status: "clean" };
+  return {
+    status: "clean",
+    // Carry positive provenance forward so the post can be marked
+    // "Content Credentials verified" (see createPostInternal).
+    c2pa: c2pa !== null && c2pa.humanCapture ? c2pa : undefined,
+  };
+}
+
+/**
+ * Scan raw audio/video bytes for AI-generator markers. Same pipeline as
+ * images: container validation + C2PA provenance + structured atom/tag
+ * parsing + raw sweep.
+ */
+export function scanMediaBytes(bytes: ArrayBuffer): AiScanResult {
+  const container = detectContainer(bytes);
+  const mismatch = containerMismatch(container, "media");
+  if (mismatch !== null) {
+    return { status: "review", reason: mismatch };
+  }
+  const c2pa = extractC2pa(container, bytes);
+  if (c2pa !== null && c2pa.aiAsserted) {
+    return { status: "blocked", reason: C2PA_AI_REASON };
+  }
+  const meta = extractMeta(container, bytes);
+  const raw = bytesToLatin1(bytes);
+  const hit = matchMarkers(
+    meta.fields,
+    meta.free,
+    raw,
+    ALL_BLOCK,
+    ALL_REVIEW,
+    BLOCK_REASON,
+    REVIEW_REASON,
+  );
+  if (hit !== null) return hit;
+  return {
+    status: "clean",
+    c2pa: c2pa !== null && c2pa.humanCapture ? c2pa : undefined,
+  };
 }
 
 // ─────────────────────────── Container detection ───────────────────────────
@@ -710,6 +964,27 @@ const emptyMeta: ExtractedMeta = { fields: [], free: [] };
 // ─────────────────────────── PNG ───────────────────────────
 
 /**
+ * PNG text keywords that are STRUCTURED evidence when their value names an
+ * AI tool — a "Software" field or an "parameters"/"prompt"/"workflow"
+ * chunk is the generator speaking directly. Every other keyword
+ * (Comment, Description, Title, Author, …) is free text: a bare brand in a
+ * comment is exactly the false-positive case the raw-safe filter protects
+ * against, so it must reach the matcher as a free string, never as a
+ * field. (This mirrors EXIF, where only the software/model tags are
+ * fields and COM comments stay free.)
+ */
+const PNG_FIELD_KEYWORDS = new Set([
+  "software",
+  "parameters",
+  "prompt",
+  "workflow",
+  "artist",
+  "copyright",
+  "generator",
+  "creation_software",
+]);
+
+/**
  * Walk PNG chunks and collect text chunks. Stable Diffusion WebUI writes a
  * `parameters` tEXt chunk; ComfyUI writes `prompt`/`workflow`; editors write
  * `Software`, `Comment`, `Description`. These are the strongest AI signal in
@@ -736,7 +1011,9 @@ function parsePng(bytes: ArrayBuffer): ExtractedMeta {
       if (nul !== -1 && nul < dataEnd) {
         const key = latin1Region(b, dataOff, nul - dataOff).toLowerCase();
         const val = latin1Region(b, nul + 1, dataEnd - nul - 1);
-        fields.push(`${key}: ${val}`);
+        if (PNG_FIELD_KEYWORDS.has(key)) {
+          fields.push(`${key}: ${val}`);
+        }
         free.push(val);
       }
     } else if (type === "iTXt") {
@@ -751,7 +1028,9 @@ function parsePng(bytes: ArrayBuffer): ExtractedMeta {
           const nul3 = b.indexOf(0, transStart);
           if (nul3 !== -1 && nul3 + 1 <= dataEnd) {
             const val = utf8Region(b, nul3 + 1, dataEnd - nul3 - 1);
-            fields.push(`${key}: ${val}`);
+            if (PNG_FIELD_KEYWORDS.has(key)) {
+              fields.push(`${key}: ${val}`);
+            }
             free.push(val);
           }
         }
@@ -763,7 +1042,9 @@ function parsePng(bytes: ArrayBuffer): ExtractedMeta {
       const nul = b.indexOf(0, dataOff);
       if (nul !== -1 && nul < dataEnd) {
         const key = latin1Region(b, dataOff, nul - dataOff).toLowerCase();
-        fields.push(`chunk: ${key}`);
+        if (PNG_FIELD_KEYWORDS.has(key)) {
+          fields.push(`chunk: ${key}`);
+        }
       }
     }
     off = dataEnd + 4; // skip CRC

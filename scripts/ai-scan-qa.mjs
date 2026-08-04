@@ -106,11 +106,12 @@ const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /** A minimal PNG with a tEXt chunk whose keyword/value are settable. */
 function pngWithText(keyword, value) {
+  // Real PNG chunk layout: length(4) + type(4) + data + crc(4).
   const textData = bytesOf([`${keyword}\0${value}`]);
-  const chunks = [bytesOf(["IHDR", u32be(13), new Uint8Array(13), u32be(0)])];
-  chunks.push(
+  const chunks = [
+    bytesOf([u32be(13), "IHDR", new Uint8Array(13), u32be(0)]),
     bytesOf([u32be(textData.byteLength), "tEXt", new Uint8Array(textData), u32be(0)]),
-  );
+  ];
   return bytesOf([new Uint8Array(PNG_SIG), ...chunks]);
 }
 
@@ -184,6 +185,65 @@ function mp4WithAtom(atomType, value) {
   return bytesOf([ftyp, moov]);
 }
 
+/** Normalize a payload that may be a string into bytes (UTF-8). */
+function payloadBytes(payload) {
+  return typeof payload === "string" ? new TextEncoder().encode(payload) : payload;
+}
+
+/** A minimal MP4 carrying a C2PA `jumb` box with a manifest payload. */
+function mp4WithJumb(payload) {
+  const pb = payloadBytes(payload);
+  const jumb = bytesOf([u32be(pb.byteLength + 8), "jumb", pb]);
+  const ftyp = bytesOf([u32be(16), "ftyp", "isom", u32be(0)]);
+  return bytesOf([ftyp, jumb]);
+}
+
+/** A JPEG with an APP11 C2PA segment (JPEG-MBX + JUMBF payload). */
+function jpegWithC2pa(payload) {
+  const data = bytesOf(["JPEG-MBX", payloadBytes(payload)]);
+  const segLen = data.byteLength + 2; // 2-byte segment length, as the format requires
+  const app11 = bytesOf([
+    new Uint8Array([(segLen >> 8) & 0xff, segLen & 0xff]),
+    new Uint8Array(data),
+  ]);
+  return bytesOf([
+    new Uint8Array([0xff, 0xd8]),
+    new Uint8Array([0xff, 0xeb]), // APP11
+    app11,
+    new Uint8Array([0xff, 0xd9]),
+  ]);
+}
+
+/** A WebP (RIFF....WEBP) with a `jumb` C2PA chunk. */
+function webpWithJumb(payload) {
+  const pb = payloadBytes(payload);
+  // RIFF word-aligns every chunk: odd-length payloads get a pad byte the
+  // parser accounts for (dataEnd + len%2), so the fixture must include it.
+  const pad = pb.byteLength % 2 === 1 ? new Uint8Array(1) : new Uint8Array(0);
+  const jumb = bytesOf(["jumb", u32be(pb.byteLength), new Uint8Array(pb), pad]);
+  const vp8 = bytesOf(["VP8 ", u32be(10), new Uint8Array(10)]);
+  const riffSize = 4 + jumb.byteLength + vp8.byteLength;
+  const riff = bytesOf(["RIFF", u32be(riffSize), "WEBP"]);
+  return bytesOf([riff, vp8, jumb]);
+}
+
+/** A PNG with an iTXt "C2PA" chunk (uncompressed manifest). */
+function pngWithC2pa(payload) {
+  // Real PNG chunk layout: length(4) + type(4) + data + crc(4).
+  const textData = bytesOf([
+    "C2PA\0",
+    new Uint8Array([0x00, 0x00]),
+    "en\0",
+    "\0",
+    payloadBytes(payload),
+  ]);
+  const chunks = [
+    bytesOf([u32be(13), "IHDR", new Uint8Array(13), u32be(0)]),
+    bytesOf([u32be(textData.byteLength), "iTXt", new Uint8Array(textData), u32be(0)]),
+  ];
+  return bytesOf([new Uint8Array(PNG_SIG), ...chunks]);
+}
+
 /** A minimal ID3v2 tag with one TSSE frame. */
 function id3WithFrame(frameId, value) {
   const payload = bytesOf([new Uint8Array([0x03]), value]); // encoding + text
@@ -228,6 +288,62 @@ function flacWithComment(comment) {
 }
 
 // ── text cases ───────────────────────────────────────────────────────────
+
+// ── C2PA / Content Credentials cases ─────────────────────────────────────
+
+/** A plausible C2PA digitalSourceType URI as it appears in a manifest. */
+const C2PA_SOURCE = (t) =>
+  `{"digitalSourceType":"http://cv.iptc.org/newscodes/digitalsourcetype/${t}"}`;
+
+function c2paChecks() {
+  console.log("\nContent Credentials (C2PA)");
+
+  // JPEG APP11 with a manifest asserting trainedAlgorithmicMedia — the
+  // file's own admission it was AI-made. Must block.
+  const jpegAi = scanImageBytes(jpegWithC2pa(C2PA_SOURCE("trainedAlgorithmicMedia")));
+  check("JPEG APP11 C2PA trainedAlgorithmicMedia is blocked", jpegAi.status === "blocked", jpegAi.reason);
+
+  const jpegComposite = scanImageBytes(
+    jpegWithC2pa(C2PA_SOURCE("compositeWithTrainedAlgorithmicMedia")),
+  );
+  check("JPEG APP11 C2PA compositeWithTrainedAlgorithmicMedia is blocked", jpegComposite.status === "blocked", jpegComposite.reason);
+
+  // A camera-signed photo: digitalCapture is positive provenance — clean
+  // and carrying the verified flag.
+  const jpegHuman = scanImageBytes(jpegWithC2pa(C2PA_SOURCE("digitalCapture")));
+  check("JPEG APP11 C2PA digitalCapture is clean", jpegHuman.status === "clean", jpegHuman.reason);
+  check("…and carries humanCapture provenance", jpegHuman.c2pa?.humanCapture === true);
+
+  // PNG iTXt "C2PA" chunk, uncompressed manifest.
+  const pngAi = scanImageBytes(pngWithC2pa(C2PA_SOURCE("trainedAlgorithmicMedia")));
+  check("PNG iTXt C2PA trainedAlgorithmicMedia is blocked", pngAi.status === "blocked", pngAi.reason);
+
+  const pngHuman = scanImageBytes(pngWithC2pa(C2PA_SOURCE("digitalCapture")));
+  check("PNG iTXt C2PA digitalCapture is clean + verified", pngHuman.status === "clean" && pngHuman.c2pa?.humanCapture === true);
+
+  // MP4 jumb box manifest.
+  const mp4Ai = scanMediaBytes(mp4WithJumb(C2PA_SOURCE("trainedAlgorithmicMedia")));
+  check("MP4 jumb C2PA trainedAlgorithmicMedia is blocked", mp4Ai.status === "blocked", mp4Ai.reason);
+
+  // WebP jumb chunk manifest.
+  const webpAi = scanImageBytes(webpWithJumb(C2PA_SOURCE("trainedAlgorithmicMedia")));
+  check("WebP jumb C2PA trainedAlgorithmicMedia is blocked", webpAi.status === "blocked", webpAi.reason);
+
+  const webpHuman = scanImageBytes(webpWithJumb(C2PA_SOURCE("digitalCapture")));
+  check(
+    "WebP jumb C2PA digitalCapture is clean + verified",
+    webpHuman.status === "clean" && webpHuman.c2pa?.humanCapture === true,
+  );
+
+  // A manifest without any recognized source type is provenance only — the
+  // platform must not flag a genuine signed file for merely having C2PA.
+  const jpegUnknown = scanImageBytes(jpegWithC2pa('{"claim_generator":"MyCamera"}'));
+  check("C2PA present without an AI/human assertion stays clean", jpegUnknown.status === "clean", jpegUnknown.reason);
+
+  // A clean camera JPEG with no C2PA at all stays clean with no provenance.
+  const jpegPlain = scanImageBytes(jpegWithExif("Pixel 8 Pro"));
+  check("plain JPEG without C2PA stays clean", jpegPlain.status === "clean");
+}
 
 function textChecks() {
   console.log("\nText scan (scanText)");
@@ -335,6 +451,7 @@ function mediaChecks() {
 textChecks();
 imageChecks();
 mediaChecks();
+c2paChecks();
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) {
