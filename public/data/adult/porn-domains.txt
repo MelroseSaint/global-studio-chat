@@ -1,0 +1,16 @@
+# PureWire blocklist feed — adult_porn
+# One domain per line, lowercased, no scheme. Lines starting with # are ignored.
+# Category: adult_porn
+pornhub.com
+xvideos.com
+xnxx.com
+xhamster.com
+redgifs.com
+spankbang.com
+eporner.com
+tube8.com
+beeg.com
+drtuber.com
+tnaflix.com
+motherless.com
+fapello.com

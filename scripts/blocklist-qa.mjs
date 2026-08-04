@@ -212,12 +212,13 @@ async function main() {
     );
 
     // ── 4b. A feed with a `# Category:` header syncs into that bucket ────
-    // Points at PureWire's own data/adult feed (hosted on raw.githubusercontent
-    // once this repo pushes). The parser must read the header and import a
-    // domain into its declared category, not the adult_other default.
+    // Points at PureWire's own data/adult feed, served from the deployed
+    // site (public/data/adult is mirrored by npm run data:sync). The parser
+    // must read the header and import a domain into its declared category,
+    // not the adult_other default.
     const feedSrc = await client.mutation(api.blocklist.upsertDomainSource, {
       name: `qa-feed-${stamp}`,
-      url: `https://raw.githubusercontent.com/MelroseSaint/global-studio-chat/main/data/adult/cam-domains.txt`,
+      url: `https://purewire.vercel.app/data/adult/cam-domains.txt`,
       format: "domain",
       enabled: true,
     });

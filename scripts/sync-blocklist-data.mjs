@@ -21,6 +21,11 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PHISHING = join(ROOT, "src", "convex", "phishing.ts");
 const DATA_DIR = join(ROOT, "data", "adult");
+// The feeds are ALSO copied into Vite's public/ directory so the deployed
+// site serves them at /data/adult/<file>. That is the source-URL the admin
+// registers in the blocklist engine — self-hosted, no third-party host
+// (raw.githubusercontent cannot serve a private repo, so the app must).
+const PUBLIC_DIR = join(ROOT, "public", "data", "adult");
 
 /** File name → (static category key, DB category). Kept in step with the
  * 12-category taxonomy in phishing.ts and the engine's blockedDomains. */
@@ -107,7 +112,23 @@ function main() {
     }
   }
 
-  console.log(`\nBlocklist data sync complete — ${total} domains across ${FILES.length} files.`);
+  // Mirror into public/ so the deployed site serves the feeds.
+  mkdirSync(PUBLIC_DIR, { recursive: true });
+  for (const { file } of FILES) {
+    writeFileSync(
+      join(PUBLIC_DIR, file),
+      readFileSync(join(DATA_DIR, file), "utf8"),
+    );
+  }
+  writeFileSync(
+    join(PUBLIC_DIR, "README.md"),
+    readFileSync(join(DATA_DIR, "README.md"), "utf8"),
+  );
+
+  console.log(
+    `\nBlocklist data sync complete — ${total} domains across ${FILES.length} files ` +
+      `(mirrored to public/data/adult for serving).`,
+  );
 }
 
 main();
