@@ -460,6 +460,7 @@ export const createPostInternal = internalMutation({
         likeCount: 0,
         commentCount: 0,
         shareCount: 0,
+        reportCount: 0,
         location: postLocation,
       });
       // Server-side video privacy safety net: a client that skipped the
@@ -632,6 +633,7 @@ export const createPostInternal = internalMutation({
       likeCount: 0,
       commentCount: 0,
       shareCount: 0,
+      reportCount: 0,
       location: postLocation,
     });
     const me = await ctx.db.get(userId);

@@ -738,7 +738,7 @@ function TicketsPanel() {
     violation?: string | null;
     standardId?: string | null;
     user: { username?: string | null; name?: string | null } | null;
-    post: { _id: string; content?: string } | null;
+    post: { _id: string; content?: string; aiStatus?: string | null; aiStatusReason?: string | null; c2paVerifiedHuman?: boolean | null } | null;
     offender: { username?: string | null; name?: string | null } | null;
   }[];
 
@@ -806,10 +806,37 @@ function TicketsPanel() {
             </p>
           ) : null}
           {t.post ? (
-            <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-              <span className="font-semibold text-foreground">Post:</span>{" "}
-              {t.post.content?.slice(0, 140)}
-            </p>
+            <>
+              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                <span className="font-semibold text-foreground">Post:</span>{" "}
+                {t.post.content?.slice(0, 140)}
+              </p>
+              {t.standardId === "no-ai-content" && t.post ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-semibold text-muted-foreground">
+                    AI scan evidence:
+                  </span>
+                  {t.post.aiStatus === "review" ? (
+                    <span className="rounded-full bg-oxide/10 px-2 py-0.5 font-medium text-oxide">
+                      AI review
+                      {t.post.aiStatusReason
+                        ? ` — ${t.post.aiStatusReason}`
+                        : ""}
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
+                      No automated flag
+                    </span>
+                  )}
+                  {t.post.c2paVerifiedHuman ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-copper/10 px-2 py-0.5 font-medium text-copper">
+                      <ShieldCheck className="size-3" />
+                      Content Credentials verified
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
           ) : null}
           <p className="mt-2 rounded-lg bg-muted/50 p-3 text-sm">{t.message}</p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -832,6 +859,7 @@ function TicketsPanel() {
                 <option value="open">Open</option>
                 <option value="in_review">In review</option>
                 <option value="resolved">Resolved</option>
+                <option value="dismissed">Dismissed (false report)</option>
               </select>
               <Button
                 size="sm"
@@ -871,6 +899,7 @@ function PostsPanel() {
     _id: string;
     _creationTime: number;
     content: string;
+    reportCount?: number | null;
     author: { username?: string | null; name?: string | null } | null;
   }[];
 
@@ -924,6 +953,12 @@ function PostsPanel() {
               {timeAgo(p._creationTime)}
             </p>
             <p className="mt-1 line-clamp-2 text-sm">{p.content}</p>
+            {(p.reportCount ?? 0) > 0 ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                <Flag className="mr-1 inline-block size-3" />
+                {p.reportCount} open report{(p.reportCount ?? 0) !== 1 ? "s" : ""}
+              </p>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Link
@@ -1831,6 +1866,7 @@ function AiReviewPanel() {
     content: string;
     aiStatusReason?: string | null;
     c2paVerifiedHuman?: boolean | null;
+    reportCount?: number | null;
     author: { username?: string | null; name?: string | null } | null;
   }[];
 
@@ -1941,6 +1977,12 @@ function AiReviewPanel() {
               {timeAgo(p._creationTime)}
             </p>
             <p className="mt-1 line-clamp-2 text-sm">{p.content}</p>
+            {(p.reportCount ?? 0) > 0 ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                <Flag className="mr-1 inline-block size-3" />
+                {p.reportCount} open report{(p.reportCount ?? 0) !== 1 ? "s" : ""}
+              </p>
+            ) : null}
             {p.aiStatusReason ? (
               <p className="mt-1 flex items-start gap-1 text-[11px] text-oxide dark:text-oxide-light">
                 <ScanSearch className="mt-0.5 size-3 shrink-0" />

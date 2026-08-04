@@ -160,6 +160,10 @@ const schema = defineSchema({
     likeCount: v.number(),
     commentCount: v.number(),
     shareCount: v.number(),
+    // How many open support tickets target this post — a live signal
+    // of member concern, shown to admins in the queue. Incremented on
+    // createTicket, decremented when a ticket resolves or is dismissed.
+    reportCount: v.optional(v.number()),
     // Optional place the post was shared from — powers the Local feed.
     location: v.optional(
       v.object({
@@ -290,7 +294,10 @@ const schema = defineSchema({
     violation: v.optional(v.string()),
     // The PureWire Standard principle the report or ticket cites.
     standardId: v.optional(v.string()),
-    status: v.union(v.literal("open"), v.literal("in_review"), v.literal("resolved")),
+    // "dismissed" = the report was reviewed and found false — keeps a
+    // record so repeat false flags from the same reporter on the same
+    // target can be recognized.
+    status: v.union(v.literal("open"), v.literal("in_review"), v.literal("resolved"), v.literal("dismissed")),
     reply: v.optional(v.string()),
   })
     .index("by_user", ["userId"])

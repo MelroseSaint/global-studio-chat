@@ -52,7 +52,7 @@ export const createTicket = mutation({
     if (existing !== undefined) {
       return existing._id;
     }
-    return await ctx.db.insert("supportTickets", {
+    const ticketId = await ctx.db.insert("supportTickets", {
       userId,
       subject: args.subject.trim(),
       message: args.message.trim(),
@@ -62,6 +62,17 @@ export const createTicket = mutation({
       standardId: args.standardId,
       status: "open",
     });
+    // Increment the post's report count — a live signal of member concern
+    // that admins see in the queue beside the automated scan evidence.
+    if (args.postId !== undefined) {
+      const post = await ctx.db.get(args.postId);
+      if (post !== null) {
+        await ctx.db.patch(args.postId, {
+          reportCount: (post.reportCount ?? 0) + 1,
+        });
+      }
+    }
+    return ticketId;
   },
 });
 
@@ -116,7 +127,7 @@ export const respondToTicket = mutation({
     ticketId: v.id("supportTickets"),
     reply: v.string(),
     status: v.optional(
-      v.union(v.literal("open"), v.literal("in_review"), v.literal("resolved")),
+      v.union(v.literal("open"), v.literal("in_review"), v.literal("resolved"), v.literal("dismissed")),
     ),
   },
   handler: async (ctx, { ticketId, reply, status }) => {
@@ -128,19 +139,40 @@ export const respondToTicket = mutation({
     if (me?.role !== "admin") {
       throw new Error("Admins only");
     }
+    const ticket = await ctx.db.get(ticketId);
+    if (ticket === null) {
+      throw new Error("Ticket not found.");
+    }
+    // Effective status covers the default: when the admin doesn't touch
+    // the dropdown the patch still resolves the ticket, and the decrement
+    // guard below must see that effective value, not undefined.
+    const effective = status ?? "resolved";
     await ctx.db.patch(ticketId, {
       reply,
-      status: status ?? "resolved",
+      status: effective,
     });
-    const ticket = await ctx.db.get(ticketId);
-    if (ticket !== null) {
-      await ctx.db.insert("notifications", {
-        userId: ticket.userId,
-        type: "ticket",
-        actorId: userId,
-        message: reply,
-        read: false,
-      });
+    // When a ticket targeting a post is closed (resolved or dismissed),
+    // decrement the post's report count so the signal ages off correctly.
+    if (
+      ticket.postId !== undefined &&
+      effective !== "open" &&
+      effective !== "in_review" &&
+      ticket.status !== "resolved" &&
+      ticket.status !== "dismissed"
+    ) {
+      const post = await ctx.db.get(ticket.postId);
+      if (post !== null) {
+        await ctx.db.patch(ticket.postId, {
+          reportCount: Math.max(0, (post.reportCount ?? 0) - 1),
+        });
+      }
     }
+    await ctx.db.insert("notifications", {
+      userId: ticket.userId,
+      type: "ticket",
+      actorId: userId,
+      message: reply,
+      read: false,
+    });
   },
 });
