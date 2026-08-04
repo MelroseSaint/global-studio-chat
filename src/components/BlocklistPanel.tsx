@@ -244,7 +244,7 @@ export function BlocklistPanel() {
             ) : (
               <RefreshCw className="size-3.5" />
             )}
-            Sync external sources
+            Sync now
           </Button>
           {syncResult ? (
             <span className="max-w-full truncate text-xs">{syncResult}</span>
@@ -471,10 +471,19 @@ export function BlocklistPanel() {
       </div>
 
       <div className="flex flex-col gap-2 rounded-xl border p-3">
-        <p className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-          <RefreshCw className="size-3.5" />
-          External sources — feeds that sync into the blocklist
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+            <RefreshCw className="size-3.5" />
+            Domain feeds — sources that sync into the blocklist
+          </p>
+          {sources !== undefined && sources.length > 0 ? (
+            <span className="text-[11px] text-muted-foreground">
+              {sources.filter((s) => s.enabled).length} enabled ·{" "}
+              {sources.filter((s) => !s.enabled).length} paused ·{" "}
+              {sources.filter((s) => s.lastError).length} with errors
+            </span>
+          ) : null}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Input
             value={sourceName}
@@ -520,8 +529,8 @@ export function BlocklistPanel() {
             <Skeleton className="h-10" />
           ) : sources.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              No sources yet. Synced entries carry their source name and a
-              lower confidence than the curated core list.
+              No feeds registered yet. The built-in PureWire adult lists are
+              added automatically on the first sync, or add one above.
             </p>
           ) : (
             sources.map((s) => (
@@ -530,15 +539,31 @@ export function BlocklistPanel() {
                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs"
               >
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="font-semibold">{s.name}</span>
+                  <span className="flex items-center gap-2 font-semibold">
+                    {s.name}
+                    <Badge
+                      variant={s.enabled ? "default" : "outline"}
+                      className={s.enabled ? "bg-primary/10 text-primary" : ""}
+                    >
+                      {s.enabled ? "Enabled" : "Paused"}
+                    </Badge>
+                    <Badge variant="outline" className="text-muted-foreground">
+                      {s.format}
+                    </Badge>
+                    {s.lastError ? (
+                      <Badge variant="destructive">Error</Badge>
+                    ) : null}
+                  </span>
                   <span className="truncate text-muted-foreground">
-                    {s.format} · {s.enabled ? "enabled" : "paused"}
+                    {s.enabled ? "Picks up on every sync" : "Not synced until enabled"}
                     {s.lastSuccessfulSyncAt
-                      ? ` · synced ${timeAgo(s.lastSuccessfulSyncAt)}`
-                      : ""}
+                      ? ` · last synced ${timeAgo(s.lastSuccessfulSyncAt)}`
+                      : " · never synced yet"}
                   </span>
                   {s.lastError ? (
-                    <span className="truncate text-destructive">{s.lastError}</span>
+                    <span className="truncate text-destructive">
+                      {s.lastError}
+                    </span>
                   ) : null}
                 </span>
                 <span className="flex shrink-0 items-center gap-1.5">

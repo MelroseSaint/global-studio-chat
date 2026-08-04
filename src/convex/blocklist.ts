@@ -495,7 +495,12 @@ export const deleteBlockedPattern = mutation({
 export const listDomainSources = query({
   handler: async (ctx) => {
     await requireAdmin(ctx);
-    return await ctx.db.query("domainSources").order("desc").take(100);
+    // take() defaults to ascending _creationTime; the panel reads by name,
+    // so sort in memory (deterministic for the ~dozen built-in feeds).
+    return await ctx.db
+      .query("domainSources")
+      .take(100)
+      .then((rows) => rows.sort((a, b) => a.name.localeCompare(b.name)));
   },
 });
 
