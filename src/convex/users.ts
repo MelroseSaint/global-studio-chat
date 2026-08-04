@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
@@ -472,17 +473,19 @@ export const isFollowing = query({
 
 /**
  * Shared tail for the follow-list queries (listFollowers / listFollowing):
- * filter by the search text, hide accounts the viewer can't see (blocked in
- * either direction, quietly shadowbanned, pending-approval, restricted, or
- * banned), resolve the avatar, and mark which accounts the viewer follows
- * and which is the viewer themself. Capped so a celebrity-scale list stays
- * cheap — search is the tool for finding one person in a big list.
+ * hide accounts the viewer can't see (blocked in either direction, quietly
+ * shadowbanned, pending-approval, restricted, or banned), optionally filter
+ * by the search text, resolve the avatar, and mark which accounts the
+ * viewer follows and which is the viewer themself. `limit` caps the page;
+ * in browse mode the caller passes the paginated page, in search mode the
+ * bounded scan result.
  */
 async function withFollowListMeta(
   ctx: QueryCtx,
   viewerId: Id<"users"> | null,
   people: Doc<"users">[],
   query: string,
+  limit = 100,
 ) {
   const q = query.toLowerCase().trim();
   const hidden = new Set<Id<"users">>([
@@ -515,7 +518,7 @@ async function withFollowListMeta(
           (u.username ?? "").includes(q) ||
           (u.name ?? "").toLowerCase().includes(q)),
     )
-    .slice(0, 100);
+    .slice(0, limit);
   return Promise.all(
     matches.map(async (u) => ({
       ...publicUser(u),
@@ -529,6 +532,108 @@ async function withFollowListMeta(
     })),
   );
 }
+
+/**
+ * Search mode for a follow list: a bounded scan of the most recent follows,
+ * filtered by name/@username and capped at a small result set — fast,
+ * because finding one person in a big list is what search is for. Returns a
+ * one-shot page that is immediately done, so the client never tries to
+ * scroll deeper into a search.
+ */
+async function followListSearch(
+  ctx: QueryCtx,
+  viewerId: Id<"users"> | null,
+  q: string,
+  rows: Doc<"follows">[],
+  resolve: (r: Doc<"follows">) => Id<"users">,
+) {
+  const people = (
+    await Promise.all(rows.map((r) => ctx.db.get(resolve(r))))
+  ).filter((u): u is Doc<"users"> => u !== null);
+  const page = await withFollowListMeta(ctx, viewerId, people, q, 50);
+  return { page, isDone: true, continueCursor: "" };
+}
+
+/** The people following a profile, searchable by name or @username. */
+export const listFollowers = query({
+  args: {
+    username: v.string(),
+    query: v.optional(v.string()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, { username, query, paginationOpts }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const target = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", username.toLowerCase()))
+      .first();
+    if (target === null || !(await canViewTarget(ctx, viewerId, target))) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    const q = (query ?? "").trim();
+    if (q.length > 0) {
+      // Search: bounded scan of the most recent followers.
+      const rows = await ctx.db
+        .query("follows")
+        .withIndex("by_following", (x) => x.eq("followingId", target._id))
+        .take(300);
+      return followListSearch(ctx, viewerId, q, rows, (r) => r.followerId);
+    }
+    // Browse: paginate the follower rows, newest first — no fixed cap, so a
+    // celebrity-scale circle can be scrolled end to end. Each page is
+    // filtered for visibility after pagination (same cost cap as
+    // listComments) and the client keeps loading while pages remain.
+    const result = await ctx.db
+      .query("follows")
+      .withIndex("by_following", (x) => x.eq("followingId", target._id))
+      .order("desc")
+      .paginate(paginationOpts);
+    const people = (
+      await Promise.all(result.page.map((r) => ctx.db.get(r.followerId)))
+    ).filter((u): u is Doc<"users"> => u !== null);
+    const page = await withFollowListMeta(ctx, viewerId, people, "", people.length);
+    return { ...result, page };
+  },
+});
+
+/** The people a profile follows, searchable by name or @username. */
+export const listFollowing = query({
+  args: {
+    username: v.string(),
+    query: v.optional(v.string()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, { username, query, paginationOpts }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const target = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", username.toLowerCase()))
+      .first();
+    if (target === null || !(await canViewTarget(ctx, viewerId, target))) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    const q = (query ?? "").trim();
+    if (q.length > 0) {
+      // Search: bounded scan of the most recent people followed.
+      const rows = await ctx.db
+        .query("follows")
+        .withIndex("by_follower", (x) => x.eq("followerId", target._id))
+        .take(300);
+      return followListSearch(ctx, viewerId, q, rows, (r) => r.followingId);
+    }
+    // Browse: paginate, newest first.
+    const result = await ctx.db
+      .query("follows")
+      .withIndex("by_follower", (x) => x.eq("followerId", target._id))
+      .order("desc")
+      .paginate(paginationOpts);
+    const people = (
+      await Promise.all(result.page.map((r) => ctx.db.get(r.followingId)))
+    ).filter((u): u is Doc<"users"> => u !== null);
+    const page = await withFollowListMeta(ctx, viewerId, people, "", people.length);
+    return { ...result, page };
+  },
+});
 
 /**
  * The same shadowban gate getProfile uses: a quietly shadowbanned profile's
@@ -549,52 +654,6 @@ async function canViewTarget(
   const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
   return viewer?.role === "admin";
 }
-
-/** The people following a profile, searchable by name or @username. */
-export const listFollowers = query({
-  args: { username: v.string(), query: v.optional(v.string()) },
-  handler: async (ctx, { username, query }) => {
-    const viewerId = await getAuthUserId(ctx);
-    const target = await ctx.db
-      .query("users")
-      .withIndex("by_username", (q) => q.eq("username", username.toLowerCase()))
-      .first();
-    if (target === null || !(await canViewTarget(ctx, viewerId, target))) {
-      return [];
-    }
-    const rows = await ctx.db
-      .query("follows")
-      .withIndex("by_following", (q) => q.eq("followingId", target._id))
-      .take(300);
-    const people = (
-      await Promise.all(rows.map((r) => ctx.db.get(r.followerId)))
-    ).filter((u): u is Doc<"users"> => u !== null);
-    return withFollowListMeta(ctx, viewerId, people, query ?? "");
-  },
-});
-
-/** The people a profile follows, searchable by name or @username. */
-export const listFollowing = query({
-  args: { username: v.string(), query: v.optional(v.string()) },
-  handler: async (ctx, { username, query }) => {
-    const viewerId = await getAuthUserId(ctx);
-    const target = await ctx.db
-      .query("users")
-      .withIndex("by_username", (q) => q.eq("username", username.toLowerCase()))
-      .first();
-    if (target === null || !(await canViewTarget(ctx, viewerId, target))) {
-      return [];
-    }
-    const rows = await ctx.db
-      .query("follows")
-      .withIndex("by_follower", (q) => q.eq("followerId", target._id))
-      .take(300);
-    const people = (
-      await Promise.all(rows.map((r) => ctx.db.get(r.followingId)))
-    ).filter((u): u is Doc<"users"> => u !== null);
-    return withFollowListMeta(ctx, viewerId, people, query ?? "");
-  },
-});
 
 export const suggestedUsers = query({
   handler: async (ctx) => {

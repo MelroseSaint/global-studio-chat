@@ -1,6 +1,7 @@
-import { useQuery } from "convex/react";
+import { usePaginatedQuery } from "convex/react";
 import { Search, Users } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useInView } from "react-intersection-observer";
 import { Link } from "react-router";
 
 import { api } from "@/convex/_generated/api";
@@ -54,10 +55,37 @@ export function FollowsList({
   }, [query]);
 
   const list = tab === "followers" ? api.users.listFollowers : api.users.listFollowing;
-  const people = useQuery(list, { username, query: debounced });
+  // Paginated: browse mode scrolls the whole circle in pages, search mode
+  // (a non-empty query) returns one bounded page that is immediately done.
+  const { results, status, loadMore } = usePaginatedQuery(
+    list,
+    { username, query: debounced },
+    { initialNumItems: 30 },
+  );
+  const { ref, inView } = useInView();
 
-  const empty = people?.length === 0;
-  const loading = people === undefined;
+  // Keep loading while scrolling — the dialog body is the scroll container,
+  // so the sentinel below it enters view as the list runs out.
+  useEffect(() => {
+    if (inView && status === "CanLoadMore") {
+      void loadMore(30);
+    }
+  }, [inView, status, loadMore]);
+
+  const people = results as unknown as {
+    _id: string;
+    username?: string | null;
+    name?: string | null;
+    verified?: boolean;
+    avatarUrl?: string | null;
+    isFollowing: boolean;
+    isViewer: boolean;
+  }[];
+  const loading = status === "LoadingFirstPage";
+  // The empty state only speaks when the whole list is actually exhausted —
+  // a page that returns nothing while more pages remain is just a gap of
+  // hidden accounts, and the sentinel below keeps loading them.
+  const empty = status === "Exhausted" && people.length === 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -166,6 +194,12 @@ export function FollowsList({
               ))}
             </ul>
           )}
+          {status === "LoadingMore" && (
+            <div className="flex justify-center py-3 text-xs text-muted-foreground">
+              Loading more…
+            </div>
+          )}
+          <div ref={ref} aria-hidden="true" />
         </div>
       </DialogContent>
     </Dialog>
