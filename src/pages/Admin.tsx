@@ -811,6 +811,13 @@ function TicketsPanel() {
                 <span className="font-semibold text-foreground">Post:</span>{" "}
                 {t.post.content?.slice(0, 140)}
               </p>
+              <Link
+                to={`/post/${t.post._id}`}
+                className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                <ChevronsRight className="size-3" />
+                View full post
+              </Link>
               {t.standardId === "no-ai-content" && t.post ? (
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                   <span className="font-semibold text-muted-foreground">
@@ -954,7 +961,10 @@ function PostsPanel() {
             </p>
             <p className="mt-1 line-clamp-2 text-sm">{p.content}</p>
             {(p.reportCount ?? 0) > 0 ? (
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p
+                className="mt-1 text-xs text-muted-foreground"
+                title="Member-reported evidence — shown to admins for context, never triggers automatic action."
+              >
                 <Flag className="mr-1 inline-block size-3" />
                 {p.reportCount} open report{(p.reportCount ?? 0) !== 1 ? "s" : ""}
               </p>
@@ -1978,7 +1988,10 @@ function AiReviewPanel() {
             </p>
             <p className="mt-1 line-clamp-2 text-sm">{p.content}</p>
             {(p.reportCount ?? 0) > 0 ? (
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p
+                className="mt-1 text-xs text-muted-foreground"
+                title="Member-reported evidence — shown to admins for context, never triggers automatic action."
+              >
                 <Flag className="mr-1 inline-block size-3" />
                 {p.reportCount} open report{(p.reportCount ?? 0) !== 1 ? "s" : ""}
               </p>
