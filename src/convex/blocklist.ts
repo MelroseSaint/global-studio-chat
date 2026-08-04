@@ -365,6 +365,13 @@ export const upsertBlockedDomain = mutation({
     if (domain.length < 3 || !domain.includes(".")) {
       throw new Error("Enter a valid domain, e.g. example.com");
     }
+    // Same TLD sanity guard as feed parsing: the final label must be a real
+    // TLD (2-63 letters, or an xn-- punycode TLD). Keeps the admin form and
+    // the feed pipeline from ever storing HTML-fragment-style junk.
+    const tld = domain.split(".").pop() ?? "";
+    if (!/^[a-z]{2,63}$/.test(tld) && !/^xn--[a-z0-9-]+$/.test(tld)) {
+      throw new Error("Enter a valid domain with a real TLD, e.g. example.com");
+    }
     const existing = await ctx.db
       .query("blockedDomains")
       .withIndex("by_domain", (q) => q.eq("domain", domain))
@@ -571,6 +578,60 @@ export const deleteDomainSource = mutation({
   },
 });
 
+/**
+ * The built-in PureWire category feeds. These are the curated adult lists
+ * under data/adult/ (mirrored to public/ so Vercel serves them at
+ * /data/adult/<file>). They are registered as domainSources on first
+ * bootstrap and kept in sync by the nightly syncExternalSources job.
+ *
+ * The category buckets come from each file's own `# Category:` header at
+ * parse time, so the feed list here only needs name + URL + format.
+ */
+export const DEFAULT_BLOCKLIST_FEEDS = [
+  "creator-domains.txt",
+  "porn-domains.txt",
+  "cam-domains.txt",
+  "clip-domains.txt",
+  "chat-domains.txt",
+  "escort-domains.txt",
+  "fetish-domains.txt",
+  "community-domains.txt",
+  "redirects-domains.txt",
+].map((file) => ({
+  name: `PureWire adult ${file.replace("-domains.txt", "")}`,
+  url: `https://purewire.vercel.app/data/adult/${file}`,
+  format: "domain" as const,
+}));
+
+/**
+ * Idempotent one-shot registration of the built-in PureWire feeds.
+ * Missing sources are inserted enabled; existing sources are never
+ * overwritten (an admin may have pointed a name at a custom URL). Safe to
+ * run on every deploy/sync — this is what makes the nightly sync job
+ * self-healing instead of silently doing nothing when sources are absent.
+ */
+export const registerDefaultBlocklistSources = mutation({
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    let registered = 0;
+    for (const feed of DEFAULT_BLOCKLIST_FEEDS) {
+      const existing = await ctx.db
+        .query("domainSources")
+        .filter((q) => q.eq(q.field("name"), feed.name))
+        .first();
+      if (existing !== null) continue;
+      await ctx.db.insert("domainSources", {
+        name: feed.name,
+        url: feed.url,
+        format: feed.format,
+        enabled: true,
+      });
+      registered++;
+    }
+    return { ok: true, registered };
+  },
+});
+
 /** Parse a fetched feed into domain entries, by format. */
 function parseFeed(
   format: string,
@@ -650,6 +711,16 @@ function cleanHost(host: string): string | null {
     .replace(/\.+$/, "");
   if (h.length < 3 || !h.includes(".")) return null;
   if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return null; // never block raw IPs
+  // TLD sanity guard: the final label must look like a real TLD (2-63
+  // letters, or an xn-- punycode TLD). This rejects HTML fragments and
+  // other junk a feed could accidentally contain (a real incident: a feed
+  // URL served an HTML page and cleanHost stored `<meta>` fragments as
+  // block entries). Genuine IDN entries keep working because punycoded
+  // domains still end in a valid ASCII TLD (.test, .com, .xn--p1ai).
+  const tld = h.split(".").pop() ?? "";
+  if (!/^[a-z]{2,63}$/.test(tld) && !/^xn--[a-z0-9-]+$/.test(tld)) {
+    return null;
+  }
   return h;
 }
 

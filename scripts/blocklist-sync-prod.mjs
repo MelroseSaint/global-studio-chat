@@ -43,6 +43,10 @@ if (!admin?.token) {
 }
 
 client.setAuth(admin.token);
+const boot = await client.mutation(api.blocklist.registerDefaultBlocklistSources);
+if (boot?.ok && boot.registered > 0) {
+  console.log(`Registered ${boot.registered} built-in PureWire feed(s).`);
+}
 const sync = await client.action(api.blocklist.syncExternalSources);
 client.clearAuth();
 

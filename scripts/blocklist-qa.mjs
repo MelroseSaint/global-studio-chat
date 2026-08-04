@@ -351,8 +351,15 @@ async function main() {
     // self-hosted on purpose). Guard it: only assert the redirect-chain
     // details when the preview card actually resolved — a github outage
     // must degrade the nightly check, not fail it.
+    // Cache-bust the URL with this run's stamp: fetchUrlPreview returns the
+    // cached card (no fresh scan record) on a cache hit, and the admin scan
+    // list only holds the latest 100 rows — so a plain "http://github.com/"
+    // gets a card from a previous run's cache and its old scan row scrolls
+    // out of the window, flaking the chain assertions. A unique query keeps
+    // every run's redirect chain recorded and findable.
+    const ghUrl = `http://github.com/?pwqa=${stamp}`;
     const ghPreview = await client.action(api.links.fetchUrlPreview, {
-      url: "http://github.com/",
+      url: ghUrl,
     });
     const ghResolved =
       ghPreview?.title !== undefined || ghPreview?.domain === "github.com";
@@ -361,7 +368,7 @@ async function main() {
       ghResolved,
     );
     const scanRows = await client.query(api.blocklist.listLinkScanResults);
-    const ghRow = scanRows?.find((r) => r.originalUrl === "http://github.com/");
+    const ghRow = scanRows?.find((r) => r.originalUrl === ghUrl);
     if (ghResolved) {
       check(
         "redirect inspection recorded the redirect chain",
@@ -482,6 +489,27 @@ async function main() {
     await client.mutation(api.blocklist.deleteBlockedDomain, {
       domain: routingDomain,
     });
+    // A feed sync also IMPORTS domains owned by the feed source. Deleting
+    // the source row does not remove those rows, so a partial run leaks
+    // active blockedDomains rows (source=qa-*) that no longer correspond to
+    // any source — sweep them all, not just this run's stamp.
+    let cursor = null;
+    let swept = 0;
+    for (let i = 0; i < 20; i++) {
+      const page = await client.query(api.blocklist.listBlockedDomains, {
+        paginationOpts: { numItems: 200, cursor },
+      });
+      for (const row of page.page) {
+        if (row.source.startsWith("qa-")) {
+          await client.mutation(api.blocklist.deleteBlockedDomain, {
+            domain: row.domain,
+          });
+          swept++;
+        }
+      }
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
     const afterCleanup = await client.query(api.blocklist.getActiveBlocklist);
     check(
       "the test domain is gone after cleanup",
@@ -491,13 +519,23 @@ async function main() {
       "the test pattern is gone after cleanup",
       afterCleanup?.patterns?.some((p) => p.pattern === patternText) !== true,
     );
-    // Sources leak silently if a run is interrupted between upsert and
-    // delete — assert the QA sources are really gone so a leaked feed never
-    // breaks the nightly sync job with a 404.
+    // Sources AND their imported rows leak silently if a run is interrupted
+    // between upsert and delete — assert both are really gone so a leaked
+    // feed never breaks the nightly sync job with a 404 or pollutes the
+    // active blocklist.
     const sourcesAfter = await client.query(api.blocklist.listDomainSources);
     check(
       "no QA sources remain after cleanup",
       !sourcesAfter?.some((s) => s.name.startsWith("qa-")),
+    );
+    // Verify the row sweep above actually removed every qa- owned row.
+    const rowsAfter = await client.query(api.blocklist.listBlockedDomains, {
+      paginationOpts: { numItems: 500, cursor: null },
+    });
+    check(
+      "no QA-owned domain rows remain after cleanup",
+      !rowsAfter.page?.some((r) => r.source.startsWith("qa-")),
+      swept > 0 ? `swept ${swept} leaked row(s)` : undefined,
     );
     // Erase every surface throwaway.
     for (const u of [
