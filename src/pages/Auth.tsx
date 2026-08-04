@@ -190,11 +190,13 @@ export function Auth() {
    *
    * This call runs the instant sign-in resolves, and the freshly minted
    * session token can lag one tick behind inside the Convex client — the
-   * mutation then goes out unauthenticated, getAuthSessionId returns null,
-   * and the preference write is silently dropped (seen as a "Server Error"
-   * in the console). The race clears in milliseconds, so the call retries
-   * briefly; the permanent default is already enforced by the auth config,
-   * so only the opt-out depends on the write actually landing.
+   * mutation then goes out unauthenticated, getAuthSessionId returns null
+   * (a "Not signed in." ConvexError that shows as "Server Error" in the
+   * console), and the preference write is silently dropped. The race
+   * clears in milliseconds, so the call retries briefly — but ONLY on that
+   * specific error, so a genuine backend outage isn't masked behind retries.
+   * The permanent default is already enforced by the auth config, so only
+   * the opt-out depends on the write actually landing.
    *
    * Best-effort: a failure must never block sign-in — the session simply
    * keeps its platform default (permanent).
@@ -204,8 +206,16 @@ export function Auth() {
       try {
         await setSessionLifetime({ remember });
         return;
-      } catch {
-        if (attempt < 2) {
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        const data =
+          err instanceof Error && "data" in err
+            ? (err as { data?: unknown }).data
+            : undefined;
+        const isTokenRace =
+          /not signed in/i.test(msg) ||
+          (typeof data === "string" && /not signed in/i.test(data));
+        if (isTokenRace && attempt < 2) {
           await new Promise((resolve) => setTimeout(resolve, 350));
           continue;
         }
