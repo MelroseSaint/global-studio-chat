@@ -5,7 +5,8 @@
  * Signs in as the admin on the live site through the real Auth form
  * (handling the Turnstile gate the same way the permanent browser QA
  * does), then walks EVERY admin tab — Users, Tickets, Content, AI review,
- * Security, Silenced — at 320px, 390px, and 768px. At every stop it
+ * Security, Silenced, Blocklist — at 320px, 390px, 768px, and the Amazon
+ * Fire tablet portrait width (800px). At every stop it
  * verifies the page has no horizontal overflow and no element leaks past
  * the viewport, and that the tab actually rendered (either its live rows
  * or its designed empty state). On the Users tab it also proves the rows
@@ -43,11 +44,14 @@ const NAV_TIMEOUT = 45000;
 const PANEL_WAIT_MS = 20000;
 const PANEL_POLL_MS = 250;
 
-/** [label, width, height] — the three widths the audit promises. */
+/** [label, width, height] — the four widths the audit promises. The last
+ *  is Amazon Fire HD 8/10 portrait (800 CSS px), the widest "tablet" band
+ *  where Silk's font inflation used to crowd the grid UIs. */
 const WIDTHS = [
   ["small phone", 320, 700],
   ["phone", 390, 844],
   ["tablet", 768, 1024],
+  ["fire tablet", 800, 1280],
 ];
 
 /** Every admin tab, in the order it appears in the UI. */
@@ -256,7 +260,7 @@ async function inspectAdmin(page, widthLabel) {
       .first()
       .isVisible(),
   );
-  if (widthLabel !== "tablet") {
+  if (!widthLabel.includes("tablet")) {
     const cue = page.locator("p:has-text('Swipe for more')");
     check(
       `${widthLabel}: 'Swipe for more' cue visible`,
@@ -276,7 +280,7 @@ async function inspectAdmin(page, widthLabel) {
   const cols = await page
     .locator('[data-slot="tabs-list"]')
     .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-  const expectedCols = widthLabel === "tablet" ? 4 : 3;
+  const expectedCols = widthLabel.includes("tablet") ? 4 : 3;
   check(
     `${widthLabel}: tabs grid-cols-${expectedCols} (not cramped 7-across)`,
     cols === expectedCols,

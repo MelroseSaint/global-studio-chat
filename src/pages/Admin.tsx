@@ -383,7 +383,7 @@ function AdminDashboard({ meId }: { meId: string }) {
   }, []);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4 pb-24 sm:p-6">
+    <div className="mx-auto flex max-w-3xl flex-col gap-6 overflow-x-clip p-4 pb-24 sm:p-6">
       <AdminOfflineBanner />
       <div>
         <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight">

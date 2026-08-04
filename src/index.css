@@ -137,6 +137,13 @@
   }
   html {
     font-family: var(--font-sans);
+    /* Amazon Fire's Silk browser font-boosts text on wide layouts, which
+       scales every rem unit and crowds grid UIs (the classic Fire-tablet
+       "clutter"). text-size-adjust: 100% disables that automatic inflation
+       so the app renders at its designed sizes — user accessibility text
+       settings still apply on top. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
   body {
     @apply bg-background text-foreground antialiased;
