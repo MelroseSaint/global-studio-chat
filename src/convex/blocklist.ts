@@ -11,6 +11,7 @@ import {
   BANNED_ADULT_HOSTS,
   STATIC_TO_DB_CATEGORY,
   extractUrls,
+  idnToAscii,
   matchBlockedHost,
   parseUrlHost,
   scanWithBlocklist,
@@ -153,31 +154,55 @@ export const importCoreBlocklist = mutation({
   },
 });
 
+/**
+ * The active blocklist shape — domains + patterns — as the pure scan layer
+ * consumes it. One shared implementation for the public client gate and the
+ * internal redirect-inspector query, so the two can never drift.
+ */
+async function fetchActiveBlocklist(
+  ctx: QueryCtx,
+): Promise<{ domains: BlockedDomainEntry[]; patterns: BlockedPatternEntry[] }> {
+  const [domains, patterns] = await Promise.all([
+    ctx.db
+      .query("blockedDomains")
+      .withIndex("by_active", (q) => q.eq("active", true))
+      .take(2000),
+    ctx.db
+      .query("blockedUrlPatterns")
+      .withIndex("by_active", (q) => q.eq("active", true))
+      .take(500),
+  ]);
+  return {
+    domains: domains.map((d) => ({
+      domain: d.domain,
+      category: d.category,
+      action: d.action,
+      blockSubdomains: d.blockSubdomains,
+    })),
+    patterns: patterns.map((p) => ({
+      pattern: p.pattern,
+      action: p.action,
+    })),
+  };
+}
+
 /** Public: the active blocklist, for the client DM gate (pre-encryption). */
 export const getActiveBlocklist = query({
   handler: async (ctx) => {
-    const [domains, patterns] = await Promise.all([
-      ctx.db
-        .query("blockedDomains")
-        .withIndex("by_active", (q) => q.eq("active", true))
-        .take(2000),
-      ctx.db
-        .query("blockedUrlPatterns")
-        .withIndex("by_active", (q) => q.eq("active", true))
-        .take(500),
-    ]);
-    return {
-      domains: domains.map((d) => ({
-        domain: d.domain,
-        category: d.category,
-        action: d.action,
-        blockSubdomains: d.blockSubdomains,
-      })),
-      patterns: patterns.map((p) => ({
-        pattern: p.pattern,
-        action: p.action,
-      })),
-    };
+    return await fetchActiveBlocklist(ctx);
+  },
+});
+
+/**
+ * Internal twin of getActiveBlocklist so the redirect-inspection action
+ * (links.fetchUrlPreview) can fetch the same list through `internal` and
+ * re-scan a resolved hostname against it. Shares fetchActiveBlocklist with
+ * the public query, so the action always sees exactly what the client DM
+ * gate sees.
+ */
+export const getActiveBlocklistInternal = internalQuery({
+  handler: async (ctx) => {
+    return await fetchActiveBlocklist(ctx);
   },
 });
 
@@ -190,6 +215,12 @@ export async function recordLinkScan(
     hostname?: string;
     category?: string;
     matchedDomain?: string;
+    // Redirect inspection: the hosts visited on the way to the final
+    // destination and the host the URL ultimately resolved to. Filled by
+    // the fetchUrlPreview action (the only place that can follow redirects);
+    // the write-time scan has no redirect info, so it leaves them unset.
+    finalHostname?: string;
+    redirectChain?: string[];
   } = {},
 ): Promise<void> {
   const normalized = normalizeForHash(raw);
@@ -204,10 +235,11 @@ export async function recordLinkScan(
     originalUrl: raw,
     normalizedUrl: normalized,
     hostname: opts.hostname,
-    finalHostname: opts.matchedDomain ?? opts.hostname,
+    finalHostname: opts.finalHostname,
     verdict,
     category: opts.category,
     matchedDomain: opts.matchedDomain,
+    redirectChain: opts.redirectChain,
     scannedAt: Date.now(),
   };
   if (existing !== null) {
@@ -321,13 +353,15 @@ export const upsertBlockedDomain = mutation({
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
     const now = Date.now();
-    const domain = args.domain
-      .toLowerCase()
-      .replace(/^https?:\/\//, "")
-      .replace(/^www\./, "")
-      .replace(/\/.*$/, "")
-      .replace(/\.+$/, "")
-      .trim();
+    const domain = idnToAscii(
+      args.domain
+        .toLowerCase()
+        .replace(/^https?:\/\//, "")
+        .replace(/^www\./, "")
+        .replace(/\/.*$/, "")
+        .replace(/\.+$/, "")
+        .trim(),
+    );
     if (domain.length < 3 || !domain.includes(".")) {
       throw new Error("Enter a valid domain, e.g. example.com");
     }
@@ -455,6 +489,14 @@ export const listDomainSources = query({
   handler: async (ctx) => {
     await requireAdmin(ctx);
     return await ctx.db.query("domainSources").order("desc").take(100);
+  },
+});
+
+/** Admin: recent link-scan results, newest first (bounded for the panel). */
+export const listLinkScanResults = query({
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    return await ctx.db.query("linkScanResults").order("desc").take(100);
   },
 });
 
@@ -595,11 +637,15 @@ function parseFeed(
 }
 
 function cleanHost(host: string): string | null {
-  const h = host
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .replace(/\/.*$/, "")
+  // Punycode BEFORE the ASCII strip so an IDN feed entry (or admin domain)
+  // is stored in its canonical xn-- form instead of being erased.
+  const h = idnToAscii(
+    host
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/.*$/, ""),
+  )
     .replace(/[^a-z0-9.-]/g, "")
     .replace(/\.+$/, "");
   if (h.length < 3 || !h.includes(".")) return null;
@@ -670,6 +716,39 @@ export const syncExternalSources = action({
       }
     }
     return { ok: true, results };
+  },
+});
+
+/**
+ * Record a link-scan verdict from an ACTION (the redirect inspector in
+ * links.fetchUrlPreview). Actions can't touch ctx.db directly, and only the
+ * action can follow redirects — so it reports the chain + final hostname
+ * here, and this mutation persists the row. The final-domain lookup runs
+ * against the same active blocklist getActiveBlocklist serves.
+ */
+export const recordLinkScanInternal = internalMutation({
+  args: {
+    rawUrl: v.string(),
+    verdict: v.union(
+      v.literal("allowed"),
+      v.literal("blocked"),
+      v.literal("review"),
+      v.literal("unreachable"),
+    ),
+    hostname: v.optional(v.string()),
+    finalHostname: v.optional(v.string()),
+    category: v.optional(v.string()),
+    matchedDomain: v.optional(v.string()),
+    redirectChain: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    await recordLinkScan(ctx, args.rawUrl, args.verdict, {
+      hostname: args.hostname,
+      finalHostname: args.finalHostname,
+      category: args.category,
+      matchedDomain: args.matchedDomain,
+      redirectChain: args.redirectChain,
+    });
   },
 });
 

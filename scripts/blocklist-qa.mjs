@@ -264,9 +264,120 @@ async function main() {
     });
     check("pausing the entry lets the domain post again", afterPause?.ok === true);
 
+    // ── 7. IDN → ASCII (punycode): Unicode and xn-- forms meet ───────────
+    // Admin adds a Unicode domain; the stored entry must be its punycode
+    // form, and the SAME host posted as Unicode, as xn--, or as a subdomain
+    // must all be caught — the pipeline's IDN conversion stage, live.
+    client.setAuth(admin.token);
+    const idnDomain = `täst-${stamp}.test`;
+    const idnAdd = await client.mutation(api.blocklist.upsertBlockedDomain, {
+      domain: idnDomain,
+      category: "adult_other",
+      action: "block",
+      blockSubdomains: true,
+      active: true,
+    });
+    check("admin adds a Unicode (IDN) domain", idnAdd?.ok === true);
+    const idnActive = await client.query(api.blocklist.getActiveBlocklist);
+    const storedIdn = idnActive?.domains?.find((d) =>
+      d.domain.endsWith(`.${idnDomain.split(".")[1]}`) && d.domain.startsWith("xn--"),
+    );
+    check(
+      "the IDN domain is stored in punycode (xn--) form",
+      storedIdn !== undefined && storedIdn.domain.includes("xn--"),
+    );
+
+    const idnUserA = await mkUser("idn-u");
+    client.setAuth(idnUserA.token);
+    const idnUnicodePost = await client.mutation(api.posts.createPost, {
+      content: `visit https://${idnDomain}/x ${stamp}`,
+    });
+    check("a Unicode host is caught against its xn-- block", idnUnicodePost?.ok === false);
+
+    const idnUserB = await mkUser("idn-p");
+    client.setAuth(idnUserB.token);
+    const idnPunyPost = await client.mutation(api.posts.createPost, {
+      content: `visit https://${storedIdn.domain}/y ${stamp}`,
+    });
+    check("the xn-- form is caught identically", idnPunyPost?.ok === false);
+
+    const idnUserC = await mkUser("idn-s");
+    client.setAuth(idnUserC.token);
+    const idnSubPost = await client.mutation(api.posts.createPost, {
+      content: `visit https://m.${idnDomain}/z ${stamp}`,
+    });
+    check("a subdomain of the IDN host is caught too", idnSubPost?.ok === false);
+
+    // ── 8. Redirect inspection: final-domain lookup + chain recording ────
+    // A URL that 301s http→https (GitHub is stable and allowlisted): the
+    // action follows it manually, records the chain, and the final-hostname
+    // lookup resolves to the same host — verdict allowed, chain length ≥ 2.
+    client.setAuth(admin.token);
+    // GitHub is the one third-party dependency in this suite (the rest is
+    // self-hosted on purpose). Guard it: only assert the redirect-chain
+    // details when the preview card actually resolved — a github outage
+    // must degrade the nightly check, not fail it.
+    const ghPreview = await client.action(api.links.fetchUrlPreview, {
+      url: "http://github.com/",
+    });
+    const ghResolved =
+      ghPreview?.title !== undefined || ghPreview?.domain === "github.com";
+    check(
+      "a redirecting URL still resolves a preview card",
+      ghResolved,
+    );
+    const scanRows = await client.query(api.blocklist.listLinkScanResults);
+    const ghRow = scanRows?.find((r) => r.originalUrl === "http://github.com/");
+    if (ghResolved) {
+      check(
+        "redirect inspection recorded the redirect chain",
+        Array.isArray(ghRow?.redirectChain) && ghRow.redirectChain.length >= 2,
+      );
+      check(
+        "final hostname = the resolved destination (github.com)",
+        ghRow?.finalHostname === "github.com",
+      );
+      check("a clean redirect is verdict=allowed", ghRow?.verdict === "allowed");
+    } else {
+      console.log(
+        "  ⚠️  github.com unreachable — skipping redirect-chain assertions (accepted dependency)",
+      );
+    }
+    // A link INTO a blocked host must be refused at the card level, and the
+    // scan record must carry the verdict + final hostname for the audit.
+    // The test domain was paused in section 5, so re-activate it first — the
+    // redirect inspector must see an ACTIVE entry to refuse the link.
+    await client.mutation(api.blocklist.setBlockedDomainActive, {
+      domain: testDomain,
+      active: true,
+    });
+    const blockedPreview = await client.action(api.links.fetchUrlPreview, {
+      url: `https://${testDomain}/x`,
+    });
+    check(
+      "a link to a blocked domain gets no preview card",
+      !blockedPreview?.title && !blockedPreview?.image,
+    );
+    // Re-fetch the scan records AFTER the blocked action so its row is in.
+    const scanRowsAfter = await client.query(api.blocklist.listLinkScanResults);
+    const blockedRow = scanRowsAfter?.find(
+      (r) => r.originalUrl === `https://${testDomain}/x`,
+    );
+    check(
+      "the blocked link's scan record carries verdict=blocked",
+      blockedRow?.verdict === "blocked",
+    );
+    check(
+      "the scan record carries the matched domain",
+      blockedRow?.matchedDomain === testDomain,
+    );
+
     // ── 6. Cleanup: remove the test entries + source, erase throwaways ────
     client.setAuth(admin.token);
     await client.mutation(api.blocklist.deleteBlockedDomain, { domain: testDomain });
+    await client.mutation(api.blocklist.deleteBlockedDomain, {
+      domain: storedIdn?.domain ?? idnDomain,
+    });
     await client.mutation(api.blocklist.deleteBlockedPattern, {
       pattern: patternText,
     });
@@ -289,7 +400,16 @@ async function main() {
       afterCleanup?.patterns?.some((p) => p.pattern === patternText) !== true,
     );
     // Erase every surface throwaway.
-    for (const u of [postUser, commentUser, bioUser, storyUser, patUser]) {
+    for (const u of [
+      postUser,
+      commentUser,
+      bioUser,
+      storyUser,
+      patUser,
+      idnUserA,
+      idnUserB,
+      idnUserC,
+    ]) {
       client.setAuth(u.token);
       await client.mutation(api.account.deleteAccount);
     }

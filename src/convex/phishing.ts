@@ -155,11 +155,131 @@ const ADULT_LOOKUP: ReadonlyArray<readonly [string, AdultHostCategory]> =
   (Object.entries(BANNED_ADULT_HOSTS) as [AdultHostCategory, readonly string[]][])
     .flatMap(([category, hosts]) => hosts.map((host) => [host, category] as const));
 
+/**
+ * IDN → ASCII (punycode) conversion for a single label, per RFC 3492.
+ *
+ * Mutations run in a stripped V8 isolate with no TextEncoder or URL
+ * constructor, so this is pure string math: the encode algorithm is just
+ * integer arithmetic over code points. ASCII labels pass through untouched.
+ */
+const PUNY_BASE = 36;
+const PUNY_TMIN = 1;
+const PUNY_TMAX = 26;
+const PUNY_SKEW = 38;
+const PUNY_DAMP = 700;
+const PUNY_INITIAL_BIAS = 72;
+const PUNY_INITIAL_N = 128;
+
+function punyAdapt(delta: number, numPoints: number, firstTime: boolean): number {
+  delta = firstTime ? Math.floor(delta / PUNY_DAMP) : delta >> 1;
+  delta += Math.floor(delta / numPoints);
+  let k = 0;
+  while (delta > ((PUNY_BASE - PUNY_TMIN) * PUNY_TMAX) / 2) {
+    delta = Math.floor(delta / (PUNY_BASE - PUNY_TMIN));
+    k += PUNY_BASE;
+  }
+  return k + Math.floor(((PUNY_BASE - PUNY_TMIN + 1) * delta) / (delta + PUNY_SKEW));
+}
+
+function punyDigit(d: number): string {
+  return String.fromCharCode(d + 22 + 75 * (d < 26 ? 1 : 0));
+}
+
+/** Encode one label (already lowercased) to punycode, without the xn-- prefix. */
+function punyEncodeLabel(label: string): string {
+  let output = "";
+  const input = Array.from(label);
+  const basic = input.filter((ch) => ch.charCodeAt(0) < 0x80);
+  let h = basic.length;
+  if (basic.length > 0) {
+    output += basic.join("");
+    if (input.length > basic.length) output += "-";
+  }
+  let n = PUNY_INITIAL_N;
+  let delta = 0;
+  let bias = PUNY_INITIAL_BIAS;
+  while (h < input.length) {
+    let m = Number.MAX_SAFE_INTEGER;
+    for (const ch of input) {
+      const c = ch.codePointAt(0)!;
+      if (c >= n && c < m) m = c;
+    }
+    delta += (m - n) * (h + 1);
+    n = m;
+    for (const ch of input) {
+      const c = ch.codePointAt(0)!;
+      if (c < n) delta++;
+      if (c === n) {
+        let q = delta;
+        for (let k = PUNY_BASE; ; k += PUNY_BASE) {
+          const t = k <= bias ? PUNY_TMIN : k >= bias + PUNY_TMAX ? PUNY_TMAX : k - bias;
+          if (q < t) break;
+          const digit = t + ((q - t) % (PUNY_BASE - t));
+          output += punyDigit(digit);
+          q = Math.floor((q - t) / (PUNY_BASE - t));
+        }
+        output += punyDigit(q);
+        bias = punyAdapt(delta, h + 1, h === basic.length);
+        delta = 0;
+        h++;
+      }
+    }
+    delta++;
+    n++;
+  }
+  return output;
+}
+
+/**
+ * Convert every non-ASCII label of a hostname to its ASCII punycode form
+ * (xn-- …). Pure string math — no TextEncoder, so it runs in the stripped
+ * mutation isolate and in the client bundle alike. ASCII hosts are returned
+ * unchanged, so this is safe to call unconditionally on any host.
+ */
+export function idnToAscii(host: string): string {
+  return host
+    .split(".")
+    .map((label) => {
+      if (label.length === 0) return label;
+      let hasNonAscii = false;
+      for (let i = 0; i < label.length; i++) {
+        if (label.charCodeAt(i) > 0x7f) {
+          hasNonAscii = true;
+          break;
+        }
+      }
+      if (!hasNonAscii) return label;
+      return `xn--${punyEncodeLabel(label.toLowerCase())}`;
+    })
+    .join(".");
+}
+
+/**
+ * The canonical lookup chain for a host, most specific first: the exact
+ * host, then each parent domain. Lowercased, www- and trailing-dot-stripped,
+ * and punycoded so an IDN host meets its xn-- blocked entry and vice versa.
+ * The exact→parent ordering is what the policy walk uses: exact-domain
+ * lookup first, parent-domain lookup second.
+ */
+export function hostChain(host: string): string[] {
+  const normalized = idnToAscii(
+    host.toLowerCase().replace(/^www\./, "").replace(/\.+$/, ""),
+  );
+  if (normalized.length === 0) return [];
+  const labels = normalized.split(".");
+  const chain: string[] = [];
+  for (let i = 0; i < labels.length; i++) {
+    chain.push(labels.slice(i).join("."));
+  }
+  return chain;
+}
+
 /** The banned category a host belongs to, or null when it's not banned. */
 export function bannedAdultCategory(host: string): AdultHostCategory | null {
-  const h = host.toLowerCase().replace(/^www\./, "").replace(/\.+$/, "");
-  for (const [domain, category] of ADULT_LOOKUP) {
-    if (h === domain || h.endsWith(`.${domain}`)) return category;
+  for (const candidate of hostChain(host)) {
+    for (const [domain, category] of ADULT_LOOKUP) {
+      if (candidate === domain) return category;
+    }
   }
   return null;
 }
@@ -231,28 +351,34 @@ export interface BlockedDomainEntry {
 }
 
 /**
- * Match a host against a set of DB entries. Exact matches always count;
- * subdomain matches count only when the entry has blockSubdomains set — so
- * listing onlyfans.com with blockSubdomains covers m.onlyfans.com, and a
- * deliberately-scoped entry (sub.thing.com, blockSubdomains false) never
- * overreaches. The most specific match (longest domain) wins.
+ * Match a host against a set of DB entries, walking the exact→parent chain.
+ *
+ * The pipeline: exact-domain lookup first (the host itself), then each
+ * parent domain in order of specificity. A parent-domain hit counts only
+ * when the entry has blockSubdomains set — so listing onlyfans.com with
+ * blockSubdomains covers m.onlyfans.com, and a deliberately-scoped entry
+ * (sub.thing.com, blockSubdomains false) never overreaches. The most
+ * specific match wins because the chain is walked most-specific first and
+ * the first hit is returned. Hosts and entries are punycoded so an IDN
+ * host meets its xn-- blocked entry and vice versa.
  */
 export function matchBlockedHost(
   host: string,
   entries: readonly BlockedDomainEntry[],
 ): BlockedDomainEntry | null {
-  const h = host.toLowerCase().replace(/^www\./, "").replace(/\.+$/, "");
-  let best: BlockedDomainEntry | null = null;
-  for (const entry of entries) {
-    const d = entry.domain.toLowerCase().replace(/^www\./, "").replace(/\.+$/, "");
-    if (d.length === 0) continue;
-    const exact = h === d;
-    const sub = entry.blockSubdomains && h.endsWith(`.${d}`);
-    if ((exact || sub) && (best === null || d.length > best.domain.length)) {
-      best = entry;
+  const chain = hostChain(host);
+  for (let i = 0; i < chain.length; i++) {
+    const candidate = chain[i];
+    for (const entry of entries) {
+      const d = idnToAscii(
+        entry.domain.toLowerCase().replace(/^www\./, "").replace(/\.+$/, ""),
+      );
+      if (d.length === 0 || d !== candidate) continue;
+      // Exact lookup (i === 0) always counts; parent lookups need the flag.
+      if (i === 0 || entry.blockSubdomains) return entry;
     }
   }
-  return best;
+  return null;
 }
 
 /** One active pattern from the blockedUrlPatterns table. */
@@ -676,10 +802,12 @@ function parseUrl(raw: string): { host: string; path: string; raw: string } | nu
 
 /** Manual authority parse exposed for callers that need the host of a
  * single raw link (e.g. the link-scan cache). Same rules as the internal
- * parser: strips userinfo, port, and trailing dots. */
+ * parser — strips userinfo, port, and trailing dots — then converts the
+ * host to its canonical ASCII/punycode form, so the cache key and the
+ * hostname recorded in linkScanResults are the same form the lookups use. */
 export function parseUrlHost(raw: string): string | null {
   const parsed = parseUrl(raw);
-  return parsed === null ? null : parsed.host;
+  return parsed === null ? null : idnToAscii(parsed.host);
 }
 
 /** Extract http(s)/www URLs AND bare "domain.tld[/path]" links from text,

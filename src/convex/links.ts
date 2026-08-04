@@ -2,6 +2,9 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import type { BlockCategory } from "./phishing";
+import { idnToAscii, matchBlockedHost } from "./phishing";
+
 import { internal } from "./_generated/api";
 import { action, query } from "./_generated/server";
 
@@ -170,13 +173,74 @@ export const fetchUrlPreview = action({
       return emptyPreview(url);
     }
     try {
+      // Redirect inspection: load the active blocklist once, then re-scan
+      // the FINAL hostname (the host the URL resolves to after every hop)
+      // against it — a clean-looking link that 302s into a banned platform
+      // must never get a card. The chain of hosts visited is recorded in
+      // linkScanResults so the audit trail shows exactly where a link went.
+      const active = (await ctx.runQuery(
+        internal.blocklist.getActiveBlocklistInternal,
+        {},
+      )) as unknown as {
+        domains: { domain: string; category: BlockCategory; action: "block" | "review"; blockSubdomains: boolean }[];
+        patterns: { pattern: string; action: "block" | "review" }[];
+      };
+      const scanHop = (
+        host: string,
+        fullUrl: string,
+      ): {
+        verdict: "blocked" | "review";
+        category: string | undefined;
+        matchedDomain: string | undefined;
+      } | null => {
+        const hit = matchBlockedHost(host, active.domains);
+        if (hit !== null) {
+          return {
+            verdict: hit.action === "block" ? "blocked" : "review",
+            category: hit.category,
+            matchedDomain: hit.domain,
+          };
+        }
+        const lower = fullUrl.toLowerCase();
+        for (const p of active.patterns) {
+          if (lower.includes(p.pattern.toLowerCase())) {
+            return {
+              verdict: p.action === "block" ? "blocked" : "review",
+              category: undefined,
+              matchedDomain: undefined,
+            };
+          }
+        }
+        return null;
+      };
       // Follow redirects manually, re-checking each hop's host against the
       // private-address guard — a legit-looking first hop must never steer
       // the server into the internal network on the second.
       let current = url;
+      const chain: string[] = [];
       for (let hop = 0; hop < 5; hop++) {
         const host = hostOf(current);
         if (host === null || isPrivateAddress(host)) {
+          return emptyPreview(url);
+        }
+        const asciiHost = idnToAscii(host);
+        chain.push(asciiHost);
+        // Final-domain lookup on the CURRENT host (and the full URL against
+        // active patterns) BEFORE fetching it — a blocked host must never
+        // even be contacted, let alone previewed. This is also what catches
+        // a clean-looking link whose redirect lands on a banned domain or
+        // pattern: the hop is refused before its request.
+        const scan = scanHop(asciiHost, current);
+        if (scan !== null) {
+          await ctx.runMutation(internal.blocklist.recordLinkScanInternal, {
+            rawUrl: url,
+            verdict: scan.verdict,
+            hostname: chain[0] ?? asciiHost,
+            finalHostname: asciiHost,
+            category: scan.category,
+            matchedDomain: scan.matchedDomain,
+            redirectChain: chain,
+          });
           return emptyPreview(url);
         }
         const res = await fetch(current, {
@@ -191,6 +255,8 @@ export const fetchUrlPreview = action({
           const location = res.headers.get("location");
           if (location === null) return emptyPreview(url);
           current = new URL(location, current).toString();
+          // A redirect can point anywhere — only http(s) is ever fetched.
+          if (!/^https?:\/\//i.test(current)) return emptyPreview(url);
           continue;
         }
         const text = (await res.text()).slice(0, 120_000);
@@ -203,6 +269,13 @@ export const fetchUrlPreview = action({
           domain: domainOf(url),
         };
         await ctx.runMutation(internal.linksInternal.putUrlPreview, { preview });
+        await ctx.runMutation(internal.blocklist.recordLinkScanInternal, {
+          rawUrl: url,
+          verdict: "allowed",
+          hostname: chain[0] ?? asciiHost,
+          finalHostname: asciiHost,
+          redirectChain: chain,
+        });
         return preview;
       }
       return emptyPreview(url);
