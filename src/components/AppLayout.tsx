@@ -211,7 +211,10 @@ export function AppLayout() {
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col lg:ml-0">
-        <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background/80 px-4 backdrop-blur lg:hidden">
+        {/* Top header — phones only. Tablets get the icon rail (which
+            carries the logo) and desktops the full sidebar, so showing
+            this bar there would duplicate the brand mark. */}
+        <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background/80 px-4 backdrop-blur sm:hidden">
           <NavLink to="/home" className="flex items-center gap-2">
             <img src="/logo.svg" alt="PureWire" className="size-7 rounded-lg" />
             <span className="font-bold tracking-tight">PureWire</span>

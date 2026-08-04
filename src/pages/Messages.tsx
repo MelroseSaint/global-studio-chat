@@ -528,8 +528,10 @@ export function Messages() {
   const peerName = (c: Conversation) =>
     c.peer?.name || c.peer?.username || "Someone";
 
+  // Phones sit under the 3.5rem top header (h-[calc]); tablets and up
+  // have no header bar (icon rail instead), so they get full height.
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] flex-col pb-16 sm:pb-0 lg:h-dvh">
+    <div className="flex h-[calc(100dvh-3.5rem)] flex-col pb-16 sm:h-dvh sm:pb-0">
       {!CRYPTO_AVAILABLE ? (
         <div className="border-b border-oxide/30 bg-oxide/10 px-4 py-3 text-sm text-oxide dark:text-oxide-light">
           <Lock className="mr-2 inline size-4" />
@@ -542,8 +544,8 @@ export function Messages() {
         {/* Inbox pane */}
         <div
           className={cn(
-            "w-full flex-col border-r lg:flex lg:w-80",
-            activeId ? "hidden lg:flex" : "flex",
+            "w-full flex-col border-r md:flex md:w-72 lg:w-80",
+            activeId ? "hidden md:flex" : "flex",
           )}
         >
           <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
@@ -622,7 +624,7 @@ export function Messages() {
         <div
           className={cn(
             "min-w-0 flex-1 flex-col",
-            activeId ? "flex" : "hidden lg:flex",
+            activeId ? "flex" : "hidden md:flex",
           )}
         >
           {activeConv === null ? (
@@ -652,7 +654,7 @@ export function Messages() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="shrink-0 lg:hidden"
+                  className="shrink-0 md:hidden"
                   aria-label="Back to messages"
                   onClick={closeThread}
                 >

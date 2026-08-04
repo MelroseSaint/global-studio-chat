@@ -51,7 +51,7 @@ const WIDTHS = [
 ];
 
 /** Every admin tab, in the order it appears in the UI. */
-const TABS = ["Users", "Tickets", "Content", "AI review", "Security", "Silenced"];
+const TABS = ["Users", "Tickets", "Content", "AI review", "Security", "Silenced", "Blocklist"];
 
 let passed = 0;
 let failed = 0;
@@ -232,6 +232,11 @@ const TAB_CONTROLS = [
     control: "button:has-text('Unsilence')",
     empty: "No silenced accounts.",
   },
+  {
+    tab: "Blocklist",
+    control: "button:has-text('Re-seed core list')",
+    empty: "No blocked domains in this view.",
+  },
 ];
 
 async function inspectAdmin(page, widthLabel) {
@@ -264,13 +269,19 @@ async function inspectAdmin(page, widthLabel) {
     );
   }
 
-  // Tabs: all six present; below lg they spread 3-across, not 6-crammed.
+  // Tabs: all seven present. Phones spread 3-across, tablets 4-across,
+  // desktops the full 7-across row — never cramped.
   const tabs = page.locator('[data-slot="tabs-list"] [data-slot="tabs-trigger"]');
-  check(`${widthLabel}: all 6 admin tabs rendered`, (await tabs.count()) === 6);
+  check(`${widthLabel}: all 7 admin tabs rendered`, (await tabs.count()) === 7);
   const cols = await page
     .locator('[data-slot="tabs-list"]')
     .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-  check(`${widthLabel}: tabs grid-cols-3 (not cramped 6-across)`, cols === 3, `cols=${cols}`);
+  const expectedCols = widthLabel === "tablet" ? 4 : 3;
+  check(
+    `${widthLabel}: tabs grid-cols-${expectedCols} (not cramped 7-across)`,
+    cols === expectedCols,
+    `cols=${cols}`,
+  );
 
   // Walk every tab: click, WAIT for its panel, then measure + structural
   // check. Waiting on the selector itself (not a fixed sleep) is what keeps

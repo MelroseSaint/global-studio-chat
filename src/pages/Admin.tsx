@@ -399,7 +399,7 @@ function AdminDashboard({ meId }: { meId: string }) {
         <div className="relative">
           <div
             ref={statsScrollRef}
-            className="flex snap-x gap-3 overflow-x-auto pb-1 sm:grid sm:snap-none sm:grid-cols-3 sm:overflow-visible sm:pb-0"
+            className="flex snap-x gap-3 overflow-x-auto pb-1 sm:grid sm:snap-none sm:grid-cols-3 sm:overflow-visible sm:pb-0 md:grid-cols-5 lg:grid-cols-5"
           >
             {STAT_CARDS.map(({ key, label, icon: Icon }) => (
               <Card key={key} className="min-w-[9rem] snap-start sm:min-w-0">
@@ -441,7 +441,7 @@ function AdminDashboard({ meId }: { meId: string }) {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-7">
+        <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>
