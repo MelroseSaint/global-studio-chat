@@ -142,6 +142,18 @@ const rights = [
     detail:
       "Salted email hashes, bot checks at signup, per-account rate limits, EXIF-stripped media, isolated storage, encrypted transport, and human moderation against bots, farms, deepfakes, and AI-generated content — protecting you and your original work.",
   },
+  {
+    icon: Lock,
+    title: "No backdoors. Nothing to seize.",
+    detail:
+      "Law enforcement, governments, or any third party cannot obtain readable private data from PureWire — because readable private data does not exist here. Direct messages are end-to-end encrypted with keys that live only on the devices of the people talking: no server, no administrator, and no subpoena can decrypt them, and there is no master key and no backdoor. Plain-text email addresses, precise locations, and tracking logs are never stored or exposed — the raw address exists only inside the sign-in service, where it is required to deliver your one-time code, and it never appears on any page, query, or export. Whatever anyone demands, there is nothing readable to hand over.",
+  },
+  {
+    icon: UserX,
+    title: "Moderation is report-driven, never surveillance",
+    detail:
+      "Admins act only when something is reported by another member or flagged by the platform's own automated safeguards (bots, farms, duplicates, AI-generated content) — and even then they see no private data: no plain-text emails, no locations, no message contents, because those never exist in readable form. Every action cites a principle of the PureWire Standard and is written to the moderation audit trail. Nobody on PureWire watches you; people only act when someone says something needs looking at.",
+  },
 ];
 
 export function Privacy() {

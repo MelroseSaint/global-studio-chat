@@ -158,8 +158,12 @@ const sections: TermsSection[] = [
         body: "Direct messages are end-to-end encrypted. Message bodies and attachments are encrypted in the sender's browser with keys that exist only on the participants' devices; PureWire stores only ciphertext plus the routing metadata needed to deliver it. PureWire cannot read, scan, or produce the contents of a direct message in response to any request, including legal process, and deleting a conversation or account permanently removes every copy. Because keys are device-bound, a device that has never opened a conversation cannot decrypt it — that is a design guarantee, not a limitation.",
       },
       {
+        heading: "No Backdoors & Report-Driven Moderation",
+        body: "PureWire has no master key and no backdoor. Direct-message contents are end-to-end encrypted with keys that exist only on the participants' devices; the Platform stores only ciphertext, so neither PureWire, nor its administrators, nor any government or law-enforcement authority has the means to decrypt or produce a private message. Plain-text email addresses, precise locations, and tracking logs are never stored or exposed. Administrators act only when content is reported by another member or flagged by the Platform's automated safeguards — bots, farms, stolen or duplicated work, and AI-generated content — and even then they never see message contents, plain-text addresses, or coordinates. Every moderation action cites a principle of the PureWire Standard and is recorded in the audit trail.",
+      },
+      {
         heading: "Subpoenas & Records",
-        body: "Because PureWire intentionally operates on zero-data retention, the Platform cannot produce user tracking logs, historical location records, or plain-text email strings in response to legal discovery or third-party subpoenas.",
+        body: "Because PureWire intentionally operates on zero-data retention, the Platform cannot produce user tracking logs, historical location records, plain-text email strings, or the contents of any direct message — to anyone, for any reason, including legal discovery, third-party subpoenas, or requests from any government or law-enforcement authority. There is no data of that kind to produce.",
       },
     ],
   },

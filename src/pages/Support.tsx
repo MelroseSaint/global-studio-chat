@@ -92,7 +92,15 @@ const FAQS = [
   },
   {
     q: "What data does PureWire store about me?",
-    a: "Very little, and only what you create: your username, display name, bio, links, photo and banner, a salted one-way SHA-256 hash of your email (never the plain-text address), your posts and stories, your comments, likes, shares and follows, notifications, and support tickets. Stories are deleted automatically after 24 hours. Photos and videos are stored with GPS and device metadata stripped — images in your browser, videos on PureWire's servers too. If you add a home location, only a coarsened ~1 km area is stored — never your exact coordinates — and only its label is public. There is no tracking, no analytics, no cookies, and no advertising profile of any kind.",
+    a: "Very little, and only what you create: your username, display name, bio, links, photo and banner, a salted one-way SHA-256 hash of your email (never the plain-text address), your posts and stories, your comments, likes, shares and follows, notifications, support tickets, and your direct messages — stored only as unreadable ciphertext, with the keys living on your devices, so even PureWire can't read them. Stories are deleted automatically after 24 hours. Photos and videos are stored with GPS and device metadata stripped — images in your browser, videos on PureWire's servers too. If you add a home location, only a coarsened ~1 km area is stored — never your exact coordinates — and only its label is public. There is no tracking, no analytics, no cookies, and no advertising profile of any kind.",
+  },
+  {
+    q: "Can the police or government see my private data?",
+    a: "No — because there is nothing readable to see. Direct messages are end-to-end encrypted: the keys exist only on the devices of the two people talking, PureWire stores only ciphertext, and there is no master key and no backdoor, so no server, administrator, subpoena, or government can decrypt them. Plain-text email addresses, precise locations, and tracking logs are never stored or exposed — the raw address exists only inside the sign-in service, required to deliver your one-time code, and it never appears on any page, query, or export. A request for user data produces what's already public: a profile and the posts on it. Nothing more exists to hand over.",
+  },
+  {
+    q: "What can admins actually see when they moderate?",
+    a: "Only what's public, and only after something is reported or flagged. Admins act when another member reports a post, profile, or ticket — or when the platform's automated safeguards (bots, farms, duplicates, AI-generated content) flag something for review. They never see private data: no plain-text emails, no locations, no message contents, because those never exist in readable form. Every action cites a principle of the PureWire Standard and is written to the audit trail. Nobody on PureWire watches you; moderation only begins when someone says something needs looking at.",
   },
   {
     q: "How do I delete my account and all my data?",
