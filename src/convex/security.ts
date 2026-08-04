@@ -209,6 +209,9 @@ const RATE_LIMITS: Record<string, { windowMs: number; limit: number }> = {
   // URLs to fill PureWire's storage, while still allowing a photo-heavy
   // poster (4 media × 30 posts/hour) to work without hitting the wall.
   upload: { windowMs: 60 * 60_000, limit: 200 }, // 200 uploads/hour
+  // Direct messages: a generous budget for real conversations that still
+  // blunts bot floods and mass-message spam.
+  dm: { windowMs: 60 * 60_000, limit: 300 }, // 300 DMs/hour
 };
 
 /**

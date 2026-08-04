@@ -47,6 +47,12 @@ const neverStored = [
       "There are no ads and no sponsorships, so there is nothing to profile you for. Your attention is not a product.",
   },
   {
+    icon: Lock,
+    title: "No readable direct messages",
+    detail:
+      "Direct messages are end-to-end encrypted in your browser before a single byte leaves your device. PureWire stores only unreadable ciphertext — never the plaintext, never the keys. Even a full database copy contains nothing that can be read, so there is nothing to hand over, subpoena, or pull.",
+  },
+  {
     icon: ShieldCheck,
     title: "Your media is scrubbed",
     detail:
@@ -69,6 +75,11 @@ const stored = [
     title: "Your session",
     detail:
       "One sign-in credential per device, held by your browser so you don't re-enter your password on every visit. Sessions persist until you sign out — up to 10 years on the permanent default, or 30 days if you turned off \"Keep me signed in\" at sign-in. Signing out, or ending a session from Settings, deletes that stored credential. On a shared device, sign out when you're done — that's the one step that clears the sign-in token from the machine.",
+  },
+  {
+    title: "Your direct messages",
+    detail:
+      "Encrypted message bodies and attachments (ciphertext only), plus who messaged whom and when — the metadata the mailbox needs to route them. The keys live only on the devices of the two people talking: the private half of your encryption key is generated in your browser and never sent to PureWire. A device that has never opened a conversation cannot decrypt it, by design — and no server, admin, or authority can read it either.",
   },
   {
     title: "Your activity",
@@ -100,6 +111,11 @@ const retention = [
     title: "Sessions",
     detail:
       "Until you sign out — up to 10 years on the permanent default (30 days if you opted out of \"Keep me signed in\"). The browser-stored sign-in credential is deleted when the session ends, and you can sign out of every other device from Settings at any time.",
+  },
+  {
+    title: "Direct messages",
+    detail:
+      "Until you delete the conversation — which removes it for both people, with no copy existing anywhere — or until your account is erased, which deletes every conversation you were part of, for everyone.",
   },
   {
     title: "Everything else",

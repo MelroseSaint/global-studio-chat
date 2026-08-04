@@ -13,6 +13,7 @@ import type * as admin from "../admin.js";
 import type * as aiContent from "../aiContent.js";
 import type * as auth from "../auth.js";
 import type * as auth_email from "../auth/email.js";
+import type * as dms from "../dms.js";
 import type * as farmNetwork from "../farmNetwork.js";
 import type * as http from "../http.js";
 import type * as links from "../links.js";
@@ -48,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   aiContent: typeof aiContent;
   auth: typeof auth;
   "auth/email": typeof auth_email;
+  dms: typeof dms;
   farmNetwork: typeof farmNetwork;
   http: typeof http;
   links: typeof links;

@@ -6,6 +6,7 @@ import {
   CheckCheck,
   Flag,
   Heart,
+  Mail,
   MessageCircle,
   Repeat2,
   UserPlus,
@@ -30,6 +31,7 @@ const ICONS = {
   mention: AtSign,
   system: Bell,
   ticket: Flag,
+  dm: Mail,
 } as const;
 
 export function Notifications() {
@@ -95,6 +97,12 @@ export function Notifications() {
         return (
           <>
             <b>{who}</b> mentioned you in a post
+          </>
+        );
+      case "dm":
+        return (
+          <>
+            <b>{who}</b> sent you an encrypted message
           </>
         );
       case "ticket":
@@ -193,6 +201,15 @@ export function Notifications() {
                 View
               </Link>
             )}
+            {n.type === "dm" && n.actor ? (
+              <Link
+                to={`/messages?user=${n.actor._id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                Open
+              </Link>
+            ) : null}
           </motion.div>
         );
       })}

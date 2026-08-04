@@ -1,6 +1,6 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
-import { Ban, CalendarDays, Link2, MapPin, Settings2 } from "lucide-react";
+import { Ban, CalendarDays, Link2, MapPin, MessageSquare, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { Link, useNavigate, useParams } from "react-router";
@@ -115,6 +115,15 @@ export function Profile() {
               </Button>
             ) : (
               <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/messages?user=${profile._id}`)}
+                  className="gap-1.5"
+                >
+                  <MessageSquare className="size-4" />
+                  Message
+                </Button>
                 <FollowButton
                   username={profile.username ?? ""}
                   initialFollowing={profile.isFollowing}

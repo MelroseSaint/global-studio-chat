@@ -5,6 +5,7 @@ import {
   Home,
   LifeBuoy,
   LogOut,
+  MessageSquare,
   MoreHorizontal,
   Settings,
   Shield,
@@ -88,6 +89,7 @@ export function AppLayout() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const unread = useQuery(api.notifications.unreadCount);
+  const dmUnread = useQuery(api.dms.unreadDmCount);
   const ensureAdminStatus = useMutation(api.admin.ensureAdminStatus);
   const pruneExpiredStories = useMutation(api.account.pruneExpiredStories);
   // Moderation workload for admins: open tickets + posts waiting on AI
@@ -165,6 +167,12 @@ export function AppLayout() {
         <nav className="flex flex-1 flex-col gap-1 p-3">
           <NavItem to="/home" icon={Home} label="Home" end />
           <NavItem to="/explore" icon={Compass} label="Discover" />
+          <NavItem
+            to="/messages"
+            icon={MessageSquare}
+            label="Messages"
+            badge={dmUnread ?? 0}
+          />
           <NavItem
             to="/notifications"
             icon={Bell}
@@ -258,6 +266,18 @@ export function AppLayout() {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="top" className="w-52">
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onSelect={() => navigate("/messages")}
+            >
+              <MessageSquare />
+              Messages
+              {dmUnread && dmUnread > 0 ? (
+                <span className="ml-auto flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                  {dmUnread > 99 ? "99+" : dmUnread}
+                </span>
+              ) : null}
+            </DropdownMenuItem>
             <DropdownMenuItem
               className="cursor-pointer"
               onSelect={() => navigate("/support")}

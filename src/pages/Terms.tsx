@@ -154,6 +154,10 @@ const sections: TermsSection[] = [
         body: "Your session persists until you sign out — up to 10 years on the permanent default, or 30 days if you opted out of \u201cKeep me signed in\u201d at sign-in. To keep you signed in without a password prompt on every visit, a sign-in credential (including its refresh token) is stored in your browser on each device. That credential is deleted when the session ends — by signing out, by ending the session from Settings, or by account deletion. On a shared device, sign out when you are done: signing out is the one action that clears your sign-in token from that machine, and you can end the session on every other device at any time from Settings.",
       },
       {
+        heading: "Encrypted Direct Messages",
+        body: "Direct messages are end-to-end encrypted. Message bodies and attachments are encrypted in the sender's browser with keys that exist only on the participants' devices; PureWire stores only ciphertext plus the routing metadata needed to deliver it. PureWire cannot read, scan, or produce the contents of a direct message in response to any request, including legal process, and deleting a conversation or account permanently removes every copy. Because keys are device-bound, a device that has never opened a conversation cannot decrypt it — that is a design guarantee, not a limitation.",
+      },
+      {
         heading: "Subpoenas & Records",
         body: "Because PureWire intentionally operates on zero-data retention, the Platform cannot produce user tracking logs, historical location records, or plain-text email strings in response to legal discovery or third-party subpoenas.",
       },

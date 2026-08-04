@@ -46,7 +46,10 @@ type ErasableId =
   | Id<"rateLimits">
   | Id<"authRateLimits">
   | Id<"silentFlagEvents">
-  | Id<"moderationLog">;
+  | Id<"moderationLog">
+  | Id<"dmMessages">
+  | Id<"dmReads">
+  | Id<"dmConversations">;
 
 interface ErasableRow {
   id: ErasableId;
@@ -416,6 +419,61 @@ export async function eraseAccount(
     },
     async (c, { id }) => {
       await c.db.delete(id as Id<"moderationLog">);
+    },
+  );
+
+  // 7.5 Direct messages — every conversation the user was part of dies
+  //     with them, for BOTH sides: all messages, their encrypted media
+  //     files (both storage modes), read watermarks, and the conversation
+  //     row. PureWire holds no plaintext or keys, so this is complete by
+  //     construction — erasure is the whole point of the ciphertext-only
+  //     design.
+  await sweep(
+    ctx,
+    async (c) => {
+      // The user is one side of a conversation or the other, never both —
+      // both indexed lookups, concatenated.
+      const [asA, asB] = await Promise.all([
+        c.db
+          .query("dmConversations")
+          .withIndex("by_participant_a", (q) => q.eq("participantA", userId))
+          .take(SWEEP),
+        c.db
+          .query("dmConversations")
+          .withIndex("by_participant_b", (q) => q.eq("participantB", userId))
+          .take(SWEEP),
+      ]);
+      return [...asA, ...asB].map((conversation) => ({ id: conversation._id }));
+    },
+    async (c, { id }) => {
+      const conversationId = id as Id<"dmConversations">;
+      for (;;) {
+        const messages = await c.db
+          .query("dmMessages")
+          .withIndex("by_conversation", (q) =>
+            q.eq("conversationId", conversationId),
+          )
+          .take(SWEEP);
+        if (messages.length === 0) {
+          break;
+        }
+        for (const message of messages) {
+          if (message.media !== undefined) {
+            await cleanupMediaItems(c, [message.media]);
+          }
+          await c.db.delete(message._id);
+        }
+      }
+      const reads = await c.db
+        .query("dmReads")
+        .withIndex("by_conversation", (q) =>
+          q.eq("conversationId", conversationId),
+        )
+        .take(SWEEP);
+      for (const read of reads) {
+        await c.db.delete(read._id);
+      }
+      await c.db.delete(conversationId);
     },
   );
 

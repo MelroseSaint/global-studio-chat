@@ -41,6 +41,13 @@ const schema = defineSchema({
     ),
     verified: v.optional(v.boolean()),
     role: v.optional(v.union(v.literal("user"), v.literal("creator"), v.literal("admin"))),
+    // End-to-end encryption: the PUBLIC half of the account's ECDH P-256
+    // keypair, as JWK JSON. Public keys are not secret — they exist so
+    // anyone can derive a shared conversation key with this account. The
+    // PRIVATE half is generated in the browser and never leaves the
+    // device; the server holds no key material for anyone. Set by
+    // dms.setDmPublicKey the first time a device opens Messages.
+    dmPublicKey: v.optional(v.string()),
     followersCount: v.optional(v.number()),
     followingCount: v.optional(v.number()),
     postsCount: v.optional(v.number()),
@@ -249,6 +256,7 @@ const schema = defineSchema({
       v.literal("mention"),
       v.literal("system"),
       v.literal("ticket"),
+      v.literal("dm"),
     ),
     actorId: v.optional(v.id("users")),
     postId: v.optional(v.id("posts")),
@@ -340,6 +348,64 @@ const schema = defineSchema({
     standardId: v.optional(v.string()),
     note: v.optional(v.string()),
   }),
+  // End-to-end encrypted direct messages. Every message body and attachment
+  // is AES-GCM ciphertext produced in the sender's browser; the server
+  // stores ONLY {ciphertext, iv} plus the routing metadata (who, when,
+  // which thread). Plaintext and keys never touch Convex — see
+  // src/lib/dm-crypto.ts for the scheme.
+  dmConversations: defineTable({
+    // Exactly two members, stored in sorted order (see sortedPair in
+    // dms.ts) so the pair has a stable identity regardless of who opened
+    // it first. Two scalar columns instead of an array: both are indexed
+    // directly, so "all conversations for me" is two index lookups with
+    // fully-typed queries.
+    participantA: v.id("users"),
+    participantB: v.id("users"),
+    // The newest message's time + sender, kept on the conversation so the
+    // inbox list and the unread badge are one cheap query instead of a
+    // scan of every message.
+    lastMessageAt: v.optional(v.number()),
+    lastMessageSenderId: v.optional(v.id("users")),
+  })
+    .index("by_participant_a", ["participantA"])
+    .index("by_participant_b", ["participantB"]),
+  dmMessages: defineTable({
+    conversationId: v.id("dmConversations"),
+    senderId: v.id("users"),
+    // AES-GCM ciphertext of the message body (base64). Empty for a
+    // media-only message.
+    ciphertext: v.string(),
+    // The 12-byte AES-GCM nonce (base64).
+    iv: v.string(),
+    // Optional attachment: an encrypted file. Dual-mode like post media —
+    // a Convex storage id (legacy/fallback) or an external Cloudinary
+    // url + key (primary path). The stored bytes are ciphertext either way;
+    // the file is decrypted in the recipient's browser after download.
+    media: v.optional(
+      v.object({
+        storageId: v.optional(v.id("_storage")),
+        url: v.optional(v.string()),
+        key: v.optional(v.string()),
+        iv: v.string(),
+        mime: v.optional(v.string()),
+        kind: v.union(
+          v.literal("image"),
+          v.literal("video"),
+          v.literal("audio"),
+        ),
+      }),
+    ),
+  }).index("by_conversation", ["conversationId"]),
+  // Per-device "read up to here" watermark for one conversation, so the
+  // unread badge is accurate without ever touching message bodies.
+  dmReads: defineTable({
+    conversationId: v.id("dmConversations"),
+    userId: v.id("users"),
+    lastReadAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_user_conversation", ["userId", "conversationId"]),
 });
 
 export default schema;

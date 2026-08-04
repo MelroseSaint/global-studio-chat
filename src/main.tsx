@@ -27,6 +27,9 @@ const Explore = lazy(() =>
   import("@/pages/Explore").then((m) => ({ default: m.Explore })),
 );
 const Feed = lazy(() => import("@/pages/Feed").then((m) => ({ default: m.Feed })));
+const Messages = lazy(() =>
+  import("@/pages/Messages").then((m) => ({ default: m.Messages })),
+);
 const Notifications = lazy(() =>
   import("@/pages/Notifications").then((m) => ({ default: m.Notifications })),
 );
@@ -82,6 +85,7 @@ createRoot(document.getElementById("root")!).render(
                 }
               >
                 <Route path="/home" element={<Feed />} />
+                <Route path="/messages" element={<Messages />} />
                 <Route path="/explore" element={<Explore />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/u/:username" element={<Profile />} />
