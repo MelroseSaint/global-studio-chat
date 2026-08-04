@@ -19,6 +19,7 @@
     "qa:follows": "node scripts/follows-e2e.mjs",
     "qa:reinstate": "node scripts/reinstate-qa.mjs",
     "qa:salt": "node scripts/salt-rotation-qa.mjs",
+    "qa:ai-scan": "node scripts/ai-scan-qa.mjs",
     "qa:video-privacy": "node scripts/video-privacy-qa.mjs",
     "qa:prod-pipeline": "node scripts/prod-pipeline-verify.mjs",
     "qa:admin-auth": "node scripts/admin-auth-qa.mjs",

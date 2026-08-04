@@ -1,5 +1,5 @@
 /**
- * Pure byte-scanning helpers for AI-generator and deepfake markers.
+ * Pure byte-scanning helpers for AI-generator and deepfake detection.
  *
  * Shared between the Convex action (`src/convex/aiContent.ts`, which scans
  * the uploaded bytes server-side as the authoritative check) and the browser
@@ -8,7 +8,24 @@
  * never also strip the evidence that an image was machine-made).
  *
  * This module must stay free of Convex and DOM imports so both sides can
- * use it.
+ * use it. All parsers are pure byte math over ArrayBuffer — no TextEncoder,
+ * no URL, no zlib — so they run in the stripped V8 isolate Convex actions
+ * use.
+ *
+ * The scanner is structured, not just a substring sweep:
+ *
+ * - It walks each container's real structure — PNG chunks (tEXt/iTXt/zTXt),
+ *   JPEG segments (EXIF IFD0/ExifIFD, XMP, comments), MP4/MOV atoms
+ *   (moov.udta text atoms), WebP chunks, GIF comment extensions, ID3v2
+ *   frames, FLAC Vorbis comments, and RIFF/WAVE INFO chunks — and matches
+ *   against the METADATA FIELDS, so markers that live in structured fields
+ *   (Software, parameters, encoder atoms) are caught even when the raw
+ *   head/tail sweep would miss them (compressed, or beyond the window).
+ * - It validates the container against the claimed kind: an image that is
+ *   actually a video container, or a file that is not any known image/audio/
+ *   video format at all, is a rename-evasion tell and is flagged.
+ * - It keeps the original head+tail substring sweep as a final net for
+ *   markers embedded in arbitrary bytes.
  */
 
 export type AiScanResult =
@@ -16,40 +33,37 @@ export type AiScanResult =
   | { status: "review"; reason: string }
   | { status: "blocked"; reason: string };
 
+// ─────────────────────────── Marker catalogs ───────────────────────────
+
 /**
  * Generator markers embedded in AI image files — EXIF Software/ImageDescription
  * fields and PNG tEXt "parameters" chunks (Stable Diffusion WebUI, ComfyUI,
- * Midjourney, DALL·E, NovelAI, and friends). Scanned from the raw bytes.
+ * Midjourney, DALL·E, NovelAI, Google Imagen/Gemini, and friends).
+ *
+ * Google's current stack is listed explicitly — the platform's policy is
+ * zero tolerance: no AI-generated media from Google or any other platform.
  */
 const IMAGE_GENERATOR_MARKERS = [
+  // Stable Diffusion family
   "stable diffusion",
   "stable-diffusion",
-  "midjourney",
-  "dall-e",
-  "dall e",
-  "dall·e",
-  "dalle",
-  "novelai",
-  "adobe firefly",
-  "leonardo.ai",
-  "leonardo ai",
-  "dreamstudio",
   "sdxl",
+  "sd3",
+  "sd3.5",
+  "sd 3.5",
   "flux 1",
   "flux.1",
-  "playground ai",
-  "playgroundai",
-  "bing image creator",
-  "craiyon",
-  "hotpot.ai",
-  "deepai",
-  "nightcafe",
-  "artbreeder",
-  "wombo",
-  "stability.ai",
+  "flux dev",
+  "flux-dev",
+  "flux schnell",
+  "flux-schnell",
+  "schnell-xl",
   "fooocus",
   "comfyui",
+  "class_type",
+  "ksampler",
   "a1111",
+  "automatic1111",
   "waifu-diffusion",
   "anything-v3",
   "dreamshaper",
@@ -59,27 +73,85 @@ const IMAGE_GENERATOR_MARKERS = [
   "cfg scale",
   "negative prompt:",
   "seed: ",
-  // Newer generators and model families
-  "dall-e-3",
-  "gpt-image",
-  "gpt image",
-  "google imagen",
-  "imagen 3",
-  "imagen-v3",
-  "ideogram",
-  "recraft",
-  "seedream",
-  "nano-banana",
-  "flux dev",
-  "flux-dev",
-  "flux schnell",
-  "flux-schnell",
-  "schnell-xl",
-  "sd3",
-  "sd3.5",
-  "tensorart",
   "txt2img",
   "img2img",
+  // Commercial generators
+  "midjourney",
+  "dall-e",
+  "dall e",
+  "dall·e",
+  "dalle",
+  "dall-e-3",
+  "dall-e-4",
+  "gpt-image",
+  "gpt image",
+  "gpt-image-1",
+  "gpt-4o image",
+  "chatgpt-4o image",
+  "novelai",
+  "adobe firefly",
+  "firefly",
+  "adobe express",
+  "leonardo.ai",
+  "leonardo ai",
+  "dreamstudio",
+  "playground ai",
+  "playgroundai",
+  "bing image creator",
+  "microsoft designer",
+  "craiyon",
+  "hotpot.ai",
+  "deepai",
+  "nightcafe",
+  "artbreeder",
+  "wombo",
+  "stability.ai",
+  "tensorart",
+  "recraft",
+  "ideogram",
+  "seedream",
+  "nano-banana",
+  // Google's AI image stack — explicit zero-tolerance policy
+  "google imagen",
+  "imagen 3",
+  "imagen 4",
+  "imagen-v3",
+  "imagen-v4",
+  "imagen-4",
+  "gemini",
+  "gemini 2",
+  "gemini 2.5",
+  "gemini image",
+  "gemini-image",
+  "synthid",
+  "notebooklm",
+  "bard",
+  "google ai",
+  "google-ai",
+  "google ai studio",
+  "aistudio",
+  "deepmind",
+  "veo",
+  // xAI and other modern families
+  "grok",
+  "grok-2",
+  "grok-3",
+  "x ai",
+  "x-ai",
+  "flux",
+  "krea",
+  "canva ai",
+  "canva",
+  "picsart ai",
+  "remini",
+  "meitu",
+  "photoroom",
+  "pixlr ai",
+  "fotor ai",
+  "stablecascade",
+  "stable cascade",
+  "hunyuan image",
+  "hunyuan-image",
   "workflow:",
 ];
 
@@ -101,6 +173,12 @@ const DEEPFAKE_MARKERS = [
   "inswap",
   "swapface",
   "facefusion",
+  "ghostface",
+  "simswap",
+  "inswapper",
+  "mushup",
+  "fom",
+  "first order motion",
 ];
 
 /** Ambiguous wording/filter names — flagged for a human check, not blocked. */
@@ -110,20 +188,25 @@ const DEEPFAKE_REVIEW_MARKERS = ["deepfake", "faceapp"];
  * C2PA / JUMBF provenance and Google SynthID watermark markers.
  *
  * C2PA (Content Credentials) is the open standard cameras and editors use
- * to record how a file was made. A manifest alone is provenance, not proof
- * of AI — but the `trainedAlgorithmicMedia` assertion is C2PA's explicit
- * declaration that an AI model created or edited the content, and SynthID
- * is Google's watermarking system for AI-generated media. Both are demoted
- * to the human review tier (never a hard block) so genuine photos carrying
- * provenance metadata are never rejected on presence alone — a human keeps
- * the final call, keeping the review queue fast for real creators.
+ * to record how a file was made. `trainedAlgorithmicMedia` is C2PA's
+ * explicit declaration that an AI model created or edited the content —
+ * under the platform's zero-tolerance policy that declaration is BLOCKED
+ * (it is the machine's own admission). A bare `c2pa` manifest is just
+ * provenance, not proof of AI, so it stays on the review tier. SynthID is
+ * Google's watermarking system for AI-generated media; its presence is a
+ * hard block.
  */
+const PROVENANCE_BLOCK_MARKERS = [
+  "trainedalgorithmicmedia", // C2PA: AI model was involved — explicit admission
+  "synthid", // Google's AI-media watermark
+];
+
+/** C2PA presence without an AI assertion — provenance only, human checks. */
 const PROVENANCE_REVIEW_MARKERS = [
-  "trainedalgorithmicmedia", // C2PA: AI model was involved
-  "synthid", // Google's AI-media watermark tooling
   "contentcredentials", // C2PA reader/verifier signatures
-  "c2pa.actions", // C2PA action log (contains the AI assertion)
+  "c2pa.actions", // C2PA action log (may contain the AI assertion)
   "c2pa", // C2PA manifest / reader signatures
+  "jumbf", // JUMBF container C2PA manifests live in
 ];
 
 /**
@@ -136,11 +219,16 @@ const AV_GENERATOR_MARKERS = [
   "openai sora",
   "sora video",
   "sora-generated",
+  "sora 2",
   "runwayml",
   "runway ml",
   "runway gen",
   "google veo",
   "veo 3",
+  "veo 2",
+  "veo 2.0",
+  "gemini video",
+  "gemini-video",
   "pika labs",
   "pika.art",
   "pikavideo",
@@ -149,6 +237,7 @@ const AV_GENERATOR_MARKERS = [
   "d-id video",
   "luma dream machine",
   "lumaai",
+  "luma ray",
   "kling ai",
   "klingai",
   "hailuo",
@@ -165,18 +254,29 @@ const AV_GENERATOR_MARKERS = [
   "play.ht",
   "tts-1",
   "tts-1-hd",
-  // Newer video/audio generators
   "suno ai",
   "suno-v3",
-  "sora 2",
-  "veo 2",
-  "veo 2.0",
+  "suno-v4",
   "wan 2.1",
   "wan2.1",
+  "wan 2.2",
   "hunyuan",
   "hedra",
   "gpt-image-1",
   "chatgpt-4o image",
+  "google musiclm",
+  "musiclm",
+  "lyria",
+  "google deepmind",
+  "kits.ai",
+  "revoicer",
+  "coqui",
+  "xtts",
+  "bark tts",
+  "microsoft vasa",
+  "vasa-1",
+  "generative fill",
+  "generative expand",
 ];
 
 /** Standalone brand names — flagged for a human check, not blocked. */
@@ -191,17 +291,18 @@ const AV_REVIEW_MARKERS = [
   "udio",
   "descript",
   "ai voice",
+  "ai video",
+  "ai avatar",
+  "text to video",
+  "text-to-video",
 ];
+
+// ─────────────────────────── Byte helpers ───────────────────────────
 
 const SCAN_HEAD_BYTES = 256 * 1024; // metadata lives at the head of the file
 const SCAN_TAIL_BYTES = 128 * 1024; // …and at the tail (MP4 moov/udta boxes)
 
-/**
- * Read the scan window as latin-1 text. Samples the head AND the tail of
- * the file: JPEG/PNG metadata lives at the head, but MP4/MOV generator and
- * tool tags live in the moov/udta box, which after a large mdat (the video
- * data) sits at the tail. Scanning only the head would miss them.
- */
+/** Read the scan window as latin-1 text (head + tail). */
 function bytesToLatin1(bytes: ArrayBuffer): string {
   const total = bytes.byteLength;
   const headLen = Math.min(total, SCAN_HEAD_BYTES);
@@ -220,70 +321,904 @@ function bytesToLatin1(bytes: ArrayBuffer): string {
   return text.toLowerCase();
 }
 
-/** Scan raw image bytes for generator and deepfake metadata markers. */
+function u8(bytes: ArrayBuffer): Uint8Array {
+  return new Uint8Array(bytes);
+}
+
+function u32(bytes: Uint8Array, off: number): number {
+  return (
+    ((bytes[off] ?? 0) << 24) |
+    ((bytes[off + 1] ?? 0) << 16) |
+    ((bytes[off + 2] ?? 0) << 8) |
+    (bytes[off + 3] ?? 0)
+  ) >>> 0;
+}
+
+function u16(bytes: Uint8Array, off: number): number {
+  return (((bytes[off] ?? 0) << 8) | (bytes[off + 1] ?? 0)) >>> 0;
+}
+
+/** ASCII/latin-1 decode of a bounded region (stops at NUL or end). */
+function latin1Region(bytes: Uint8Array, off: number, len: number): string {
+  const end = Math.min(bytes.length, off + len);
+  let out = "";
+  for (let i = off; i < end; i++) {
+    const c = bytes[i];
+    if (c === 0) break;
+    out += String.fromCharCode(c);
+  }
+  return out;
+}
+
+/** Read a bounded UTF-8 string (used for PNG iTXt). */
+function utf8Region(bytes: Uint8Array, off: number, len: number): string {
+  const end = Math.min(bytes.length, off + len);
+  let out = "";
+  let i = off;
+  while (i < end) {
+    const b = bytes[i];
+    if (b === 0) break;
+    if (b < 0x80) {
+      out += String.fromCharCode(b);
+      i++;
+    } else if (b < 0xe0 && i + 1 < end) {
+      out += String.fromCharCode(((b & 0x1f) << 6) | (bytes[i + 1] & 0x3f));
+      i += 2;
+    } else if (b < 0xf0 && i + 2 < end) {
+      out += String.fromCharCode(
+        ((b & 0x0f) << 12) | ((bytes[i + 1] & 0x3f) << 6) | (bytes[i + 2] & 0x3f),
+      );
+      i += 3;
+    } else if (i + 3 < end) {
+      const cp =
+        ((b & 0x07) << 18) |
+        ((bytes[i + 1] & 0x3f) << 12) |
+        ((bytes[i + 2] & 0x3f) << 6) |
+        (bytes[i + 3] & 0x3f);
+      out += String.fromCodePoint(cp);
+      i += 4;
+    } else {
+      i++;
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────── Scan orchestration ───────────────────────────
+
+/** Parse the right container parser for a detected kind. */
+function extractMeta(container: Container, bytes: ArrayBuffer): ExtractedMeta {
+  switch (container) {
+    case "png":
+      return parsePng(bytes);
+    case "jpeg":
+      return parseJpeg(bytes);
+    case "webp":
+      return parseWebp(bytes);
+    case "gif":
+      return parseGif(bytes);
+    case "mp4":
+      return parseMp4(bytes);
+    // WebM/Matroska passes container validation but has no structural
+    // parser here — its tags (EBML/SimpleTag) are caught by the raw sweep
+    // fallback, same as before this overhaul.
+    case "mp3":
+      return parseId3(bytes);
+    case "flac":
+      return parseFlac(bytes);
+    case "wav":
+      return parseWav(bytes);
+    default:
+      return emptyMeta;
+  }
+}
+
+/**
+ * Match marker lists against every extracted field/value and the raw sweep.
+ * Returns the first hard block, else the first review signal, else null.
+ * Structured fields are scanned first (a marker in Software is stronger
+ * evidence than the same string in arbitrary bytes).
+ */
+function matchMarkers(
+  fields: string[],
+  free: string[],
+  raw: string,
+  blockMarkers: string[],
+  reviewMarkers: string[],
+  blockedReason: (m: string) => string,
+  reviewReason: (m: string) => string,
+): AiScanResult | null {
+  // Hard blocks: fields + free strings + raw sweep.
+  for (const marker of blockMarkers) {
+    for (const f of fields) {
+      if (f.includes(marker)) {
+        return { status: "blocked", reason: blockedReason(marker) };
+      }
+    }
+  }
+  // Free strings (comments, descriptions, chunk values) are free text — the
+  // same raw-safe rule applies: a bare brand like "canva" in a comment is
+  // not a block; only unambiguous signatures are.
+  for (const marker of blockMarkers) {
+    if (!isRawSafeMarker(marker)) continue;
+    for (const s of free) {
+      if (s.toLowerCase().includes(marker)) {
+        return { status: "blocked", reason: blockedReason(marker) };
+      }
+    }
+  }
+  // Review tier: fields and free strings only (a bare brand mention in
+  // arbitrary bytes is too weak to flag on its own).
+  for (const marker of reviewMarkers) {
+    for (const f of fields) {
+      if (f.includes(marker)) {
+        return { status: "review", reason: reviewReason(marker) };
+      }
+    }
+  }
+  for (const marker of reviewMarkers) {
+    for (const s of free) {
+      if (s.toLowerCase().includes(marker)) {
+        return { status: "review", reason: reviewReason(marker) };
+      }
+    }
+  }
+  // Raw sweep: only signatures that are unambiguous in arbitrary bytes
+  // (multi-word tool names, long distinctive tokens, or RAW_SAFE_SHORT) are
+  // matched here — a bare brand like "canva" or "gemini" in a photo's raw
+  // bytes is noise, so it only ever matches inside structured metadata
+  // fields above, never against the whole file.
+  for (const marker of blockMarkers) {
+    if (isRawSafeMarker(marker) && raw.includes(marker)) {
+      return { status: "blocked", reason: blockedReason(marker) };
+    }
+  }
+  for (const marker of reviewMarkers) {
+    if (isRawSafeMarker(marker) && raw.includes(marker)) {
+      return { status: "review", reason: reviewReason(marker) };
+    }
+  }
+  return null;
+}
+
+const ALL_BLOCK = [...IMAGE_GENERATOR_MARKERS, ...DEEPFAKE_MARKERS, ...AV_GENERATOR_MARKERS, ...PROVENANCE_BLOCK_MARKERS];
+const ALL_REVIEW = [...DEEPFAKE_REVIEW_MARKERS, ...AV_REVIEW_MARKERS, ...PROVENANCE_REVIEW_MARKERS];
+
+/**
+ * Short but unambiguous tool signatures that are safe to match in RAW bytes
+ * (a bare "synthid", "comfyui", or "synthesia" in a file's bytes is itself
+ * the signature). Short bare BRANDS — canva, gemini, bard, veo, grok, flux,
+ * firefly, pika, suno, udio — are deliberately NOT here: they can appear in
+ * a genuine photo's comment/URL or in ordinary prose, so they only ever
+ * match inside structured metadata fields ("Software: Canva"), never in
+ * arbitrary bytes. Multi-word and long (≥8 chars) signatures are always
+ * raw-safe.
+ */
+const RAW_SAFE_SHORT = new Set([
+  "synthid",
+  "comfyui",
+  "a1111",
+  "fooocus",
+  "jumbf",
+  "c2pa",
+  "synthesia",
+  "deepfacelab",
+  "faceswap",
+  "sadtalker",
+  "reface",
+  "simswap",
+  "inswapper",
+  "avatarify",
+  "swapface",
+  "facefusion",
+  "xtts",
+  "coqui",
+  "hedra",
+  "hunyuan",
+  "lyria",
+  "musiclm",
+  "tts-1",
+  "tts-1-hd",
+  "vasa-1",
+  "d-id.com",
+  "d-id video",
+  "kits.ai",
+  "murf.ai",
+  "play.ht",
+  "voice.ai",
+  "fakeyou",
+  "lumaai",
+  "klingai",
+  "pikavideo",
+  "workflow:",
+  "class_type",
+  "ksampler",
+  "seed: ",
+  "txt2img",
+  "img2img",
+  "dreamstudio",
+  "stablecascade",
+  "nano-banana",
+  "tensorart",
+  "seedream",
+  "craiyon",
+  "nightcafe",
+  "artbreeder",
+  "deepai",
+  "playgroundai",
+  "wombo",
+  "novelai",
+  "dall-e",
+  "dall e",
+  "dall\u00b7e",
+  "dalle",
+]);
+
+function isRawSafeMarker(marker: string): boolean {
+  if (marker.includes(" ") || marker.length >= 8) return true;
+  return RAW_SAFE_SHORT.has(marker);
+}
+
+const BLOCK_REASON = (m: string) =>
+  `This media carries AI-generator metadata (${m.trim()}), which isn't allowed on PureWire.`;
+const REVIEW_REASON = (m: string) =>
+  `This media mentions a possible AI tool (${m.trim()}) — flagged for a human check.`;
+
+/** Validate that the detected container matches the claimed kind. */
+function containerMismatch(
+  container: Container,
+  kind: "image" | "media",
+): string | null {
+  if (container === null) {
+    return "This file isn't a recognized image, audio, or video format — it may have been renamed to hide what it is.";
+  }
+  if (kind === "image" && !IMAGE_CONTAINERS.includes(container)) {
+    return "This file isn't really an image — it's a different format that may have been renamed.";
+  }
+  if (kind === "media" && VIDEO_CONTAINERS.includes(container) === false && AUDIO_CONTAINERS.includes(container) === false) {
+    return "This file isn't really audio or video — it's a different format that may have been renamed.";
+  }
+  return null;
+}
+
+/**
+ * Scan raw image bytes for generator/deepfake markers. Validates the
+ * container first (a renamed file is an evasion tell), then walks the
+ * structured metadata, then falls back to the raw head/tail sweep.
+ */
 export function scanImageBytes(bytes: ArrayBuffer): AiScanResult {
-  const lower = bytesToLatin1(bytes);
-  for (const marker of IMAGE_GENERATOR_MARKERS) {
-    if (lower.includes(marker)) {
-      return {
-        status: "blocked",
-        reason: `This image carries AI-generator metadata (${marker.trim()}), which isn't allowed on PureWire.`,
-      };
-    }
+  const container = detectContainer(bytes);
+  const mismatch = containerMismatch(container, "image");
+  if (mismatch !== null) {
+    return { status: "review", reason: mismatch };
   }
-  for (const marker of DEEPFAKE_MARKERS) {
-    if (lower.includes(marker)) {
-      return {
-        status: "blocked",
-        reason: `This image looks deepfake-manipulated (${marker.trim()}), which isn't allowed on PureWire.`,
-      };
-    }
-  }
-  for (const marker of DEEPFAKE_REVIEW_MARKERS) {
-    if (lower.includes(marker)) {
-      return {
-        status: "review",
-        reason: `This image mentions a possible manipulation tool (${marker.trim()}) — flagged for a human check.`,
-      };
-    }
-  }
-  for (const marker of PROVENANCE_REVIEW_MARKERS) {
-    if (lower.includes(marker)) {
-      return {
-        status: "review",
-        reason: `This image carries AI-provenance metadata (${marker.trim()}) — flagged for a human check.`,
-      };
-    }
-  }
+  const meta = extractMeta(container, bytes);
+  const raw = bytesToLatin1(bytes);
+  const hit = matchMarkers(
+    meta.fields,
+    meta.free,
+    raw,
+    ALL_BLOCK,
+    ALL_REVIEW,
+    BLOCK_REASON,
+    REVIEW_REASON,
+  );
+  if (hit !== null) return hit;
   return { status: "clean" };
 }
 
-/** Scan raw audio/video bytes for AI-generator markers in container tags. */
+/**
+ * Scan raw audio/video bytes for AI-generator markers. Same pipeline as
+ * images: container validation + structured atom/tag parsing + raw sweep.
+ */
 export function scanMediaBytes(bytes: ArrayBuffer): AiScanResult {
-  const lower = bytesToLatin1(bytes);
-  for (const marker of AV_GENERATOR_MARKERS) {
-    if (lower.includes(marker)) {
-      return {
-        status: "blocked",
-        reason: `This media carries AI-generator metadata (${marker.trim()}), which isn't allowed on PureWire.`,
-      };
-    }
+  const container = detectContainer(bytes);
+  const mismatch = containerMismatch(container, "media");
+  if (mismatch !== null) {
+    return { status: "review", reason: mismatch };
   }
-  for (const marker of AV_REVIEW_MARKERS) {
-    if (lower.includes(marker)) {
-      return {
-        status: "review",
-        reason: `This media mentions a possible AI tool (${marker.trim()}) — flagged for a human check.`,
-      };
-    }
-  }
-  for (const marker of PROVENANCE_REVIEW_MARKERS) {
-    if (lower.includes(marker)) {
-      return {
-        status: "review",
-        reason: `This media carries AI-provenance metadata (${marker.trim()}) — flagged for a human check.`,
-      };
-    }
-  }
+  const meta = extractMeta(container, bytes);
+  const raw = bytesToLatin1(bytes);
+  const hit = matchMarkers(
+    meta.fields,
+    meta.free,
+    raw,
+    ALL_BLOCK,
+    ALL_REVIEW,
+    BLOCK_REASON,
+    REVIEW_REASON,
+  );
+  if (hit !== null) return hit;
   return { status: "clean" };
+}
+
+// ─────────────────────────── Container detection ───────────────────────────
+
+type Container =
+  | "png"
+  | "jpeg"
+  | "gif"
+  | "webp"
+  | "mp4"
+  | "webm"
+  | "mp3"
+  | "flac"
+  | "wav"
+  | null;
+
+/** Identify the real container from magic bytes. Null = not any known format. */
+function detectContainer(bytes: ArrayBuffer): Container {
+  const b = u8(bytes);
+  if (b.length < 12) return null;
+  // PNG
+  if (
+    b[0] === 0x89 &&
+    b[1] === 0x50 &&
+    b[2] === 0x4e &&
+    b[3] === 0x47 &&
+    b[4] === 0x0d &&
+    b[5] === 0x0a &&
+    b[6] === 0x1a &&
+    b[7] === 0x0a
+  ) {
+    return "png";
+  }
+  // JPEG
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "jpeg";
+  // GIF
+  if (latin1Region(b, 0, 6) === "GIF87a" || latin1Region(b, 0, 6) === "GIF89a") {
+    return "gif";
+  }
+  // WebP (RIFF....WEBP)
+  if (
+    latin1Region(b, 0, 4) === "RIFF" &&
+    latin1Region(b, 8, 4) === "WEBP"
+  ) {
+    return "webp";
+  }
+  // MP4/MOV (size + ftyp/moov/wide/mdat/free)
+  const box = latin1Region(b, 4, 4);
+  if (box === "ftyp" || box === "moov" || box === "wide" || box === "mdat" || box === "free") {
+    return "mp4";
+  }
+  // WebM / Matroska (EBML)
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "webm";
+  // MP3 (ID3 tag or MPEG frame sync)
+  if (latin1Region(b, 0, 3) === "ID3") return "mp3";
+  if (b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return "mp3";
+  // FLAC
+  if (latin1Region(b, 0, 4) === "fLaC") return "flac";
+  // WAV / RIFF audio
+  if (latin1Region(b, 0, 4) === "RIFF" && latin1Region(b, 8, 4) === "WAVE") return "wav";
+  return null;
+}
+
+const IMAGE_CONTAINERS: Container[] = ["png", "jpeg", "gif", "webp"];
+const VIDEO_CONTAINERS: Container[] = ["mp4", "webm"];
+const AUDIO_CONTAINERS: Container[] = ["mp3", "flac", "wav"];
+
+/** Metadata fields extracted from a container, for marker matching. */
+type ExtractedMeta = {
+  /** Named fields — Software, parameters, encoder, etc. */
+  fields: string[];
+  /** Free-form strings (comments, descriptions, arbitrary runs). */
+  free: string[];
+};
+
+const emptyMeta: ExtractedMeta = { fields: [], free: [] };
+
+// ─────────────────────────── PNG ───────────────────────────
+
+/**
+ * Walk PNG chunks and collect text chunks. Stable Diffusion WebUI writes a
+ * `parameters` tEXt chunk; ComfyUI writes `prompt`/`workflow`; editors write
+ * `Software`, `Comment`, `Description`. These are the strongest AI signal in
+ * PNGs, and a naive head/tail sweep can miss them (or hit a zTXt-compressed
+ * variant). Returns the chunk text (latin-1 for tEXt/zTXt, UTF-8 for iTXt).
+ */
+function parsePng(bytes: ArrayBuffer): ExtractedMeta {
+  const b = u8(bytes);
+  if (b.length < 8) return emptyMeta;
+  const fields: string[] = [];
+  const free: string[] = [];
+  let off = 8;
+  // Up to 64 chunks; metadata lives near the head.
+  for (let chunk = 0; chunk < 64; chunk++) {
+    if (off + 8 > b.length) break;
+    const len = u32(b, off);
+    const type = latin1Region(b, off + 4, 4);
+    const dataOff = off + 8;
+    const dataEnd = dataOff + len;
+    if (dataEnd > b.length) break; // truncated chunk — stop
+    if (type === "tEXt") {
+      // keyword\0text (latin-1)
+      const nul = b.indexOf(0, dataOff);
+      if (nul !== -1 && nul < dataEnd) {
+        const key = latin1Region(b, dataOff, nul - dataOff).toLowerCase();
+        const val = latin1Region(b, nul + 1, dataEnd - nul - 1);
+        fields.push(`${key}: ${val}`);
+        free.push(val);
+      }
+    } else if (type === "iTXt") {
+      // keyword\0 compFlag compMethod lang\0 translatedKeyword\0 text (UTF-8)
+      const nul1 = b.indexOf(0, dataOff);
+      if (nul1 !== -1 && nul1 + 3 < dataEnd) {
+        const key = latin1Region(b, dataOff, nul1 - dataOff).toLowerCase();
+        const langStart = nul1 + 3;
+        const nul2 = b.indexOf(0, langStart);
+        if (nul2 !== -1 && nul2 + 1 < dataEnd) {
+          const transStart = nul2 + 1;
+          const nul3 = b.indexOf(0, transStart);
+          if (nul3 !== -1 && nul3 + 1 <= dataEnd) {
+            const val = utf8Region(b, nul3 + 1, dataEnd - nul3 - 1);
+            fields.push(`${key}: ${val}`);
+            free.push(val);
+          }
+        }
+      }
+    } else if (type === "zTXt") {
+      // keyword\0 compMethod + zlib data — keyword alone is useful even
+      // though the payload is compressed (a zTXt "parameters" chunk is
+      // itself an A1111 signature).
+      const nul = b.indexOf(0, dataOff);
+      if (nul !== -1 && nul < dataEnd) {
+        const key = latin1Region(b, dataOff, nul - dataOff).toLowerCase();
+        fields.push(`chunk: ${key}`);
+      }
+    }
+    off = dataEnd + 4; // skip CRC
+  }
+  return { fields, free };
+}
+
+// ─────────────────────────── JPEG / EXIF / XMP ───────────────────────────
+
+/** EXIF IFD0/ExifIFD tags that name the creating software or model. */
+const EXIF_SOFTWARE_TAGS: Record<number, string> = {
+  0x010e: "imagedescription",
+  0x010f: "make",
+  0x0110: "model",
+  0x0131: "software",
+  0x0132: "datetime",
+  0x013b: "artist",
+  0x8298: "copyright",
+  0x9c9b: "xptitle",
+  0xa420: "imageuniqueid",
+  0xa430: "cameraserialnumber",
+};
+
+/**
+ * Parse a TIFF/EXIF block (as embedded in JPEG APP1, PNG eXIf, WebP EXIF,
+ * or TIFF files) for the creator/software tags. Handles both endiannesses.
+ * Returns a list of `key: value` fields plus the raw values for free match.
+ */
+function parseExif(bytes: ArrayBuffer, start = 0): ExtractedMeta {
+  const b = u8(bytes);
+  const fields: string[] = [];
+  const free: string[] = [];
+  if (start + 8 > b.length) return emptyMeta;
+  const endian = latin1Region(b, start, 2);
+  const little = endian === "II";
+  if (!little && endian !== "MM") return emptyMeta;
+  const getU32 = (o: number): number => {
+    if (little) {
+      return ((b[o + 3] ?? 0) << 24) | ((b[o + 2] ?? 0) << 16) | ((b[o + 1] ?? 0) << 8) | (b[o] ?? 0);
+    }
+    return u32(b, o);
+  };
+  const getU16 = (o: number): number => {
+    if (little) return ((b[o + 1] ?? 0) << 8) | (b[o] ?? 0);
+    return u16(b, o);
+  };
+  // Read an ASCII value at an IFD entry (inline if ≤4 bytes, else offset).
+  // TIFF string offsets are relative to the TIFF block start — which for a
+  // JPEG-embedded APP1/EXIF, PNG eXIf, or WebP EXIF is NONZERO — so offset
+  // reads must be `start + off`, never bare `off`.
+  const readAscii = (o: number, count: number): string => {
+    const capped = Math.min(count, 1024);
+    if (capped <= 4) {
+      return latin1Region(b, o, capped);
+    }
+    const off = getU32(o);
+    if (start + off + capped > b.length) return "";
+    return latin1Region(b, start + off, capped);
+  };
+  const ifdOff = start + 4 + getU32(start + 4);
+  if (ifdOff + 2 > b.length) return emptyMeta;
+  const count = getU16(ifdOff);
+  let cursor = ifdOff + 2;
+  let exifPointer = -1;
+  for (let i = 0; i < Math.min(count, 64) && cursor + 12 <= b.length; i++) {
+    const tag = getU16(cursor);
+    const type = getU16(cursor + 2);
+    const valueCount = getU32(cursor + 4);
+    const label = EXIF_SOFTWARE_TAGS[tag];
+    if (tag === 0x8769) {
+      exifPointer = getU32(cursor + 8);
+    } else if (label !== undefined && type === 2) {
+      const val = readAscii(cursor + 8, valueCount);
+      if (val.length > 0) {
+        fields.push(`${label}: ${val}`);
+        free.push(val);
+      }
+    } else if (label === "make" || label === "model" || label === "imagedescription") {
+      // Some tools store these as BYTE or even in odd types — try as ASCII anyway.
+      const val = readAscii(cursor + 8, valueCount);
+      if (val.length > 0) {
+        fields.push(`${label}: ${val}`);
+        free.push(val);
+      }
+    }
+    cursor += 12;
+  }
+  // ExifIFD: 0x9286 UserComment, 0xa434 LensModel.
+  if (exifPointer !== -1) {
+    const sub = start + exifPointer;
+    if (sub + 2 <= b.length) {
+      const subCount = getU16(sub);
+      let subCur = sub + 2;
+      for (let i = 0; i < Math.min(subCount, 64) && subCur + 12 <= b.length; i++) {
+        const tag = getU16(subCur);
+        const type = getU16(subCur + 2);
+        const valueCount = getU32(subCur + 4);
+        if (tag === 0x9286 && type === 7) {
+          const off = getU32(subCur + 8);
+          const val = latin1Region(b, start + off, Math.min(valueCount, 512));
+          if (val.length > 0) {
+            fields.push(`usercomment: ${val}`);
+            free.push(val);
+          }
+        } else if (tag === 0xa434 && type === 2) {
+          const val = readAscii(subCur + 8, valueCount);
+          if (val.length > 0) {
+            fields.push(`lensmodel: ${val}`);
+            free.push(val);
+          }
+        }
+        subCur += 12;
+      }
+    }
+  }
+  return { fields, free };
+}
+
+/** Extract creator-tool and format strings from an XMP packet. */
+function parseXmp(xml: string): ExtractedMeta {
+  const fields: string[] = [];
+  const free: string[] = [];
+  const re =
+    /<(?:xmp:CreatorTool|tiff:Software|photoshop:Creator|dc:format|exif:Make|exif:Model|aux:SerialNumber)[^>]*>([^<]*)<\//gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const tag = m[0].split(":")[1]?.split(/[ >]/)[0] ?? "";
+    if (m[1].trim().length > 0) {
+      fields.push(`${tag.toLowerCase()}: ${m[1].trim()}`);
+      free.push(m[1].trim());
+    }
+  }
+  return { fields, free };
+}
+
+/** Walk JPEG segments; parse APP1 EXIF + XMP, COM comments. */
+function parseJpeg(bytes: ArrayBuffer): ExtractedMeta {
+  const b = u8(bytes);
+  const fields: string[] = [];
+  const free: string[] = [];
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return emptyMeta;
+  let off = 2;
+  for (let seg = 0; seg < 96; seg++) {
+    if (off + 4 > b.length) break;
+    if (b[off] !== 0xff) break; // not a marker — entropy data reached
+    const marker = b[off + 1];
+    if (marker === 0xd9 || marker === 0xda) break; // EOI / SOS
+    const len = u16(b, off + 2);
+    if (len < 2) break;
+    const payload = off + 4;
+    const end = payload + len - 2;
+    if (end > b.length) break;
+    if (marker === 0xe1) {
+      // APP1: EXIF or XMP
+      const sig = latin1Region(b, payload, 6);
+      if (sig === "Exif\0\0") {
+        const ex = parseExif(bytes, payload + 6);
+        fields.push(...ex.fields);
+        free.push(...ex.free);
+      } else if (latin1Region(b, payload, 28).includes("xap/1.0") || latin1Region(b, payload, 4) === "http") {
+        const xml = latin1Region(b, payload, end - payload);
+        const xm = parseXmp(xml);
+        fields.push(...xm.fields);
+        free.push(...xm.free);
+      }
+    } else if (marker === 0xfe) {
+      const comment = latin1Region(b, payload, end - payload);
+      if (comment.trim().length > 0) {
+        free.push(comment);
+      }
+    }
+    off = end;
+  }
+  return { fields, free };
+}
+
+// ─────────────────────────── MP4 / MOV atoms ───────────────────────────
+
+/** Atom types whose payloads are text metadata (encoder, software, GPS). */
+const TEXT_ATOMS = new Set([
+  "\u00a9too", "\u00a9swr", "\u00a9nam", "\u00a9mak", "\u00a9mod",
+  "\u00a9xyz", "\u00a9gen", "\u00a9aut", "\u00a9alb", "\u00a9art",
+  "\u00a9cmt", "cmt1", "cmt2", "cmt3", "cmt4", "keyw", "desc",
+  "com.apple.quicktime.software", "com.apple.quicktime.creationdate",
+  "com.apple.quicktime.model", "com.apple.quicktime.make",
+  "com.apple.quicktime.author", "com.apple.quicktime.copyright",
+  "com.apple.quicktime.location.ISO6709",
+]);
+
+/** Container atom types to recurse into. */
+const CONTAINER_ATOMS = new Set([
+  "moov", "trak", "mdia", "minf", "stbl", "udta", "meta", "moof",
+  "traf", "edts", "mvex", "mfra", "dinf", "iprp", "ipro",
+]);
+
+/** Walk MP4/MOV atoms (size-prefixed boxes), collecting text atoms. */
+function parseMp4(bytes: ArrayBuffer): ExtractedMeta {
+  const b = u8(bytes);
+  const fields: string[] = [];
+  const free: string[] = [];
+  const walk = (start: number, depth: number) => {
+    if (depth > 6 || start + 8 > b.length) return;
+    let off = start;
+    let boxes = 0;
+    while (off + 8 <= b.length && boxes < 512) {
+      let size = u32(b, off);
+      const type = latin1Region(b, off + 4, 4);
+      let header = 8;
+      if (size === 1) {
+        // 64-bit size
+        if (off + 16 > b.length) return;
+        size = u32(b, off + 8);
+        header = 16;
+      } else if (size === 0) {
+        size = b.length - off; // to end of file
+      }
+      if (size < header) return;
+      const payload = off + header;
+      const end = off + size;
+      if (end > b.length) return;
+      boxes++;
+      if (TEXT_ATOMS.has(type)) {
+        // meta/udta are containers (recurse below), never text atoms —
+        // they're excluded by TEXT_ATOMS membership. Text atoms are
+        // payload-only: read the whole payload as the value.
+        const val = latin1Region(b, payload, end - payload)
+          // eslint-disable-next-line no-control-regex
+          .replace(/[\u0000-\u001f]+/g, " ")
+          .trim();
+        if (val.length > 0) {
+          fields.push(`${type}: ${val}`);
+          free.push(val);
+        }
+      }
+      if (CONTAINER_ATOMS.has(type)) {
+        const childStart =
+          type === "meta" && payload + 4 <= end ? payload + 4 : payload;
+        walk(childStart, depth + 1);
+      }
+      off = end;
+    }
+  };
+  walk(0, 0);
+  return { fields, free };
+}
+
+// ─────────────────────────── WebP / GIF ───────────────────────────
+
+/** WebP: RIFF container with EXIF / XMP chunks. */
+function parseWebp(bytes: ArrayBuffer): ExtractedMeta {
+  const b = u8(bytes);
+  const fields: string[] = [];
+  const free: string[] = [];
+  if (b.length < 20 || latin1Region(b, 0, 4) !== "RIFF") return emptyMeta;
+  let off = 12;
+  for (let chunk = 0; chunk < 32; chunk++) {
+    if (off + 8 > b.length) break;
+    const fourCC = latin1Region(b, off, 4);
+    const len = u32(b, off + 4);
+    const dataOff = off + 8;
+    const dataEnd = dataOff + len;
+    if (dataEnd + (len % 2) > b.length) break;
+    if (fourCC === "EXIF") {
+      const ex = parseExif(bytes, dataOff);
+      fields.push(...ex.fields);
+      free.push(...ex.free);
+    } else if (fourCC === "XMP ") {
+      const xml = latin1Region(b, dataOff, len);
+      const xm = parseXmp(xml);
+      fields.push(...xm.fields);
+      free.push(...xm.free);
+    }
+    off = dataEnd + (len % 2); // chunks are padded to even size
+  }
+  return { fields, free };
+}
+
+/** GIF: comment extensions carry tool signatures. */
+function parseGif(bytes: ArrayBuffer): ExtractedMeta {
+  const b = u8(bytes);
+  const free: string[] = [];
+  if (b.length < 14) return emptyMeta;
+  let off = 13;
+  for (let block = 0; block < 96; block++) {
+    if (off >= b.length) break;
+    const marker = b[off];
+    if (marker === 0x3b) break; // trailer
+    if (marker === 0x21) {
+      const label = b[off + 1];
+      off += 2;
+      if (label === 0xfe) {
+        // Comment extension
+        let comment = "";
+        while (off < b.length) {
+          const subLen = b[off];
+          off++;
+          if (subLen === 0) break;
+          if (off + subLen > b.length) break;
+          comment += latin1Region(b, off, subLen);
+          off += subLen;
+        }
+        if (comment.trim().length > 0) free.push(comment);
+      } else {
+        // Other extension — skip its sub-blocks
+        while (off < b.length) {
+          const subLen = b[off];
+          off++;
+          if (subLen === 0) break;
+          off += subLen;
+        }
+      }
+    } else if (marker === 0x2c) {
+      // Image descriptor: 9 bytes + LZW min code size + sub-blocks
+      off += 9;
+      if (off < b.length) off += 1;
+      while (off < b.length) {
+        const subLen = b[off];
+        off++;
+        if (subLen === 0) break;
+        off += subLen;
+      }
+    } else {
+      break;
+    }
+  }
+  return { fields: [], free };
+}
+
+// ─────────────────────────── Audio (ID3 / FLAC / WAV) ───────────────────────────
+
+/** MP3 ID3v2: TSSE (software), TENC, TXXX, COMM, TIT2, TPE1. */
+function parseId3(bytes: ArrayBuffer): ExtractedMeta {
+  const b = u8(bytes);
+  const fields: string[] = [];
+  const free: string[] = [];
+  if (b.length < 10 || latin1Region(b, 0, 3) !== "ID3") return emptyMeta;
+  const syncSafe = (o: number): number =>
+    (((b[o] ?? 0) & 0x7f) << 21) |
+    (((b[o + 1] ?? 0) & 0x7f) << 14) |
+    (((b[o + 2] ?? 0) & 0x7f) << 7) |
+    ((b[o + 3] ?? 0) & 0x7f);
+  const tagSize = syncSafe(6);
+  const tagEnd = Math.min(b.length, 10 + tagSize);
+  let off = 10;
+  for (let frame = 0; frame < 96 && off + 10 <= tagEnd; frame++) {
+    const id = latin1Region(b, off, 4);
+    if (!/^[A-Z0-9]{4}$/.test(id)) break;
+    const size = syncSafe(off + 4);
+    const dataOff = off + 10;
+    const dataEnd = dataOff + size;
+    if (dataEnd > tagEnd) break;
+    if (id.startsWith("T") || id === "COMM") {
+      const enc = b[dataOff] ?? 0;
+      const textOff = dataOff + (id === "COMM" ? 4 : 1); // COMM: enc+3 lang
+      const raw = latin1Region(b, textOff, dataEnd - textOff);
+      const label =
+        id === "TSSE" ? "software" :
+        id === "TENC" ? "encoder" :
+        id === "TIT2" ? "title" :
+        id === "TPE1" ? "artist" :
+        id === "TCOP" ? "copyright" :
+        id === "COMM" ? "comment" :
+        id.toLowerCase();
+      if (raw.length > 0) {
+        fields.push(`${label}: ${raw}`);
+        free.push(raw);
+      }
+      void enc;
+    }
+    off = dataEnd;
+  }
+  return { fields, free };
+}
+
+/** FLAC VORBIS_COMMENT: ENCODER=, SOFTWARE=, DESCRIPTION=, TITLE=. */
+function parseFlac(bytes: ArrayBuffer): ExtractedMeta {
+  const b = u8(bytes);
+  const fields: string[] = [];
+  const free: string[] = [];
+  if (b.length < 42 || latin1Region(b, 0, 4) !== "fLaC") return emptyMeta;
+  let off = 4;
+  for (let block = 0; block < 64; block++) {
+    if (off + 4 > b.length) break;
+    const header = u32(b, off);
+    const last = (header & 0x80000000) !== 0;
+    const type = (header >> 24) & 0x7f;
+    const len = header & 0xffffff;
+    const dataOff = off + 4;
+    if (dataOff + len > b.length) break;
+    if (type === 4) {
+      // VORBIS_COMMENT: vendorLen(4) vendor comments
+      let c = dataOff;
+      const vendorLen = u32(b, c);
+      c += 4 + vendorLen;
+      if (c + 4 <= dataOff + len) {
+        const count = u32(b, c);
+        c += 4;
+        for (let i = 0; i < Math.min(count, 128) && c + 4 <= dataOff + len; i++) {
+          const clen = u32(b, c);
+          c += 4;
+          if (c + clen > dataOff + len) break;
+          const entry = latin1Region(b, c, clen);
+          fields.push(entry);
+          const eq = entry.indexOf("=");
+          if (eq !== -1) free.push(entry.slice(eq + 1));
+          c += clen;
+        }
+      }
+      break;
+    }
+    off = dataOff + len;
+    if (last) break;
+  }
+  return { fields, free };
+}
+
+/** RIFF/WAVE LIST-INFO: ISFT (software), INAM, ICOP, ICMT, IART. */
+function parseWav(bytes: ArrayBuffer): ExtractedMeta {
+  const b = u8(bytes);
+  const fields: string[] = [];
+  const free: string[] = [];
+  if (b.length < 12 || latin1Region(b, 0, 4) !== "RIFF") return emptyMeta;
+  let off = 12;
+  for (let chunk = 0; chunk < 64; chunk++) {
+    if (off + 8 > b.length) break;
+    const id = latin1Region(b, off, 4);
+    const len = u32(b, off + 4);
+    const dataOff = off + 8;
+    const dataEnd = dataOff + len;
+    if (dataEnd > b.length) break;
+    if (id === "LIST" && latin1Region(b, dataOff, 4) === "INFO") {
+      let sub = dataOff + 4;
+      for (let i = 0; i < 32 && sub + 8 <= dataEnd; i++) {
+        const subId = latin1Region(b, sub, 4);
+        const subLen = u32(b, sub + 4);
+        const subOff = sub + 8;
+        if (subOff + subLen > dataEnd) break;
+        // eslint-disable-next-line no-control-regex
+        const val = latin1Region(b, subOff, subLen).replace(/\u0000+$/, "");
+        const label =
+          subId === "ISFT" ? "software" :
+          subId === "INAM" ? "title" :
+          subId === "IART" ? "artist" :
+          subId === "ICOP" ? "copyright" :
+          subId === "ICMT" ? "comment" :
+          subId.toLowerCase();
+        if (val.length > 0) {
+          fields.push(`${label}: ${val}`);
+          free.push(val);
+        }
+        sub = subOff + subLen + (subLen % 2);
+      }
+      break;
+    }
+    off = dataOff + len + (len % 2);
+  }
+  return { fields, free };
 }

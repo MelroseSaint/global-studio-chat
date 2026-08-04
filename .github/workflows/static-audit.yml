@@ -60,6 +60,15 @@ jobs:
       - name: Run the salt-rotation QA
         run: npm run qa:salt
 
+      # The anti-AI byte scanner must never regress: this offline QA builds
+      # real container structures (PNG tEXt parameters chunks, JPEG EXIF
+      # Software/IFD tables, MP4 ©too atoms, ID3 TSSE frames, FLAC Vorbis
+      # comments) plus text samples and asserts the exact verdict for each —
+      # including Google's stack (Imagen, Veo, Gemini, MusicLM) and rename/
+      # container-mismatch evasion, while real encoders and phones stay clean.
+      - name: Run the anti-AI scanner QA
+        run: npm run qa:ai-scan
+
       # The blocklist feeds (data/adult/* and the public/ mirror) are
       # GENERATED from BANNED_ADULT_HOSTS in src/convex/phishing.ts. This
       # gate re-runs the generator and fails the push if it produces any
