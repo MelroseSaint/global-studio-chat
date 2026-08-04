@@ -5,8 +5,8 @@
  * Signs in as the admin on the live site through the real Auth form
  * (handling the Turnstile gate the same way the permanent browser QA
  * does), then walks EVERY admin tab — Users, Tickets, Content, AI review,
- * Security, Silenced, Blocklist — at 320px, 390px, 768px, and the Amazon
- * Fire tablet portrait width (800px). At every stop it
+ * Security, Silenced, Blocklist — at 320px, 390px, 768px, the Amazon
+ * Fire tablet portrait width (800px), and desktop (1024px). At every stop it
  * verifies the page has no horizontal overflow and no element leaks past
  * the viewport, and that the tab actually rendered (either its live rows
  * or its designed empty state). On the Users tab it also proves the rows
@@ -44,15 +44,26 @@ const NAV_TIMEOUT = 45000;
 const PANEL_WAIT_MS = 20000;
 const PANEL_POLL_MS = 250;
 
-/** [label, width, height] — the four widths the audit promises. The last
- *  is Amazon Fire HD 8/10 portrait (800 CSS px), the widest "tablet" band
- *  where Silk's font inflation used to crowd the grid UIs. */
+/** [label, width, height] — the five widths the audit promises. The
+ *  800px row is Amazon Fire HD 8/10 portrait, the widest "tablet" band
+ *  where Silk's font inflation used to crowd the grid UIs; 1024px is the
+ *  first desktop (lg) band, where the tabs spread the full 7-across row. */
 const WIDTHS = [
   ["small phone", 320, 700],
   ["phone", 390, 844],
   ["tablet", 768, 1024],
   ["fire tablet", 800, 1280],
+  ["desktop", 1024, 768],
 ];
+
+/**
+ * Tailwind bands the admin layout responds to, keyed off the width number
+ * (not the label) so any future width stays correct: <sm 2-across tabs /
+ * swipeable stats, sm 3-across, md 4-across, lg the full 7-across row.
+ */
+const tabColsAt = (width) =>
+  width >= 1024 ? 7 : width >= 768 ? 4 : width >= 640 ? 3 : 2;
+const isPhoneWidth = (width) => width < 640;
 
 /** Every admin tab, in the order it appears in the UI. */
 const TABS = ["Users", "Tickets", "Content", "AI review", "Security", "Silenced", "Blocklist"];
@@ -208,7 +219,11 @@ async function waitForPanel(page, { control, empty }) {
 const TAB_CONTROLS = [
   {
     tab: "Users",
-    control: 'button[aria-label*="Actions for"]',
+    // Every row carries a Verify/Unverify button; the kebab menu is only
+    // rendered on rows other than the viewer's own (hidden for self/owner),
+    // so "a user row rendered" is the reliable control, and the kebab is
+    // asserted separately as a data-aware check below.
+    control: "button:has-text('Verify'), button:has-text('Unverify')",
     empty: null, // the Users list has no empty state — rows or loading
   },
   {
@@ -243,13 +258,13 @@ const TAB_CONTROLS = [
   },
 ];
 
-async function inspectAdmin(page, widthLabel) {
+async function inspectAdmin(page, widthLabel, width) {
   await page.goto(`${SITE_URL}/admin`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector('[data-slot="tabs-list"]', { timeout: TIMEOUT });
   // The Fire-tablet pass simulates Silk's font inflation (~1.3x root font
   // scaling) that headless Chrome doesn't reproduce on its own. Every
   // measurePage below then proves the grids survive the larger rem sizes.
-  if (widthLabel === "fire tablet") {
+  if (width === 800) {
     await page.evaluate(() => {
       document.documentElement.style.fontSize = "21px";
     });
@@ -268,7 +283,7 @@ async function inspectAdmin(page, widthLabel) {
       .first()
       .isVisible(),
   );
-  if (!widthLabel.includes("tablet")) {
+  if (isPhoneWidth(width)) {
     const cue = page.locator("p:has-text('Swipe for more')");
     check(
       `${widthLabel}: 'Swipe for more' cue visible`,
@@ -281,16 +296,15 @@ async function inspectAdmin(page, widthLabel) {
     );
   }
 
-  // Tabs: all seven present. Phones spread 3-across, tablets 4-across,
-  // desktops the full 7-across row — never cramped.
+  // Tabs: all seven present. Phones spread 2-across, tablets (md band,
+  // incl. the 800px Fire portrait) 4-across, desktops the full 7-across
+  // row — never cramped.
   const tabs = page.locator('[data-slot="tabs-list"] [data-slot="tabs-trigger"]');
   check(`${widthLabel}: all 7 admin tabs rendered`, (await tabs.count()) === 7);
   const cols = await page
     .locator('[data-slot="tabs-list"]')
     .evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-  // Phones (< sm) spread the tabs 2-across; tablets (md band, incl. the
-  // 800px Fire portrait) 4-across; desktops (lg+) the full 7-across row.
-  const expectedCols = widthLabel.includes("tablet") ? 4 : 2;
+  const expectedCols = tabColsAt(width);
   check(
     `${widthLabel}: tabs grid-cols-${expectedCols} (not cramped 7-across)`,
     cols === expectedCols,
@@ -313,12 +327,19 @@ async function inspectAdmin(page, widthLabel) {
       hasControl ? "controls present" : hasEmpty ? `empty state: "${empty}"` : "neither appeared in time",
     );
     if (tab === "Users") {
-      check(
-        `${widthLabel}: Users rows use kebab menus`,
-        hasControl,
-        "no kebab menus found — rows may still be loading",
-      );
-      if (hasControl) {
+      // Data-aware: the kebab only exists on rows that aren't the viewer's
+      // own. A fresh production DB may hold just the owner (nothing to
+      // manage) — that's a valid state, distinct from a broken panel that
+      // renders no rows at all.
+      const kebabs = await page
+        .locator('button[aria-label*="Actions for"]')
+        .count();
+      if (kebabs > 0) {
+        check(
+          `${widthLabel}: Users rows use kebab menus`,
+          true,
+          `${kebabs} actionable rows`,
+        );
         await page.locator(control).first().click();
         await page.waitForTimeout(400);
         const items = await page
@@ -331,6 +352,14 @@ async function inspectAdmin(page, widthLabel) {
         );
         await page.keyboard.press("Escape");
         await page.waitForTimeout(200);
+      } else {
+        check(
+          `${widthLabel}: Users rows use kebab menus`,
+          hasControl,
+          hasControl
+            ? "only self/owner rows — nothing to manage"
+            : "no user rows rendered at all",
+        );
       }
     }
   }
@@ -352,7 +381,7 @@ async function main() {
       });
       page.setDefaultTimeout(TIMEOUT);
       await signIn(page);
-      await inspectAdmin(page, label);
+      await inspectAdmin(page, label, width);
       await page.close();
     }
   } finally {
