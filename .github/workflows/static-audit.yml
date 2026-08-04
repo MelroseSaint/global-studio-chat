@@ -25,7 +25,7 @@ jobs:
   audit:
     name: Static audit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -109,11 +109,14 @@ jobs:
 
       # The admin dashboard is the one surface the static gates can't see —
       # its responsive layout only exists in a real browser at real widths.
-      # Sign in on production and walk every admin tab at 320/390/768 to
-      # catch overflow or cramped clusters on the next push instead of by a
-      # user on a phone. This is gated on the ADMIN_PASSWORD secret so a
-      # repository that hasn't configured it yet still gets the static gates
-      # green instead of failing every push.
+      # Sign in on production and walk every admin tab at five widths —
+      # 320/390 phones, 768 tablet, the Amazon Fire portrait 800px pass
+      # (with the root font pinned to 21px to simulate Silk's font
+      # inflation), and 1024 desktop — to catch overflow or cramped
+      # clusters on the next push instead of by a user on a device. This is
+      # gated on the ADMIN_PASSWORD secret so a repository that hasn't
+      # configured it yet still gets the static gates green instead of
+      # failing every push.
       - name: Cache Playwright browsers
         if: ${{ secrets.ADMIN_PASSWORD != '' }}
         uses: actions/cache@v4
