@@ -107,6 +107,30 @@ jobs:
           name: session-audit-log
           path: session-audit.log
 
+      # users.postsCount is a denormalized counter that a past bug let
+      # drift (deletePost removed the row without decrementing). This gate
+      # reconciles every user's counter against the actual posts table and
+      # FAILS the push if anything drifted — the mutation self-heals the
+      # count first (it is derived state), then the check reports who, so
+      # the regression surfaces instead of silently inflating profiles.
+      # Harness-gated like the session audit: no secret configured means
+      # the static gates stay green.
+      - name: Assert no post-count drift
+        if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:count-drift 2>&1 | tee count-drift.log
+
+      - name: Upload the count-drift log
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-drift-log
+          path: count-drift.log
+
       # The admin dashboard is the one surface the static gates can't see —
       # its responsive layout only exists in a real browser at real widths.
       # Sign in on production and walk every admin tab at five widths —

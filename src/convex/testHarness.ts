@@ -310,6 +310,81 @@ async function extendTable(
 }
 
 /**
+ * Reconcile every user's postsCount against the actual posts table. The
+ * user-facing deletePost used to remove the row without decrementing the
+ * counter, so accounts that deleted their own posts showed an inflated
+ * "posts made" number (the admin's moderatePost always decremented — the
+ * member path didn't). Idempotent: patches each drifted user to the real
+ * row count and returns what changed, so the count-drift QA can assert
+ * clean state (and this can be re-run any time). Gated by the same two
+ * env gates as the rest of the module.
+ */
+export const reconcilePostsCounts = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    try {
+      requireHarness(secret);
+      const fixed: Array<{ userId: Id<"users">; was: number; now: number }> =
+        [];
+      let usersSeen = 0;
+      let cursor: string | null = null;
+      for (;;) {
+        const users = await ctx.db
+          .query("users")
+          .order("asc")
+          .filter((q) =>
+            q.gt(q.field("_id"), (cursor ?? "") as Id<"users">),
+          )
+          .take(500);
+        if (users.length === 0) break;
+        for (const user of users) {
+          usersSeen++;
+          const actual = await countPostsByAuthor(ctx, user._id);
+          const was = user.postsCount ?? 0;
+          if (was !== actual) {
+            await ctx.db.patch(user._id, { postsCount: actual });
+            fixed.push({ userId: user._id, was, now: actual });
+          }
+          cursor = user._id;
+        }
+      }
+      return { fixed, usersSeen };
+    } catch (e) {
+      // Convex masks plain Error messages as "Server Error"; rethrow as a
+      // ConvexError so the runner script reports the real reason.
+      throw new ConvexError(e instanceof Error ? e.message : String(e));
+    }
+  },
+});
+
+/**
+ * Count one author's posts exactly, without loading them all into memory:
+ * pages the by_author index in 500-row chunks with an _id cursor filter,
+ * the same bounded pattern extendTable uses. (The deployed Convex runtime
+ * has no query `.count()`, and a fixed take() cap could undercount a heavy
+ * account.)
+ */
+async function countPostsByAuthor(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+): Promise<number> {
+  let total = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const rows = await ctx.db
+      .query("posts")
+      .withIndex("by_author", (q) => q.eq("authorId", userId))
+      .order("asc")
+      .filter((q) => q.gt(q.field("_id"), (cursor ?? "") as Id<"posts">))
+      .take(500);
+    if (rows.length === 0) break;
+    total += rows.length;
+    cursor = rows[rows.length - 1]._id;
+  }
+  return total;
+}
+
+/**
  * Read the calling session's expiry horizon: the authSessions row's
  * expirationTime and how far out it is from now. Lets the session-lifetime
  * QA assert both paths of the "Keep me signed in" toggle against the real

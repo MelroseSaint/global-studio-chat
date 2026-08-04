@@ -726,6 +726,15 @@ export const deletePost = mutation({
     // Cloudinary keys through the fire-and-forget batch delete.
     await cleanupMediaItems(ctx, post.media ?? []);
     await ctx.db.delete(postId);
+    // Keep the author's postsCount honest — the admin's moderatePost
+    // decrements, and so must the user-facing delete, or the profile count
+    // drifts upward with every post a member removes.
+    const author = await ctx.db.get(post.authorId);
+    if (author !== null) {
+      await ctx.db.patch(author._id, {
+        postsCount: Math.max(0, (author.postsCount ?? 0) - 1),
+      });
+    }
   },
 });
 
