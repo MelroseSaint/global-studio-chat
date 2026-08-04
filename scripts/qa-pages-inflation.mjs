@@ -71,7 +71,13 @@ const PAGES = [
     label: "Support",
     url: "/support",
     heading: "Help & Support",
-    markers: [{ text: "Your tickets" }],
+    // The tickets list streams after the h2; gate on its content — the
+    // designed empty state or a live ticket row (the only element carrying
+    // `rounded-xl border p-4`) — not on the synchronous heading.
+    markers: [
+      { text: "No tickets yet. We're here when you need us." },
+      { css: "div[class*='rounded-xl border p-4']" },
+    ],
   },
   {
     label: "Notifications",
@@ -128,6 +134,10 @@ async function waitForContent(page, label, { heading, markers }) {
 
 async function inspectPage(page, pageDef) {
   await page.goto(`${SITE_URL}${pageDef.url}`, { waitUntil: "domcontentloaded" });
+  // page.goto is a FULL document navigation, so any font-size set on a
+  // previous page is wiped — the inflation must be re-applied here, on
+  // the page actually being measured.
+  await simulateSilkInflation(page, 21);
   const ready = await waitForContent(page, pageDef.label, pageDef);
   if (ready) {
     await measurePage(page, `${pageDef.label} (@800px, 21px root font)`, check);
@@ -154,8 +164,6 @@ async function main() {
       timeoutMs: TIMEOUT,
       navTimeoutMs: NAV_TIMEOUT,
     });
-    // Simulate Silk's font inflation for every page after this point.
-    await simulateSilkInflation(page, 21);
     for (const pageDef of PAGES) {
       console.log(`\n--- ${pageDef.label} (800px, 21px root font) ---`);
       await inspectPage(page, pageDef);
@@ -163,7 +171,7 @@ async function main() {
   } finally {
     await browser.close();
   }
-  reporter.summary(SITE_URL);
+  reporter.summary();
   if (reporter.failed > 0) process.exit(1);
 }
 

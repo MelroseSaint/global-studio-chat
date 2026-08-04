@@ -35,7 +35,7 @@ export function createReporter() {
     get failures() {
       return failures;
     },
-    summary(siteUrl) {
+    summary() {
       console.log(`\n${passed} passed, ${failed} failed`);
       if (failed > 0) {
         console.log("Failed checks:");

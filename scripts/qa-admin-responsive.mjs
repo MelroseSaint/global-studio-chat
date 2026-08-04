@@ -278,7 +278,7 @@ async function main() {
   } finally {
     await browser.close();
   }
-  reporter.summary(SITE_URL);
+  reporter.summary();
   if (reporter.failed > 0) process.exit(1);
 }
 
