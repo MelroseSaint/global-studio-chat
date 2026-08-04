@@ -49,13 +49,6 @@ import {
  *   them, but nothing they do reaches anyone else until a human reviews.
  */
 
-export const ACCOUNT_STATUS = v.union(
-  v.literal("active"),
-  v.literal("suspicious"),
-  v.literal("restricted"),
-  v.literal("banned"),
-);
-
 /**
  * The moderation actions the current schema allows on the audit trail.
  * Legacy rows may hold values that predate the schema union (e.g. the old
@@ -519,37 +512,6 @@ export async function silencedAuthorIds(
   // to everyone else on the platform, not to themselves.
   return silenced.filter((u) => u._id !== viewerId).map((u) => u._id);
 }
-
-/** All accounts the viewer has blocked. */
-export const listBlockedUsers = query({
-  handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      return [];
-    }
-    const blocks = await ctx.db
-      .query("blocks")
-      .withIndex("by_blocker", (q) => q.eq("blockerId", userId))
-      .take(200);
-    return await Promise.all(
-      blocks.map(async (b) => {
-        const user = await ctx.db.get(b.blockedId);
-        return user === null
-          ? null
-          : {
-              ...publicUser(user),
-              // Dual-mode: external Cloudinary URL wins; otherwise resolve the
-              // Convex storage id (legacy/fallback path).
-              avatarUrl:
-                user.avatarUrl ??
-                (user.avatarStorageId
-                  ? await ctx.storage.getUrl(user.avatarStorageId)
-                  : null),
-            };
-      }),
-    );
-  },
-});
 
 export const isBlocked = query({
   args: { username: v.string() },

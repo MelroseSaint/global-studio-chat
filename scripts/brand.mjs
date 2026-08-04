@@ -74,7 +74,7 @@ export function distToStroke(px, py, pts, radius) {
 }
 
 /** Is a point inside a circle? */
-export function inCircle(px, py, cx, cy, r) {
+function inCircle(px, py, cx, cy, r) {
   const dx = px - cx;
   const dy = py - cy;
   return dx * dx + dy * dy <= r * r;

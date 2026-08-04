@@ -102,17 +102,6 @@ export function extractFirstUrl(text: string): string | null {
   return match[0].replace(/[),.!?;:]+$/, "");
 }
 
-/** All URLs in a string. */
-export function extractUrls(text: string): string[] {
-  const urls: string[] = [];
-  const re = /https?:\/\/[^\s]+/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    urls.push(m[0].replace(/[),.!?;:]+$/, ""));
-  }
-  return urls;
-}
-
 /** Build a clean share URL for a post (uses the live origin). */
 export function postUrl(postId: string): string {
   const origin =

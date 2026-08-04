@@ -17,7 +17,7 @@
  */
 
 /** The platform's site URL, used for the logo, the Standard link and footer. */
-export function siteUrl(): string {
+function siteUrl(): string {
   return (
     process.env.SITE_URL ??
     process.env.CONVEX_SITE_URL ??

@@ -36,11 +36,11 @@
  * `src/convex/videoStrip.ts`.
  */
 
-export const MAX_DIMENSION = 2048;
+const MAX_DIMENSION = 2048;
 const JPEG_QUALITY = 0.82;
 const MIN_JPEG_QUALITY = 0.45;
 // Aim every photo under ~500 KB — sharp at feed size, tiny for storage.
-export const IMAGE_BYTE_BUDGET = 512 * 1024;
+const IMAGE_BYTE_BUDGET = 512 * 1024;
 
 // Video re-encode settings. Re-encoding is real-time, so it only kicks in
 // for clips worth shrinking (bigger than the min size, shorter than the max
@@ -48,7 +48,7 @@ export const IMAGE_BYTE_BUDGET = 512 * 1024;
 // cap protects the user's time: a 3-minute clip takes ~3 minutes to process
 // (the "Optimizing" line explains the wait) — longer clips upload as-is
 // rather than making someone stare at a spinner.
-export const VIDEO_MAX_DIMENSION = 1600;
+const VIDEO_MAX_DIMENSION = 1600;
 const VIDEO_MIN_PROCESS_BYTES = 1.5 * 1024 * 1024;
 const VIDEO_MAX_DURATION_SECONDS = 180;
 // Clips at or under this resolution AND this size are already lean — no

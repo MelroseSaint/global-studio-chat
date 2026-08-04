@@ -4,7 +4,6 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
 import { scanForPhishing } from "./phishing";
-import { cleanupMediaItems } from "./mediaCleanup";
 import { publicUser } from "./privacy";
 import {
   enforceActive,
@@ -133,28 +132,6 @@ export const createStory = mutation({
       );
     }
     return { ok: true, storyId };
-  },
-});
-
-export const deleteStory = mutation({
-  args: { storyId: v.id("stories") },
-  handler: async (ctx, { storyId }) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new Error("Not authenticated");
-    }
-    const story = await ctx.db.get(storyId);
-    if (story === null) {
-      return;
-    }
-    const user = await ctx.db.get(userId);
-    if (story.authorId !== userId && user?.role !== "admin") {
-      throw new Error("You can only delete your own stories.");
-    }
-    // The file dies with the story — Convex storage id inline, external
-    // Cloudinary key through the fire-and-forget batch delete.
-    await cleanupMediaItems(ctx, [story.media]);
-    await ctx.db.delete(storyId);
   },
 });
 

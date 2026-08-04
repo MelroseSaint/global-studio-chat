@@ -38,7 +38,7 @@ import { extractFirstUrl, formatCount, postUrl, timeAgo } from "@/lib/format";
 import { phishingTicketArgs } from "@/lib/phishing-report";
 import { cn } from "@/lib/utils";
 
-export interface PostMedia {
+interface PostMedia {
   storageId: Id<"_storage">;
   kind: "image" | "video" | "audio";
   url: string | null;
@@ -47,7 +47,7 @@ export interface PostMedia {
   stripped?: boolean | null;
 }
 
-export interface PostAuthor {
+interface PostAuthor {
   _id: Id<"users">;
   name?: string | null;
   username?: string | null;
@@ -84,7 +84,7 @@ export interface PostItem {
 }
 
 /** Render @mentions and URLs inside post text. */
-export function RichText({ text }: { text: string }) {
+function RichText({ text }: { text: string }) {
   const parts = text.split(/(@[a-z0-9_]{3,24}|\bhttps?:\/\/[^\s]+)/gi);
   return (
     <>
@@ -119,7 +119,7 @@ export function RichText({ text }: { text: string }) {
   );
 }
 
-export function PostMediaGrid({
+function PostMediaGrid({
   media,
 }: {
   media: PostMedia[];

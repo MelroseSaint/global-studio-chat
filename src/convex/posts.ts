@@ -850,31 +850,6 @@ export const addComment = mutation({
   },
 });
 
-export const deleteComment = mutation({
-  args: { commentId: v.id("comments") },
-  handler: async (ctx, { commentId }) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) {
-      throw new Error("Not authenticated");
-    }
-    const comment = await ctx.db.get(commentId);
-    if (comment === null) {
-      return;
-    }
-    const user = await ctx.db.get(userId);
-    if (comment.authorId !== userId && user?.role !== "admin") {
-      throw new Error("You can only delete your own comments.");
-    }
-    const post = await ctx.db.get(comment.postId);
-    if (post !== null) {
-      await ctx.db.patch(post._id, {
-        commentCount: Math.max(0, post.commentCount - 1),
-      });
-    }
-    await ctx.db.delete(commentId);
-  },
-});
-
 export const listComments = query({
   args: { postId: v.id("posts"), paginationOpts: paginationOptsValidator },
   handler: async (ctx, { postId, paginationOpts }) => {

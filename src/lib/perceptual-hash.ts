@@ -34,7 +34,7 @@ const CENTER_CROP = 0.3;
  * Hamming distance between two hex dHash signatures. Two media items are
  * considered the same frame when this distance is small (≤ SIMILARITY_BITS).
  */
-export function hashDistance(a: string, b: string): number {
+function hashDistance(a: string, b: string): number {
   const x = BigInt(`0x${a}`);
   const y = BigInt(`0x${b}`);
   let diff = x ^ y;
@@ -47,10 +47,10 @@ export function hashDistance(a: string, b: string): number {
 }
 
 /** Maximum Hamming distance for two frames to count as a match. */
-export const SIMILARITY_BITS = 10;
+const SIMILARITY_BITS = 10;
 
 /** True when any hash from one set is within SIMILARITY_BITS of the other. */
-export function hashesMatch(a: string[], b: string[]): boolean {
+function hashesMatch(a: string[], b: string[]): boolean {
   for (const x of a) {
     for (const y of b) {
       if (hashDistance(x, y) <= SIMILARITY_BITS) return true;
