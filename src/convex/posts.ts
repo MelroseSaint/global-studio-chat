@@ -418,7 +418,16 @@ export const createPost = mutation({
     if (text.length > 0) {
       await notifyMentions(ctx, text, userId, postId);
     }
-    return { ok: true, postId };
+    return {
+      ok: true,
+      postId,
+      // Honest "why": when the post enters human review, the author learns
+      // immediately — and from the post itself (see the "under review" note
+      // on their own views) — why their post isn't public yet, instead of
+      // watching it silently disappear. Same signal list the admin queue
+      // shows.
+      aiReviewReason: needsReview ? aiStatusReason : undefined,
+    };
   },
 });
 
@@ -596,8 +605,20 @@ export const feed = query({
         q.not(q.or(...excludedIds.map((id) => q.eq(q.field("authorId"), id)))),
       );
     }
-    // Posts awaiting a human AI-review are kept out of public feeds.
-    base = base.filter((q) => q.neq(q.field("aiStatus"), "review"));
+    // Posts awaiting a human AI-review stay out of public feeds — except
+    // for their author, who sees their own review posts with an "under
+    // review" note (with the reason), so a genuine creator is never left
+    // wondering where their post went. Signed-out viewers never see them.
+    if (viewerId !== null) {
+      base = base.filter((q) =>
+        q.or(
+          q.neq(q.field("aiStatus"), "review"),
+          q.eq(q.field("authorId"), viewerId),
+        ),
+      );
+    } else {
+      base = base.filter((q) => q.neq(q.field("aiStatus"), "review"));
+    }
     const result = await base.order("desc").paginate(paginationOpts);
     const page = await Promise.all(
       result.page.map((p) => withAuthor(ctx, p, viewerId)),

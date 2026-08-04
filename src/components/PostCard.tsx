@@ -9,6 +9,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   Pencil,
+  ScanSearch,
   Share2,
   Trash2,
 } from "lucide-react";
@@ -73,6 +74,11 @@ export interface PostItem {
   author: PostAuthor | null;
   // Coordinates never reach clients — only the public label ships.
   location?: { label?: string } | null;
+  // Anti-AI review: "review" means a human is checking this post before it
+  // goes public. Only the author (and admins) can see their own review
+  // posts; the reason below is the signal list that tripped the scan.
+  aiStatus?: string | null;
+  aiStatusReason?: string | null;
 }
 
 /** Render @mentions and URLs inside post text. */
@@ -336,6 +342,25 @@ export function PostCard({
             </span>
           ) : null}
         </div>
+
+        {isMine && post.aiStatus === "review" ? (
+          <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-oxide/30 bg-oxide/5 px-3 py-2 text-xs text-oxide dark:text-oxide-light">
+            <ScanSearch className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              <b>Under human review.</b> A real person is checking this post
+              before it goes public.
+              {post.aiStatusReason ? (
+                <span className="mt-0.5 block text-[11px] opacity-80">
+                  Flagged because:{" "}
+                  {post.aiStatusReason.replace(
+                    /[—–]\s*flagged for a human check\.?\s*$/i,
+                    "",
+                  )}
+                </span>
+              ) : null}
+            </span>
+          </p>
+        ) : null}
 
         {post.mediaUrls && post.mediaUrls.length > 0 ? (
           <PostMediaGrid media={post.mediaUrls} />

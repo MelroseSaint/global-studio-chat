@@ -122,6 +122,32 @@ async function main() {
     });
     const aiPostId = aiRes.ok === true ? aiRes.postId : null;
     check("AI-suspicious post accepted into review", aiRes.ok === true);
+    check(
+      "reviewed post reports its reason to the author",
+      typeof aiRes.aiReviewReason === "string" &&
+        aiRes.aiReviewReason.length > 0,
+    );
+    // The author sees their own review post (which carries the "under human
+    // review" note with the reason) while other members don't — a genuine
+    // creator is never left wondering where their post went.
+    const feedAuthor = await client.query(api.posts.feed, {
+      filter: "global",
+      paginationOpts: pag,
+    });
+    check(
+      "author sees their own review post in the feed",
+      feedAuthor.page.some((p) => p._id === aiPostId),
+    );
+    client.setAuth(B.token);
+    const feedOther = await client.query(api.posts.feed, {
+      filter: "global",
+      paginationOpts: pag,
+    });
+    check(
+      "review post stays hidden from other members' feeds",
+      !feedOther.page.some((p) => p._id === aiPostId),
+    );
+    client.setAuth(A.token);
 
     // ── 3. Rate-limit path (+1): burn the 30-post/hour budget ───────────────
     // The flag is recorded the moment the budget fills (scheduled in the

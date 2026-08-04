@@ -134,7 +134,17 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
       setMedia([]);
       setLocation(undefined);
       setPickerOpen(false);
-      toast.success("Posted!");
+      if (result.aiReviewReason) {
+        // Honest "why": the post was flagged for a human check — tell the
+        // author now, and the post carries an "under review" note on their
+        // own views until an admin decides. Genuine creators should never
+        // wonder why their post went quiet.
+        toast("Your post is being checked by a human before it goes public.", {
+          description: `Why: ${result.aiReviewReason}`,
+        });
+      } else {
+        toast.success("Posted!");
+      }
       onPosted?.();
       textareaRef.current?.focus();
     } catch (err) {
