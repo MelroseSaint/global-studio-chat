@@ -1,0 +1,9 @@
+# PureWire blocklist feed — adult_chat
+# One domain per line, lowercased, no scheme. Lines starting with # are ignored.
+# Category: adult_chat
+sextpanther.com
+premium.chat
+niteflirt.com
+phrendly.com
+frisk.chat
+f2f.com

@@ -187,7 +187,7 @@ async function main() {
       name: `qa-src-${stamp}`,
       // Deliberately nonexistent path on a reachable host: the sync must
       // ATTEMPT the fetch (timestamp recorded) and record the failure
-      // (lastError), proving the full lifecycle without depending on a
+      // (lastError), proving the error lifecycle without depending on a
       // third-party feed's content in CI.
       url: `https://example.com/qa-feed-${stamp}.txt`,
       format: "domain",
@@ -209,6 +209,24 @@ async function main() {
       "a failed fetch is recorded as lastError, not a fake success",
       typeof srcRow?.lastError === "string" &&
         srcRow.lastSuccessfulSyncAt === undefined,
+    );
+
+    // ── 4b. A feed with a `# Category:` header syncs into that bucket ────
+    // Points at PureWire's own data/adult feed (hosted on raw.githubusercontent
+    // once this repo pushes). The parser must read the header and import a
+    // domain into its declared category, not the adult_other default.
+    const feedSrc = await client.mutation(api.blocklist.upsertDomainSource, {
+      name: `qa-feed-${stamp}`,
+      url: `https://raw.githubusercontent.com/MelroseSaint/global-studio-chat/main/data/adult/cam-domains.txt`,
+      format: "domain",
+      enabled: true,
+    });
+    check("admin adds the purewire data/adult feed source", feedSrc?.ok === true);
+    const sync2 = await client.action(api.blocklist.syncExternalSources);
+    const feedRow = sync2?.results?.find((r) => r.name === `qa-feed-${stamp}`);
+    check(
+      "the data feed synced successfully (no error)",
+      sync2?.ok === true && feedRow !== undefined && feedRow.error === undefined,
     );
 
     // ── 5. Pausing a domain un-blocks it ──────────────────────────────────
@@ -233,6 +251,9 @@ async function main() {
     });
     await client.mutation(api.blocklist.deleteDomainSource, {
       name: `qa-src-${stamp}`,
+    });
+    await client.mutation(api.blocklist.deleteDomainSource, {
+      name: `qa-feed-${stamp}`,
     });
     const afterCleanup = await client.query(api.blocklist.getActiveBlocklist);
     check(

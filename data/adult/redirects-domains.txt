@@ -1,0 +1,3 @@
+# PureWire blocklist feed — adult_redirect
+# One domain per line, lowercased, no scheme. Lines starting with # are ignored.
+# Category: adult_redirect

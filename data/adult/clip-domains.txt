@@ -1,0 +1,6 @@
+# PureWire blocklist feed — adult_clips
+# One domain per line, lowercased, no scheme. Lines starting with # are ignored.
+# Category: adult_clips
+manyvids.com
+clips4sale.com
+iwantclips.com

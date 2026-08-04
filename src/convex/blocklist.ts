@@ -536,6 +536,17 @@ function parseFeed(
 ): { domains: string[]; category: string } {
   const domains = new Set<string>();
   let category = "adult_other";
+  // A `# Category: adult_creator` header line (used by PureWire's own
+  // data/adult feeds) tells us the bucket every entry belongs to, so a
+  // synced feed lands in its real category instead of defaulting to
+  // adult_other. Comment lines are otherwise ignored.
+  for (const line of body.split(/\r?\n/)) {
+    const m = /^#\s*category\s*:\s*([a-z_]+)\s*$/i.exec(line.trim());
+    if (m !== null && validCategory(m[1])) {
+      category = m[1];
+      break;
+    }
+  }
   if (format === "json") {
     try {
       const parsed = JSON.parse(body);
