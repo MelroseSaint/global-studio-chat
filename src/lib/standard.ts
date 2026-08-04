@@ -70,6 +70,12 @@ export const STANDARD_PRINCIPLES: StandardPrinciple[] = [
     detail:
       "Say it yourself. Text, images, audio, and video must be made by human hands.",
   },
+  {
+    id: "no-adult-platforms",
+    title: "No adult platforms.",
+    detail:
+      "Adult subscription, cam, video, and chat sites can't be shared, posted, or linked on PureWire.",
+  },
 ];
 
 /** Look up a principle by its stable id. */

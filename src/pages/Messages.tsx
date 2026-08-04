@@ -388,7 +388,9 @@ export function Messages() {
     if (text) {
       const verdict = scanForPhishing(text);
       if (verdict.status === "blocked") {
-        toast.error(`Not sent — ${verdict.reason}.`);
+        // Platform-rule blocks (e.g. adult platforms) carry a full sentence;
+        // scam signals fall back to the reason.
+        toast.error(verdict.message ?? `Not sent — ${verdict.reason}.`);
         return;
       }
       if (verdict.status === "review" && !force) {

@@ -202,6 +202,11 @@ const standard = [
     title: "No AI-generated content.",
     detail: "Say it yourself. Text, images, audio, and video must be made by human hands.",
   },
+  {
+    title: "No adult platforms.",
+    detail:
+      "Adult subscription, cam, video, and chat sites can't be shared, posted, or linked on PureWire.",
+  },
 ];
 
 export function Landing() {

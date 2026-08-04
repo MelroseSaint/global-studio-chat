@@ -79,6 +79,7 @@ async function main() {
   const cUser = `qa_phish_${stamp}`;
   const c2User = `qa_phish2_${stamp}`;
   const bUser = `qa_viewer_${stamp}`;
+  const aUser = `qa_adult_${stamp}`;
   const C1 = await client.mutation(api.testHarness.createTestUser, {
     name: "QA Phisher A",
     username: cUser,
@@ -94,10 +95,21 @@ async function main() {
     username: bUser,
     secret: SECRET,
   });
+  // The adult-platform block tests get their own throwaway: each blocked
+  // post escalates 3 scam points and the shadowban threshold is 6, so
+  // running them on C1 would shadowban it before the review-tier checks.
+  const adultUser = await client.mutation(api.testHarness.createTestUser, {
+    name: "QA Adult Tester",
+    username: aUser,
+    secret: SECRET,
+  });
   const admin = await client.mutation(api.testHarness.mintAdminSession, {
     secret: SECRET,
   });
-  check("created two throwaways, a viewer and an admin session", !!(C1 && C2 && B && admin));
+  check(
+    "created three throwaways, a viewer and an admin session",
+    !!(C1 && C2 && B && adultUser && admin),
+  );
 
   const stateC1 = () =>
     client.query(api.testHarness.getTestUserState, {
@@ -123,6 +135,38 @@ async function main() {
       "the official PureWire domain posts clean",
       officialRes.ok === true && officialRes.aiReviewReason === undefined,
     );
+    // ── 1b. Adult platforms are hard-banned everywhere ─────────────────────
+    // Runs on adultUser (not C1) so the 3-point block escalations don't
+    // shadowban the phisher before the review/block tiers below exercise it.
+    client.setAuth(adultUser.token);
+    const adultRes = await client.mutation(api.posts.createPost, {
+      content: `New content on my page — https://onlyfans.com/fanclub ${stamp}`,
+    });
+    check("an adult subscription link is blocked in a post", adultRes.ok === false);
+    check(
+      "the author learns the adult-platform rule by name",
+      typeof adultRes.error === "string" &&
+        adultRes.error.includes("Adult platforms aren't allowed on PureWire"),
+    );
+    const adultSubRes = await client.mutation(api.posts.createPost, {
+      content: `Live now — https://m.chaturbate.com/${stamp}`,
+    });
+    check(
+      "a subdomain of an adult cam site is blocked too",
+      adultSubRes.ok === false,
+    );
+    const adultLinkRes = await client.mutation(api.users.updateProfile, {
+      links: [{ platform: "Custom", url: "fansly.com/creator" }],
+    });
+    check(
+      "an adult platform link is blocked in a profile link",
+      adultLinkRes?.ok === false &&
+        typeof adultLinkRes?.error === "string" &&
+        adultLinkRes.error.includes("Adult platforms"),
+    );
+    // Back to C1: the false-positive negative controls below must exercise
+    // the phisher account, not the adult throwaway.
+    client.setAuth(C1.token);
     // False-positive negative controls: innocent human speech must never be
     // blocked or review-queued.
     const adviceRes = await client.mutation(api.posts.createPost, {
@@ -372,6 +416,8 @@ async function main() {
     client.setAuth(C2.token);
     await client.mutation(api.account.deleteAccount);
     client.setAuth(B.token);
+    await client.mutation(api.account.deleteAccount);
+    client.setAuth(adultUser.token);
     await client.mutation(api.account.deleteAccount);
     const gone = await client.query(api.testHarness.getTestUserState, {
       userId: C1.userId,

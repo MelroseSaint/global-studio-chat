@@ -365,7 +365,10 @@ export const createPost = mutation({
       await escalateSilently(ctx, userId, 3, "scam", "phish-block-post");
       return {
         ok: false,
+        // Platform-rule blocks (e.g. adult platforms) carry their own
+        // sentence; scam signals keep the generic warning.
         error:
+          phishScan.message ??
           "That looks like a phishing or scam link — nothing on PureWire may try to steal accounts, money, or personal information.",
       };
     }
@@ -816,6 +819,7 @@ export const addComment = mutation({
       return {
         ok: false,
         error:
+          phishScan.message ??
           "That looks like a phishing or scam link — links that could compromise someone's account aren't allowed.",
       };
     }

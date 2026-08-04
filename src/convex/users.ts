@@ -208,7 +208,8 @@ export const updateProfile = mutation({
           ok: false,
           error:
             bioScan.status === "blocked"
-              ? "That bio looks like a phishing or scam message — it can't be saved."
+              ? (bioScan.message ??
+                "That bio looks like a phishing or scam message — it can't be saved.")
               : "That bio can't be saved as-is — please rephrase. Some links and phrases aren't allowed on profiles for your safety.",
         };
       }
@@ -230,7 +231,8 @@ export const updateProfile = mutation({
             ok: false,
             error:
               linkScan.status === "blocked"
-                ? "That link looks like a phishing or scam link — it can't be added to your profile."
+                ? (linkScan.message ??
+                  "That link looks like a phishing or scam link — it can't be added to your profile.")
                 : "That link can't be added to your profile — use the direct link instead of a shortened or hidden one.",
           };
         }

@@ -23,8 +23,146 @@
 
 export type PhishingVerdict =
   | { status: "clean" }
-  | { status: "blocked"; reason: string }
+  // `message` is the author-facing copy for blocks that are platform rules
+  // (e.g. adult platforms) rather than scam signals — surfaces show it so
+  // the author learns the actual rule, not a generic warning.
+  | { status: "blocked"; reason: string; message?: string }
   | { status: "review"; reason: string };
+
+/**
+ * Categories of adult platforms banned outright from PureWire. Keeping the
+ * list category-based instead of one flat blocklist makes it readable,
+ * auditable, and easy to extend — a new site slots into the category it
+ * belongs to, and the block message names the category so the author and
+ * the admin queue know exactly which rule tripped.
+ */
+export type AdultHostCategory =
+  | "adult_subscription"
+  | "adult_clips"
+  | "adult_cams"
+  | "adult_tube"
+  | "adult_social"
+  | "adult_chat"
+  | "adult_dating"
+  | "adult_escorts"
+  | "adult_link_redirect";
+
+/** Human label per category, used in block reasons and messages. */
+export const ADULT_CATEGORY_LABEL: Record<AdultHostCategory, string> = {
+  adult_subscription: "adult subscription site",
+  adult_clips: "adult clip store",
+  adult_cams: "adult cam site",
+  adult_tube: "adult video site",
+  adult_social: "adult image board",
+  adult_chat: "adult chat service",
+  adult_dating: "adult dating site",
+  adult_escorts: "adult escort site",
+  adult_link_redirect: "adult link redirector",
+};
+
+/**
+ * The adult-platform blacklist, by category. A host is blocked when it
+ * matches an entry exactly or appears as a subdomain of one — so
+ * m.onlyfans.com and x.chaturbate.com count, and a `www.` prefix never
+ * slips through. Every entry is a registrable domain; subdomain-style
+ * entries like danbooru.donmai.us are listed in full.
+ */
+export const BANNED_ADULT_HOSTS: Record<AdultHostCategory, readonly string[]> = {
+  // Fan-subscription platforms: creators sell access behind a paywall.
+  adult_subscription: [
+    "onlyfans.com",
+    "fansly.com",
+    "fanvue.com",
+    "loyalfans.com",
+    "justfor.fans",
+    "fancentro.com",
+    "mym.fans",
+    "ismygirl.com",
+    "admireme.vip",
+    "unlockd.com",
+    "exclu.app",
+    "avnstars.com",
+    "adultnode.com",
+    "modelhub.com",
+    "ifans.com",
+    "fanfix.com",
+    "playboy.com",
+    "dfans.com",
+    "sospoilt.com",
+    "nowblind.com",
+    "scrile.com",
+    "scrile.app",
+    "nvs.video",
+    "sofiagray.com",
+  ],
+  // Clip stores and custom-content marketplaces.
+  adult_clips: [
+    "manyvids.com",
+    "clips4sale.com",
+    "iwantclips.com",
+  ],
+  // Live adult cam platforms.
+  adult_cams: [
+    "chaturbate.com",
+    "stripchat.com",
+    "myfreecams.com",
+    "streamate.com",
+    "cam4.com",
+    "livejasmin.com",
+    "flirt4free.com",
+    "camsoda.com",
+    "bongacams.com",
+    "xhamsterlive.com",
+    "vual1.tv",
+    "tease.bot",
+  ],
+  // Adult video / tube sites.
+  adult_tube: [
+    "pornhub.com",
+    "xvideos.com",
+    "xnxx.com",
+    "xhamster.com",
+    "redgifs.com",
+    "spankbang.com",
+    "eporner.com",
+    "tube8.com",
+    "beeg.com",
+    "drtuber.com",
+    "tnaflix.com",
+    "motherless.com",
+    "fapello.com",
+  ],
+  // Adult image boards / communities.
+  adult_social: ["rule34.xxx", "gelbooru.com", "danbooru.donmai.us"],
+  // Adult chat / messaging services.
+  adult_chat: [
+    "sextpanther.com",
+    "premium.chat",
+    "niteflirt.com",
+    "phrendly.com",
+    "frisk.chat",
+    "f2f.com",
+  ],
+  // Reserved categories — no entries on the current blacklist; kept so the
+  // taxonomy is explicit and a future ban slots into the right bucket.
+  adult_dating: [],
+  adult_escorts: ["adultwork.com"],
+  adult_link_redirect: [],
+};
+
+/** Flat host → category lookup with subdomain matching. */
+const ADULT_LOOKUP: ReadonlyArray<readonly [string, AdultHostCategory]> =
+  (Object.entries(BANNED_ADULT_HOSTS) as [AdultHostCategory, readonly string[]][])
+    .flatMap(([category, hosts]) => hosts.map((host) => [host, category] as const));
+
+/** The banned category a host belongs to, or null when it's not banned. */
+export function bannedAdultCategory(host: string): AdultHostCategory | null {
+  const h = host.toLowerCase().replace(/^www\./, "").replace(/\.+$/, "");
+  for (const [domain, category] of ADULT_LOOKUP) {
+    if (h === domain || h.endsWith(`.${domain}`)) return category;
+  }
+  return null;
+}
 
 /**
  * Phrasing that is overwhelmingly a credential/payment harvest. Each entry
@@ -429,6 +567,18 @@ function inspectUrl(raw: string): PhishingVerdict {
   if (parsed === null) return { status: "clean" };
   const { host, path } = parsed;
   if (isOfficialHost(host)) return { status: "clean" };
+  // Hard platform rule: adult platforms are never shared, posted, or linked
+  // on PureWire. Checked right after the official allowlist so a banned
+  // host is never mislabeled by a later scan, and the block carries a
+  // full sentence so the author learns the actual rule.
+  const adult = bannedAdultCategory(host);
+  if (adult !== null) {
+    return {
+      status: "blocked",
+      reason: `banned ${ADULT_CATEGORY_LABEL[adult]} (${host})`,
+      message: `Adult platforms aren't allowed on PureWire — this ${ADULT_CATEGORY_LABEL[adult]} can't be shared, posted, or linked.`,
+    };
+  }
   // Embedded credentials in the authority are a phishing hallmark.
   const pathStart = parsed.raw.search(/[/?#]/);
   const authPart =

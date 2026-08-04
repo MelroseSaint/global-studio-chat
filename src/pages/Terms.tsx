@@ -92,6 +92,10 @@ const sections: TermsSection[] = [
           "Scrape or Harvest: Deploy spiders, scrapers, headless browsers, or automated crawlers to capture user data, posts, or media.",
         ],
       },
+      {
+        heading: "No adult platforms",
+        body: "Adult platforms are banned outright from PureWire — they may never be shared, posted, or linked anywhere on the platform, including in posts, comments, stories, profile bios, profile links, and direct messages. The ban is enforced by a category-based blacklist covering adult subscription platforms, clip stores, cam sites, video/tube sites, image boards, chat services, dating services, escort sites, and link redirectors used to funnel traffic to them. Subdomains of banned platforms count. Accounts that keep trying to share them are treated as repeat violators of the PureWire Standard.",
+      },
     ],
   },
   {
