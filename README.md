@@ -77,9 +77,14 @@ Blocked → rejected with an honest reason
 ### AI & deepfake detection
 
 - **Byte-level metadata scan** — structured container parsing for PNG,
-  JPEG/EXIF/XMP, MP4 atoms, ID3v2 frames, FLAC Vorbis comments, WebP, GIF.
-  Detects AI-generator markers (Midjourney, Stable Diffusion, DALL·E,
-  Imagen, etc.) in the file's own metadata.
+  JPEG/EXIF/XMP, MP4 atoms, ID3v2 frames, FLAC Vorbis comments, WebP, GIF,
+  and WAV LIST-INFO. Detects AI-generator markers (Midjourney, Stable
+  Diffusion, DALL·E, Imagen, etc.) in the file's own metadata, with the
+  audio side covering TTS/voice-clone watermarks too — ElevenLabs,
+  PlayHT, Resemble, Speechify, Amazon Polly, Azure/Google/OpenAI neural
+  TTS, and voice-clone phrasing — tiered so unambiguous tool signatures
+  block while bare brand mentions go to human review. ID3 TXXX/COMM and
+  UTF-16 text are decoded so those watermarks can't hide.
 - **C2PA / Content Credentials** — verifies C2PA manifests in JPEG APP11,
   PNG iTXt, MP4 jumb, and WebP jumb containers. Camera-capture manifests
   earn a "Content Credentials verified" chip; `trainedAlgorithmicMedia`
@@ -175,7 +180,7 @@ place:
 | Frontend | React + Vite + TypeScript, Tailwind (shadcn/ui components) | PWA, served by Vercel |
 | Backend | Convex (TypeScript functions + schema) | Database, auth, moderation, feeds, DMs |
 | Media | Cloudinary (primary) with Convex storage fallback | Photos/videos/audio live outside the database |
-| AI content detection | In-house byte-level scanner + C2PA verification | AI-generator metadata, provenance, deepfake markers |
+| AI content detection | In-house byte-level scanner + C2PA verification | AI-generator metadata, provenance, deepfake markers, TTS/voice-clone watermarks |
 | Email | Resend | Verification and password-reset codes |
 | Bot check | Cloudflare Turnstile | Human-only email triggers |
 | Delivery | Vercel (primary) | `purewire.vercel.app` |

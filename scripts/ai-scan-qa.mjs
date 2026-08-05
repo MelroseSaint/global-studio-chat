@@ -244,13 +244,13 @@ function pngWithC2pa(payload) {
   return bytesOf([new Uint8Array(PNG_SIG), ...chunks]);
 }
 
-/** A minimal ID3v2 tag with one TSSE frame. */
+/** A minimal ID3v2 tag with one frame (2 flag bytes, per the v2.3 spec). */
 function id3WithFrame(frameId, value) {
   const payload = bytesOf([new Uint8Array([0x03]), value]); // encoding + text
   const frame = bytesOf([
     frameId,
     u32be(payload.byteLength),
-    new Uint8Array(4),
+    new Uint8Array(2), // frame flags
     new Uint8Array(payload),
   ]);
   const total = 10 + frame.byteLength;
@@ -268,15 +268,18 @@ function id3WithFrame(frameId, value) {
   ]);
 }
 
-/** A minimal FLAC with a VORBIS_COMMENT block carrying ENCODER=. */
+/** A minimal FLAC with a VORBIS_COMMENT block carrying ENCODER=. The
+ *  Vorbis comment header stores every length little-endian (the FLAC block
+ *  header itself stays big-endian) — build it that way so the fixture
+ *  exercises the real parser path, not just the raw sweep. */
 function flacWithComment(comment) {
   const vendor = bytesOf(["PureWireTest"]);
   const entry = bytesOf([comment]);
   const body = bytesOf([
-    u32be(vendor.byteLength),
+    u32le(vendor.byteLength),
     new Uint8Array(vendor),
-    u32be(1),
-    u32be(entry.byteLength),
+    u32le(1),
+    u32le(entry.byteLength),
     new Uint8Array(entry),
   ]);
   const header = new Uint8Array(4);
@@ -285,6 +288,101 @@ function flacWithComment(comment) {
   header[2] = (body.byteLength >> 8) & 0xff;
   header[3] = body.byteLength & 0xff;
   return bytesOf(["fLaC", header, new Uint8Array(body)]);
+}
+
+/** RIFF/WAVE sizes are little-endian — build them the way real WAVs do. */
+function u32le(n) {
+  const b = new Uint8Array(4);
+  b[0] = n & 0xff;
+  b[1] = (n >>> 8) & 0xff;
+  b[2] = (n >>> 16) & 0xff;
+  b[3] = (n >>> 24) & 0xff;
+  return b;
+}
+
+/** A minimal WAV with a LIST-INFO block carrying an ISFT software tag. */
+function wavWithIsft(software, comment = "") {
+  const fmt = bytesOf(["fmt ", u32le(16), new Uint8Array(16)]);
+  const data = bytesOf(["data", u32le(4), new Uint8Array(4)]);
+  const infoParts = ["INFO"];
+  if (software) {
+    const sw = bytesOf([`${software}\0`]);
+    infoParts.push(bytesOf(["ISFT", u32le(sw.byteLength), new Uint8Array(sw)]));
+  }
+  if (comment) {
+    const cm = bytesOf([`${comment}\0`]);
+    infoParts.push(bytesOf(["ICMT", u32le(cm.byteLength), new Uint8Array(cm)]));
+  }
+  const listBody = bytesOf(infoParts);
+  const list = bytesOf(["LIST", u32le(listBody.byteLength), new Uint8Array(listBody)]);
+  const body = bytesOf([fmt, data, list]);
+  const riff = bytesOf(["RIFF", u32le(4 + body.byteLength), "WAVE"]);
+  return bytesOf([riff, body]);
+}
+
+/** A minimal ID3v2 tag with a TXXX (user text) frame: desc\0 value. */
+function id3WithTxxx(desc, value) {
+  const payload = bytesOf([
+    new Uint8Array([0x03]), // encoding: UTF-8
+    `${desc}\0`,
+    value,
+  ]);
+  const frame = bytesOf([
+    "TXXX",
+    u32be(payload.byteLength),
+    new Uint8Array(2), // frame flags
+    new Uint8Array(payload),
+  ]);
+  const total = 10 + frame.byteLength;
+  const sizeBytes = [
+    (total >> 21) & 0x7f,
+    (total >> 14) & 0x7f,
+    (total >> 7) & 0x7f,
+    total & 0x7f,
+  ];
+  return bytesOf([
+    "ID3",
+    new Uint8Array([0x03, 0x00, 0x00]),
+    new Uint8Array(sizeBytes),
+    new Uint8Array(frame),
+  ]);
+}
+
+/** UTF-16LE bytes (BOM + each char as 2 little-endian bytes). */
+function utf16le(value) {
+  const out = [0xff, 0xfe]; // little-endian BOM
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    out.push(c & 0xff, (c >> 8) & 0xff);
+  }
+  return new Uint8Array(out);
+}
+
+/** A minimal ID3v2 tag with a UTF-16 (BOM) TSSE frame. */
+function id3WithUtf16Tsse(value) {
+  const payload = bytesOf([
+    new Uint8Array([0x01]), // encoding: UTF-16 with BOM
+    utf16le(value),
+  ]);
+  const frame = bytesOf([
+    "TSSE",
+    u32be(payload.byteLength),
+    new Uint8Array(2), // frame flags
+    new Uint8Array(payload),
+  ]);
+  const total = 10 + frame.byteLength;
+  const sizeBytes = [
+    (total >> 21) & 0x7f,
+    (total >> 14) & 0x7f,
+    (total >> 7) & 0x7f,
+    total & 0x7f,
+  ];
+  return bytesOf([
+    "ID3",
+    new Uint8Array([0x03, 0x00, 0x00]),
+    new Uint8Array(sizeBytes),
+    new Uint8Array(frame),
+  ]);
 }
 
 // ── text cases ───────────────────────────────────────────────────────────
@@ -446,6 +544,72 @@ function mediaChecks() {
   // Container mismatch on the media path: a PNG as audio/video.
   const pngAsMedia = scanMediaBytes(pngWithText("Software", "GIMP 2.10"));
   check("an image container scanned as audio/video is flagged", pngAsMedia.status === "review", pngAsMedia.reason);
+
+  // ── TTS / voice-clone signatures (the strengthened audio detector) ──
+
+  // WAV LIST-INFO ISFT — where Amazon Polly writes its software tag. This
+  // also proves the WAV parser reads little-endian sizes (a big-endian
+  // read never reaches the LIST block).
+  const wavPolly = scanMediaBytes(wavWithIsft("Amazon Polly"));
+  check("WAV ISFT 'Amazon Polly' is blocked", wavPolly.status === "blocked", wavPolly.reason);
+
+  const wavClean = scanMediaBytes(wavWithIsft("Audacity 3.4.2"));
+  check("WAV ISFT 'Audacity' (a real editor) is clean", wavClean.status === "clean", wavClean.reason);
+
+  // FLAC Vorbis ENCODER — Google Cloud TTS and Azure write here. The
+  // parser now reads the little-endian comment lengths correctly.
+  const flacGoogle = scanMediaBytes(flacWithComment("ENCODER=Google Cloud TTS"));
+  check("FLAC 'ENCODER=Google Cloud TTS' is blocked", flacGoogle.status === "blocked", flacGoogle.reason);
+
+  const flacAzure = scanMediaBytes(flacWithComment("ENCODER=Microsoft Azure Neural"));
+  check("FLAC 'ENCODER=Microsoft Azure Neural' is blocked", flacAzure.status === "blocked", flacAzure.reason);
+
+  // PlayHT's encoder tag is the bare brand ("PlayHT") — distinctive
+  // enough to block on its own.
+  const playhtMp3 = scanMediaBytes(id3WithFrame("TSSE", "PlayHT"));
+  check("MP3 TSSE 'PlayHT' is blocked", playhtMp3.status === "blocked", playhtMp3.reason);
+
+  // Compound ElevenLabs signatures block; the bare brand already reviews.
+  const elevenCompound = scanMediaBytes(id3WithFrame("TSSE", "ElevenLabs TTS v2"));
+  check("MP3 TSSE 'ElevenLabs TTS v2' is blocked", elevenCompound.status === "blocked", elevenCompound.reason);
+
+  // TXXX user-text frame (description + value) — a watermark location
+  // ElevenLabs/Resemble use. The value past the description NUL must be read.
+  const txxxEleven = scanMediaBytes(id3WithTxxx("Encoder", "ElevenLabs"));
+  check("MP3 TXXX 'Encoder=ElevenLabs' goes to review", txxxEleven.status === "review", txxxEleven.reason);
+
+  const txxxResemble = scanMediaBytes(id3WithTxxx("Producer", "Resemble AI voice"));
+  check("MP3 TXXX 'Producer=Resemble AI voice' is blocked", txxxResemble.status === "blocked", txxxResemble.reason);
+
+  // UTF-16-encoded ID3 text (BOM) must decode — many TTS exports write
+  // UTF-16, and a latin-1 read would swallow the watermark in NUL bytes.
+  const utf16Eleven = scanMediaBytes(id3WithUtf16Tsse("ElevenLabs"));
+  check("UTF-16 TSSE 'ElevenLabs' is still caught (review)", utf16Eleven.status === "review", utf16Eleven.reason);
+
+  const utf16Polly = scanMediaBytes(id3WithUtf16Tsse("Amazon Polly"));
+  check("UTF-16 TSSE 'Amazon Polly' is blocked", utf16Polly.status === "blocked", utf16Polly.reason);
+
+  // Case-insensitive structured fields: real tools write mixed case
+  // ("software: PlayHT"), markers are lowercase — the match must not care.
+  const caseInsensitive = scanMediaBytes(wavWithIsft("playht"));
+  check("lowercase ISFT 'playht' still blocks (case-insensitive)", caseInsensitive.status === "blocked", caseInsensitive.reason);
+
+  // Voice-clone watermarks: generic phrasing goes to review, not block.
+  const voiceCloneWav = scanMediaBytes(wavWithIsft("Audacity", "voice cloning demo recording"));
+  check("ICMT 'voice cloning' mention goes to review", voiceCloneWav.status === "review", voiceCloneWav.reason);
+
+  // Bare English words that are NOT tool names must stay clean (no false
+  // positive from the new catalogs).
+  const cleanValle = scanMediaBytes(id3WithFrame("TIT2", "Valle de los Reyes"));
+  check("song title 'Valle' (a real word) stays clean", cleanValle.status === "clean", cleanValle.reason);
+
+  // Bare "neural" is a common technical word — no review flag (only the
+  // compound "neural voice"/model IDs "neural2"/"neural3" match).
+  const cleanNeural = scanMediaBytes(id3WithFrame("TIT2", "Neural networks explained"));
+  check("title mentioning bare 'neural' stays clean", cleanNeural.status === "clean", cleanNeural.reason);
+
+  const neuralVoiceReview = scanMediaBytes(id3WithFrame("TIT2", "Azure neural voice demo"));
+  check("'azure neural voice' blocks, bare neural mention reviews", neuralVoiceReview.status === "blocked", neuralVoiceReview.reason);
 }
 
 textChecks();

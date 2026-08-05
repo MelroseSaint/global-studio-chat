@@ -330,6 +330,108 @@ const AV_REVIEW_MARKERS = [
   "text-to-video",
 ];
 
+/**
+ * TTS / voice-clone AI signatures — the audio half of the zero-tolerance
+ * policy. Compound product names, distinctive model IDs, and platform
+ * domains are hard-blocked (a file whose encoder atom says "ElevenLabs
+ * TTS" or "PlayHT" is machine-made, full stop); generic English phrases
+ * and bare brand words are demoted to review so a genuine recording that
+ * merely mentions a brand is never rejected automatically.
+ *
+ * These catch the watermark/container signatures TTS platforms actually
+ * write: ID3 TSSE/TXXX/COMM frames (ElevenLabs, PlayHT, Speechify,
+ * Descript), FLAC Vorbis ENCODER comments (Google Cloud TTS, Azure), MP4
+ * ©too atoms, and WAV LIST-INFO ISFT tags (Amazon Polly). No external
+ * API — pure byte signatures, same pipeline as the image scanner.
+ */
+const TTS_VOICE_MARKERS = [
+  // ElevenLabs — the flagship voice-clone platform
+  "elevenlabs tts",
+  "elevenlabs voice",
+  "elevenlabs-tts",
+  "elevenlabs api",
+  "elevenlabs.io",
+  "elevenlabs clone",
+  "eleven_turbo_v2",
+  "eleven_monolingual",
+  "eleven_multilingual",
+  // PlayHT
+  "playht",
+  "play.ht tts",
+  "play-ht",
+  // Resemble AI
+  "resemble ai",
+  "resemble-ai",
+  "resemble tts",
+  // Speechify
+  "speechify tts",
+  "speechify-tts",
+  // Amazon Polly
+  "amazon polly",
+  "aws polly",
+  "polly tts",
+  // Microsoft / Azure neural voices
+  "azure neural",
+  "microsoft neural",
+  "microsoft speech",
+  // Google Cloud TTS (WaveNet / Neural2 / Chirp)
+  "google cloud tts",
+  "google tts",
+  "google text-to-speech",
+  "google text to speech",
+  "wavenet",
+  "neural2",
+  "neural3",
+  "chirp3",
+  // OpenAI TTS
+  "openai tts",
+  "openai audio",
+  "gpt-4o-mini-tts",
+  "gpt-4o-audio",
+  // Descript's Underlord TTS engine — the compound is unambiguous; the
+  // bare word "underlord" is a real English word (games, fantasy) so it
+  // lives in the review tier instead.
+  "descript underlord",
+  // Other distinctive voice platforms
+  "wellsaid labs",
+  "lovo ai",
+  "lovo.ai",
+  "murf tts",
+  "narakeet",
+  "naturalreader",
+  "synthesys",
+  // VALL-E is a common word ("valle" = valley in Spanish/Italian) — only
+  // the unambiguous Microsoft compound matches, never the bare word.
+  "microsoft valle",
+  "ms valle",
+];
+
+/** Bare TTS/voice-clone brands and generic phrases — human check, not block.
+ *  One token per tier: block is checked first, so a brand that is already
+ *  block-tier (PlayHT, WaveNet — distinctive enough on their own, in
+ *  TTS_VOICE_MARKERS/AV_GENERATOR_MARKERS) has no review copy here. */
+const TTS_VOICE_REVIEW_MARKERS = [
+  "elevenlabs",
+  "eleven labs",
+  "resemble",
+  "murf",
+  "speechify",
+  "lovo",
+  "voiceover",
+  "neural voice",
+  "synthetic voice",
+  "synthesized voice",
+  "voice cloning",
+  "voice clone",
+  "cloned voice",
+  "ai voiceover",
+  "ai voice-over",
+  "text to speech",
+  "text-to-speech",
+  "voice deepfake",
+  "underlord",
+];
+
 // ─────────────────────────── C2PA / Content Credentials ───────────────────────────
 
 /**
@@ -580,6 +682,16 @@ function u32(bytes: Uint8Array, off: number): number {
   ) >>> 0;
 }
 
+/** RIFF/WAVE and FLAC sizes are little-endian — read them as such. */
+function u32le(bytes: Uint8Array, off: number): number {
+  return (
+    (bytes[off] ?? 0) |
+    ((bytes[off + 1] ?? 0) << 8) |
+    ((bytes[off + 2] ?? 0) << 16) |
+    ((bytes[off + 3] ?? 0) << 24)
+  ) >>> 0;
+}
+
 function u16(bytes: Uint8Array, off: number): number {
   return (((bytes[off] ?? 0) << 8) | (bytes[off + 1] ?? 0)) >>> 0;
 }
@@ -695,10 +807,13 @@ function matchMarkers(
   blockedReason: (m: string) => string,
   reviewReason: (m: string) => string,
 ): AiScanResult | null {
-  // Hard blocks: fields + free strings + raw sweep.
+  // Hard blocks: fields + free strings + raw sweep. Structured field
+  // values carry real case ("Software: PlayHT", "ENCODER=Amazon Polly")
+  // while markers are lowercase — compare both sides case-insensitively,
+  // the same rule the free-string path already uses.
   for (const marker of blockMarkers) {
     for (const f of fields) {
-      if (f.includes(marker)) {
+      if (f.toLowerCase().includes(marker)) {
         return { status: "blocked", reason: blockedReason(marker) };
       }
     }
@@ -718,7 +833,7 @@ function matchMarkers(
   // arbitrary bytes is too weak to flag on its own).
   for (const marker of reviewMarkers) {
     for (const f of fields) {
-      if (f.includes(marker)) {
+      if (f.toLowerCase().includes(marker)) {
         return { status: "review", reason: reviewReason(marker) };
       }
     }
@@ -748,8 +863,18 @@ function matchMarkers(
   return null;
 }
 
-const ALL_BLOCK = [...IMAGE_GENERATOR_MARKERS, ...DEEPFAKE_MARKERS, ...AV_GENERATOR_MARKERS, ...PROVENANCE_BLOCK_MARKERS];
-const ALL_REVIEW = [...DEEPFAKE_REVIEW_MARKERS, ...AV_REVIEW_MARKERS];
+const ALL_BLOCK = [
+  ...IMAGE_GENERATOR_MARKERS,
+  ...DEEPFAKE_MARKERS,
+  ...AV_GENERATOR_MARKERS,
+  ...TTS_VOICE_MARKERS,
+  ...PROVENANCE_BLOCK_MARKERS,
+];
+const ALL_REVIEW = [
+  ...DEEPFAKE_REVIEW_MARKERS,
+  ...AV_REVIEW_MARKERS,
+  ...TTS_VOICE_REVIEW_MARKERS,
+];
 
 /**
  * Short but unambiguous tool signatures that are safe to match in RAW bytes
@@ -794,6 +919,11 @@ const RAW_SAFE_SHORT = new Set([
   "play.ht",
   "voice.ai",
   "fakeyou",
+  "playht",
+  "wavenet",
+  "neural2",
+  "neural3",
+  "chirp3",
   "lumaai",
   "klingai",
   "pikavideo",
@@ -1412,6 +1542,36 @@ function parseGif(bytes: ArrayBuffer): ExtractedMeta {
 
 // ─────────────────────────── Audio (ID3 / FLAC / WAV) ───────────────────────────
 
+/**
+ * Decode an ID3v2 text payload by its encoding byte: 0 = ISO-8859-1,
+ * 1 = UTF-16 with BOM, 2 = UTF-16BE, 3 = UTF-8 (read bytewise — ASCII
+ * markers survive, multi-byte characters come through best-effort). TTS
+ * platforms routinely write UTF-16 (enc 1) so their watermarks must not
+ * vanish into interleaved NUL bytes.
+ */
+function decodeId3Text(b: Uint8Array, enc: number, off: number, end: number): string {
+  if (enc === 1 || enc === 2) {
+    // UTF-16: honour a BOM if present, else assume the platform default.
+    let bigEndian = enc === 2;
+    let start = off;
+    if (start + 1 < end && b[start] === 0xff && b[start + 1] === 0xfe) {
+      bigEndian = false;
+      start += 2;
+    } else if (start + 1 < end && b[start] === 0xfe && b[start + 1] === 0xff) {
+      bigEndian = true;
+      start += 2;
+    }
+    let out = "";
+    for (let i = start; i + 1 < end; i += 2) {
+      const unit = bigEndian ? (b[i] << 8) | b[i + 1] : b[i] | (b[i + 1] << 8);
+      if (unit === 0) break;
+      out += String.fromCharCode(unit);
+    }
+    return out;
+  }
+  return latin1Region(b, off, end - off);
+}
+
 /** MP3 ID3v2: TSSE (software), TENC, TXXX, COMM, TIT2, TPE1. */
 function parseId3(bytes: ArrayBuffer): ExtractedMeta {
   const b = u8(bytes);
@@ -1433,23 +1593,62 @@ function parseId3(bytes: ArrayBuffer): ExtractedMeta {
     const dataOff = off + 10;
     const dataEnd = dataOff + size;
     if (dataEnd > tagEnd) break;
-    if (id.startsWith("T") || id === "COMM") {
-      const enc = b[dataOff] ?? 0;
-      const textOff = dataOff + (id === "COMM" ? 4 : 1); // COMM: enc+3 lang
-      const raw = latin1Region(b, textOff, dataEnd - textOff);
+    const enc = b[dataOff] ?? 0;
+    if (id === "TXXX") {
+      // User text frame: enc + description\0 + value. The description is
+      // free-form ("Encoder", "Producer", …) and the VALUE is what TTS
+      // tools watermark — read past the description's NUL terminator.
+      const descStart = dataOff + 1;
+      const nul = b.indexOf(0, descStart);
+      if (nul !== -1 && nul + 1 < dataEnd) {
+        const desc = latin1Region(b, descStart, nul - descStart);
+        const val = decodeId3Text(b, enc, nul + 1, dataEnd);
+        if (val.length > 0) {
+          fields.push(desc.length > 0 ? `txxx ${desc}: ${val}` : `txxx: ${val}`);
+          free.push(val);
+        }
+      } else {
+        // No description terminator (malformed but seen in the wild) —
+        // fall back to reading the whole payload as the value so a
+        // watermark isn't silently lost.
+        const val = decodeId3Text(b, enc, descStart, dataEnd);
+        if (val.length > 0) {
+          fields.push(`txxx: ${val}`);
+          free.push(val);
+        }
+      }
+    } else if (id === "COMM") {
+      // Comment frame: enc + 3-byte language + short description\0 + text.
+      const langEnd = dataOff + 4;
+      const nul = b.indexOf(0, langEnd);
+      if (nul !== -1 && nul + 1 < dataEnd) {
+        const text = decodeId3Text(b, enc, nul + 1, dataEnd);
+        if (text.length > 0) {
+          fields.push(`comment: ${text}`);
+          free.push(text);
+        }
+      } else {
+        // No description terminator — read the whole frame body.
+        const text = decodeId3Text(b, enc, langEnd, dataEnd);
+        if (text.length > 0) {
+          fields.push(`comment: ${text}`);
+          free.push(text);
+        }
+      }
+    } else if (id.startsWith("T")) {
+      const textOff = dataOff + 1; // enc byte, then the text
+      const raw = decodeId3Text(b, enc, textOff, dataEnd);
       const label =
         id === "TSSE" ? "software" :
         id === "TENC" ? "encoder" :
         id === "TIT2" ? "title" :
         id === "TPE1" ? "artist" :
         id === "TCOP" ? "copyright" :
-        id === "COMM" ? "comment" :
         id.toLowerCase();
       if (raw.length > 0) {
         fields.push(`${label}: ${raw}`);
         free.push(raw);
       }
-      void enc;
     }
     off = dataEnd;
   }
@@ -1472,15 +1671,20 @@ function parseFlac(bytes: ArrayBuffer): ExtractedMeta {
     const dataOff = off + 4;
     if (dataOff + len > b.length) break;
     if (type === 4) {
-      // VORBIS_COMMENT: vendorLen(4) vendor comments
+      // VORBIS_COMMENT: vendorLen(4) vendor comments. Every length in the
+      // Vorbis comment header is little-endian (same as RIFF/WAVE) — the
+      // big-endian u32 helper would read a multigigabyte vendor length and
+      // bail before ever reaching the ENCODER= comment where TTS tools
+      // (Google Cloud TTS, Azure, ElevenLabs FLAC exports) write their
+      // software tag.
       let c = dataOff;
-      const vendorLen = u32(b, c);
+      const vendorLen = u32le(b, c);
       c += 4 + vendorLen;
       if (c + 4 <= dataOff + len) {
-        const count = u32(b, c);
+        const count = u32le(b, c);
         c += 4;
         for (let i = 0; i < Math.min(count, 128) && c + 4 <= dataOff + len; i++) {
-          const clen = u32(b, c);
+          const clen = u32le(b, c);
           c += 4;
           if (c + clen > dataOff + len) break;
           const entry = latin1Region(b, c, clen);
@@ -1504,11 +1708,15 @@ function parseWav(bytes: ArrayBuffer): ExtractedMeta {
   const fields: string[] = [];
   const free: string[] = [];
   if (b.length < 12 || latin1Region(b, 0, 4) !== "RIFF") return emptyMeta;
+  // RIFF/WAVE writes every size little-endian (unlike PNG/MP4 atoms, which
+  // are big-endian) — reading them with the big-endian u32 helper would
+  // treat every chunk as gigabytes and never reach the LIST-INFO block
+  // where TTS tools (Amazon Polly, etc.) write their ISFT software tag.
   let off = 12;
   for (let chunk = 0; chunk < 64; chunk++) {
     if (off + 8 > b.length) break;
     const id = latin1Region(b, off, 4);
-    const len = u32(b, off + 4);
+    const len = u32le(b, off + 4);
     const dataOff = off + 8;
     const dataEnd = dataOff + len;
     if (dataEnd > b.length) break;
@@ -1516,7 +1724,7 @@ function parseWav(bytes: ArrayBuffer): ExtractedMeta {
       let sub = dataOff + 4;
       for (let i = 0; i < 32 && sub + 8 <= dataEnd; i++) {
         const subId = latin1Region(b, sub, 4);
-        const subLen = u32(b, sub + 4);
+        const subLen = u32le(b, sub + 4);
         const subOff = sub + 8;
         if (subOff + subLen > dataEnd) break;
         // eslint-disable-next-line no-control-regex
