@@ -1,3 +1,5 @@
+"use node";
+
 import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
@@ -5,8 +7,10 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import type { BlockCategory } from "./phishing";
 import { idnToAscii, matchBlockedHost } from "./phishing";
 
+import isAntibot from "is-antibot";
+
 import { internal } from "./_generated/api";
-import { action, query, type ActionCtx } from "./_generated/server";
+import { action, type ActionCtx } from "./_generated/server";
 
 function extractMeta(html: string) {
   const pick = (patterns: RegExp[]) => {
@@ -79,20 +83,6 @@ function isPreviewStale(cached: { fetchedAt?: number; _creationTime: number }): 
  * fetchUrlPreview action, which re-scans the redirect chain and either
  * refreshes the card or (if the domain is now blocked) removes it.
  */
-export const getUrlPreview = query({
-  args: { url: v.string() },
-  handler: async (ctx, { url }) => {
-    const row = await ctx.db
-      .query("urlPreviews")
-      .withIndex("by_url", (q) => q.eq("url", url))
-      .first();
-    if (row === null || isPreviewStale(row)) {
-      return null;
-    }
-    return row;
-  },
-});
-
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
 /**
@@ -211,7 +201,7 @@ export const fetchUrlPreview = action({
     // returned as-is; a stale one falls through to the full redirect-chain
     // re-scan below, which refreshes the card or removes it if the domain
     // is now blocked.
-    const cached = (await ctx.runQuery(internal.linksInternal.getUrlPreview, {
+    const cached = (await ctx.runQuery(internal.linksInternal.getUrlPreviewRaw, {
       url,
     })) as unknown as (CachedPreview & { _creationTime: number }) | null;
     if (cached !== null && !isPreviewStale(cached)) {
@@ -316,6 +306,29 @@ export const fetchUrlPreview = action({
           continue;
         }
         const text = (await res.text()).slice(0, 120_000);
+        // Anti-bot challenge detection: a URL that answers with a
+        // Cloudflare / DataDome / Akamai / CAPTCHA challenge page must
+        // never get a misleading preview card — the destination isn't
+        // actually open content, it's a verification wall. Record the
+        // challenge in the scan trail and return no card instead.
+        const antibot = isAntibot({
+          headers: res.headers,
+          statusCode: res.status,
+          html: text,
+          url: current,
+        });
+        if (antibot.detected) {
+          await ctx.runMutation(internal.blocklist.recordLinkScanInternal, {
+            rawUrl: url,
+            verdict: "challenged",
+            hostname: chain[0] ?? asciiHost,
+            finalHostname: asciiHost,
+            redirectChain: chain,
+            category: antibot.provider ?? undefined,
+          }).catch(() => {});
+          await touchStaleCache(ctx, url, cached);
+          return emptyPreview(url);
+        }
         const meta = extractMeta(text);
         const preview = {
           url,

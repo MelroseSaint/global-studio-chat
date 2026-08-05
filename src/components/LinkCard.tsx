@@ -13,7 +13,7 @@ interface Preview {
 }
 
 export function LinkCard({ url }: { url: string }) {
-  const cached = useQuery(api.links.getUrlPreview, { url });
+  const cached = useQuery(api.linksInternal.getUrlPreview, { url });
   const fetchPreview = useAction(api.links.fetchUrlPreview);
   const [local, setLocal] = useState<Preview | null>(null);
   const tried = useRef(false);

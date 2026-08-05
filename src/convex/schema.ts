@@ -643,6 +643,10 @@ const schema = defineSchema({
       v.literal("blocked"),
       v.literal("review"),
       v.literal("unreachable"),
+      // The destination answered with an anti-bot / CAPTCHA challenge
+      // (Cloudflare, DataDome, …) — recorded by the link scanner so the
+      // audit trail shows why no card was shown.
+      v.literal("challenged"),
     ),
     category: v.optional(v.string()),
     matchedDomain: v.optional(v.string()),

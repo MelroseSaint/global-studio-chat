@@ -1,6 +1,36 @@
 import { v } from "convex/values";
 
-import { internalMutation, internalQuery } from "./_generated/server";
+import { query, internalMutation, internalQuery } from "./_generated/server";
+
+/**
+ * Public URL-preview reader for the LinkCard. Lives here (not in ./links)
+ * because ./links runs in the Node.js runtime (its action bundles
+ * is-antibot) and only actions may live in a "use node" file — this query
+ * must run in the default V8 isolate.
+ */
+export const getUrlPreview = query({
+  args: { url: v.string() },
+  handler: async (ctx, { url }) => {
+    const row = await ctx.db
+      .query("urlPreviews")
+      .withIndex("by_url", (q) => q.eq("url", url))
+      .first();
+    if (row === null || isPreviewStale(row)) {
+      return null;
+    }
+    return row;
+  },
+});
+
+/** A cached preview older than 24 h is stale — the card re-scans. */
+function isPreviewStale(cached: {
+  fetchedAt?: number;
+  _creationTime: number;
+}): boolean {
+  const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+  const lastFetched = cached.fetchedAt ?? cached._creationTime;
+  return Date.now() - lastFetched > STALE_AFTER_MS;
+}
 
 /**
  * Internal cache helpers for the URL-preview action in ./links.
@@ -15,8 +45,10 @@ import { internalMutation, internalQuery } from "./_generated/server";
  * media.ts → mediaStorage.ts split.)
  */
 
-/** Internal cache reader — actions can't query ctx.db directly. */
-export const getUrlPreview = internalQuery({
+/** Internal cache reader — actions can't query ctx.db directly. Returns
+ *  the RAW row (stale included) so the fetchUrlPreview action can decide
+ *  whether to re-scan the redirect chain. */
+export const getUrlPreviewRaw = internalQuery({
   args: { url: v.string() },
   handler: async (ctx, { url }) => {
     return await ctx.db

@@ -199,6 +199,41 @@ place:
 - **Sessions persist until sign-out** — up to 10 years with "Keep me
   signed in" toggle
 - **Anti-scraping** — per-account rate limits on all activities
+- **Proof-of-work (hashcash)** — the browser solves a ~50 ms SHA-256
+  puzzle before every post, comment, and DM send, verified server-side
+  before any DB work. Bots pay real compute per attempt on top of the
+  rate limits; humans never notice
+- **Browser-automation detection** — the browser scores itself for
+  headless/CDP/Playwright/Puppeteer markers (an original module; see
+  `src/lib/automation-signal.ts`) and files a coarse 0–100 score. Strong
+  multi-marker scores feed the silent-flag pipeline; only the score and
+  signal names ever reach the server — never a raw fingerprint
+- **Self-auditing sessions** — a one-way UA hash + coarse timezone/language
+  token is filed per session; a wildly different fingerprint on a later
+  load silently revokes the session (stolen-cookie protection)
+- **Dead-letter queue** — failed external jobs (Resemble detection, link
+  scans) are retried on a backoff schedule, then surfaced as dead letters
+  to admins instead of silently dropping
+- **Anti-bot challenge detection** — link previews run
+  [`is-antibot`](https://github.com/microlinkhq/is-antibot) (MIT) on every
+  fetched URL; a destination answering with a Cloudflare/DataDome/…
+  challenge is recorded as `challenged` and never carded
+
+### User control & transparency
+
+- **Personal keyword muting** — a Unicode-aware term list hides matching
+  posts from your feed (Settings → Muted words & phrases)
+- **Comment locking** — authors and admins can lock a post's comment
+  thread; locked posts reject new comments with a clear message
+- **Granular DM permissions** — Everyone / Accounts I follow / Nobody,
+  enforced before any conversation or key exchange
+- **Data export** — one click downloads a complete JSON archive of your
+  posts, comments, stories, follows, and blocks (Settings → Data & privacy)
+- **Public system status** — `/status` shows live backend latency and
+  platform totals, no account needed
+- **Admin announcements** — categorized, dismissible home-page banners,
+  optionally scheduled to auto-activate at a future date, with a live
+  preview in the composer
 
 ## Setup
 

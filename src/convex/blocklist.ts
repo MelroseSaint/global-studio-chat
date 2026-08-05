@@ -210,7 +210,7 @@ export const getActiveBlocklistInternal = internalQuery({
 export async function recordLinkScan(
   ctx: MutationCtx,
   raw: string,
-  verdict: "allowed" | "blocked" | "review" | "unreachable",
+  verdict: "allowed" | "blocked" | "review" | "unreachable" | "challenged",
   opts: {
     hostname?: string;
     category?: string;
@@ -818,6 +818,7 @@ export const recordLinkScanInternal = internalMutation({
       v.literal("blocked"),
       v.literal("review"),
       v.literal("unreachable"),
+      v.literal("challenged"),
     ),
     hostname: v.optional(v.string()),
     finalHostname: v.optional(v.string()),

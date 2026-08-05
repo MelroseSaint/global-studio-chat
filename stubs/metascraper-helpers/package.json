@@ -1,0 +1,6 @@
+{
+  "name": "@metascraper/helpers",
+  "version": "0.0.0-purewire-shim",
+  "description": "PureWire build-time shim: exposes only the parseUrl (tldts.parse) surface is-antibot imports, avoiding the native re2 dependency chain.",
+  "main": "index.js"
+}
