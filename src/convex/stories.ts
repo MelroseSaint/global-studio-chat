@@ -4,6 +4,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
 import { scanBlockedContent } from "./blocklist";
+import { scanForRacism } from "@/lib/racism-guard";
 import { publicUser } from "./privacy";
 import {
   enforceActive,
@@ -169,17 +170,23 @@ export const createStoryInternal = internalMutation({
     const phishScan =
       caption !== undefined ? await scanBlockedContent(ctx, caption) : null;
     if (phishScan?.status === "blocked") {
-      // Rejected — and the rejection is itself an abuse signal, escalated
-      // INLINE (a thrown error would roll the flag back), so repeat
-      // scammers quietly shadowban.
       await escalateSilently(ctx, userId, 3, "scam", "phish-block-story");
       return {
         ok: false,
-        // Platform-rule blocks (e.g. adult platforms) carry their own
-        // sentence; scam signals keep the generic warning.
         error:
           phishScan.message ??
           "That looks like a phishing or scam link — nothing on PureWire may try to steal accounts, money, or personal information.",
+      };
+    }
+    // Racism scan on the story caption: same three-tier pipeline as posts.
+    // Blocked is rejected; review goes to the human queue alongside AI/
+    // phishing signals.
+    const racismScan = caption !== undefined ? scanForRacism(caption) : null;
+    if (racismScan?.status === "blocked") {
+      await escalateSilently(ctx, userId, 5, "harassment", "racism-block-story");
+      return {
+        ok: false,
+        error: `That can't be posted — ${racismScan.reason}.`,
       };
     }
     if (captionScan?.status === "blocked") {
@@ -207,7 +214,8 @@ export const createStoryInternal = internalMutation({
       captionScan?.status === "review" ||
       aiMediaStatus === undefined ||
       aiMediaStatus === "review" ||
-      phishScan?.status === "review";
+      phishScan?.status === "review" ||
+      racismScan?.status === "review";
     if (needsReview) {
       // Phishing-suspicious captions count as their own signal so the
       // Silenced tab shows the mix behind a quiet shadowban.
@@ -229,7 +237,13 @@ export const createStoryInternal = internalMutation({
       // The review reason already carries the "Suspected phishing —"
       // prefix from scanForPhishing — used as-is, no double prefix.
       aiStatusReason:
-        phishScan?.status === "review" ? phishScan.reason : undefined,
+        phishScan?.status === "review"
+          ? (racismScan?.status === "review"
+              ? `${phishScan.reason} · ${racismScan.reason}`
+              : phishScan.reason)
+          : racismScan?.status === "review"
+            ? racismScan.reason
+            : undefined,
     });
     if (media.kind === "video") {
       await ctx.scheduler.runAfter(
