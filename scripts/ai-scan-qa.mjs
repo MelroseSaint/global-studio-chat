@@ -55,9 +55,10 @@ registerHooks({
   },
 });
 
-const [{ scanImageBytes, scanMediaBytes }, { scanText }] = await Promise.all([
+const [{ scanImageBytes, scanMediaBytes }, { scanText }, { detectMedia, resembleApiKey }] = await Promise.all([
   import("../src/lib/ai-media-scan.ts"),
   import("../src/convex/aiContent.ts"),
+  import("../src/lib/resemble.ts"),
 ]);
 
 let passed = 0;
@@ -448,10 +449,70 @@ function mediaChecks() {
   check("an image container scanned as audio/video is flagged", pngAsMedia.status === "review", pngAsMedia.reason);
 }
 
+// ── Resemble v2 API checks ───────────────────────────────────────────────
+
+async function resembleChecks() {
+  console.log("\nResemble v2 API (image detection)");
+
+  const apiKey = resembleApiKey();
+  if (!apiKey || apiKey.length < 8) {
+    console.log("  ⏭️  RESEMBLE_API_KEY not set — skipping network checks");
+    return;
+  }
+
+  // Build a minimal PNG whose tEXt chunk carries Stable Diffusion
+  // generation parameters — a classic AI-image fingerprint that the v2
+  // detector should flag as synthetic.
+  const sdPng = pngWithText(
+    "parameters",
+    "Steps: 30, Sampler: DPM++ 2M Karras, CFG scale: 7.5, Seed: 987654321, Size: 768x768, Model: sdxl-vae-ft-mse",
+  );
+
+  console.log("  → Submitting AI-generated PNG to Resemble v2…");
+  const result = await detectMedia(sdPng, "image/png", "ai-test.png", apiKey);
+
+  check(
+    "Resemble v2 returned a result for the AI image (not null)",
+    result !== null,
+    "API returned null — check key validity and connectivity",
+  );
+
+  if (result !== null) {
+    check(
+      "…and confidence is a number 0–1",
+      typeof result.confidence === "number" && result.confidence >= 0 && result.confidence <= 1,
+      `confidence=${result.confidence}`,
+    );
+    check(
+      "…and isAi is a boolean",
+      typeof result.isAi === "boolean",
+      `isAi=${result.isAi}`,
+    );
+    check(
+      "…and result carries metrics (label + score)",
+      result.metrics !== undefined && typeof result.metrics?.label === "string",
+      `metrics.label="${result.metrics?.label}" score=${result.metrics?.score}`,
+    );
+    console.log(
+      `  ℹ️  Resemble verdict: isAi=${result.isAi} confidence=${(result.confidence * 100).toFixed(1)}% label="${result.metrics?.label}"`,
+    );
+  }
+
+  // Also verify a clean hand-crafted buffer doesn't crash the pipeline.
+  const cleanPng = pngWithText("Software", "Adobe Photoshop 2025");
+  const cleanResult = await detectMedia(cleanPng, "image/png", "clean-test.png", apiKey);
+  check(
+    "Resemble v2 handles a clean image without crashing",
+    cleanResult !== null,
+    "Even a clean image should return a structured result (isAi may be false)",
+  );
+}
+
 textChecks();
 imageChecks();
 mediaChecks();
 c2paChecks();
+await resembleChecks();
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) {
