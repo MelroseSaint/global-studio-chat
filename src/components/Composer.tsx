@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { Loader2, MapPin, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
+import { solvePow } from "@/lib/pow";
 import { cn } from "@/lib/utils";
 
 const MAX_LENGTH = 1000;
@@ -18,6 +19,9 @@ const MAX_LENGTH = 1000;
 export function Composer({ onPosted }: { onPosted?: () => void }) {
   const { user } = useAuth();
   const createPost = useAction(api.posts.createPost);
+  // A fresh proof-of-work challenge, cached for the session (challenges are
+  // valid for 5 minutes — a new one is fetched lazily when stale).
+  const powChallenge = useQuery(api.pow.getChallenge);
   const scanMedia = useAction(api.aiContent.scanMediaForAi);
   const stripMedia = useAction(api.media.stripVideoMetadata);
   const [content, setContent] = useState("");
@@ -101,10 +105,21 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
           })),
         });
       }
+      // Proof-of-work: solve a ~50 ms local puzzle so the write carries a
+      // verifiable "I burned compute" stamp. Bots flooding the API pay per
+      // attempt on top of the server rate limits; a human never notices.
+      if (!powChallenge) return;
+      const proof = await solvePow(
+        powChallenge.challenge,
+        powChallenge.difficulty,
+      );
       const result = await createPost({
         content: content.trim(),
         creatorDisclosure,
         media: postMedia,
+        powChallenge: powChallenge.challenge,
+        powNonce: proof.nonce,
+        powIssuedAt: proof.issuedAt,
         // Perceptual hashes computed during upload — the server uses them
         // to catch flipped/cropped/re-encoded copies of existing media.
         mediaHashes:

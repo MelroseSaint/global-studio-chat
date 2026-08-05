@@ -5,6 +5,7 @@ import {
   Flag,
   Heart,
   Link2,
+  Lock,
   MapPin,
   MessageCircle,
   MoreHorizontal,
@@ -72,6 +73,7 @@ export interface PostItem {
   likeCount: number;
   commentCount: number;
   shareCount: number;
+  commentsLocked?: boolean | null;
   originalityVerified?: boolean | null;
   likedByMe: boolean;
   mediaUrls?: PostMedia[] | null;
@@ -204,6 +206,7 @@ export function PostCard({
   const unlikePost = useMutation(api.posts.unlikePost);
   const sharePost = useMutation(api.posts.sharePost);
   const deletePost = useMutation(api.posts.deletePost);
+  const setCommentsLocked = useMutation(api.posts.setCommentsLocked);
   const createTicket = useMutation(api.support.createTicket);
 
   const [liked, setLiked] = useState(post.likedByMe);
@@ -261,6 +264,23 @@ export function PostCard({
       toast.success("Link copied to clipboard.");
     } catch {
       toast.error("Could not copy link.");
+    }
+  };
+
+  // Author control: lock (or reopen) the comment thread on this post.
+  const handleLockComments = async () => {
+    try {
+      await setCommentsLocked({
+        postId: post._id,
+        locked: !post.commentsLocked,
+      });
+      toast.success(
+        post.commentsLocked
+          ? "Comments reopened."
+          : "Comments locked — no new replies.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update.");
     }
   };
 
@@ -376,6 +396,12 @@ export function PostCard({
             <DropdownMenuContent align="end">
               {(isMine || isAdmin) && (
                 <>
+                  <DropdownMenuItem onClick={() => void handleLockComments()}>
+                    <Lock className="size-4" />
+                    {post.commentsLocked
+                      ? "Reopen comments"
+                      : "Lock comments"}
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => void handleDelete()}>
                     <Trash2 className="size-4 text-destructive" />
                     Delete post

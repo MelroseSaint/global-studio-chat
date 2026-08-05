@@ -84,6 +84,22 @@ const schema = defineSchema({
     // references a stated rule.
     moderationStandardId: v.optional(v.string()),
     moderationNote: v.optional(v.string()),
+    // Who may start a conversation with this user. "everyone" is the
+    // default; "following" only allows accounts the user follows;
+    // "nobody" blocks all inbound DM requests before any ciphertext
+    // is ever generated or stored.
+    dmPermission: v.optional(
+      v.union(
+        v.literal("everyone"),
+        v.literal("following"),
+        v.literal("nobody"),
+      ),
+    ),
+    // Personal keyword/phrase mute list. Posts, comments, and DM message
+    // previews containing any muted term are hidden from this user's
+    // views. Stored here (not a separate table) because it's a per-user
+    // preference, exactly like links/location.
+    mutedKeywords: v.optional(v.array(v.string())),
     // Home location: the user's optional chosen place — a public label,
     // optionally with a coarsened anchor. Coordinates are rounded to a
     // ~1 km grid on every write (never the precise point) and stripped
@@ -188,6 +204,13 @@ const schema = defineSchema({
     // of member concern, shown to admins in the queue. Incremented on
     // createTicket, decremented when a ticket resolves or is dismissed.
     reportCount: v.optional(v.number()),
+    // Comment control: when true, no one can add new comments. The author
+    // (or an admin) locks a post to stop the thread — replies to existing
+    // comments remain visible but new top-level comments are rejected.
+    commentsLocked: v.optional(v.boolean()),
+    // When the author disabled comments (unix ms). Shown as "Comments
+    // disabled" on the post; null/absent = comments still open.
+    commentsLockedAt: v.optional(v.number()),
     // Optional place the post was shared from — powers the Local feed.
     location: v.optional(
       v.object({
@@ -565,6 +588,38 @@ const schema = defineSchema({
     .index("by_announcement", ["announcementId"])
     .index("by_user", ["userId"])
     .index("by_pair", ["userId", "announcementId"]),
+  // Dead-letter queue for external jobs that fail (Resemble v2 detection,
+  // OCR, C2PA verification, link previews). A failed job is recorded here
+  // and retried by the retry sweep; rows older than the retention window
+  // are pruned so the table never grows without bound.
+  jobRetries: defineTable({
+    jobType: v.string(),
+    payload: v.any(),
+    // How many retries have been attempted so far.
+    attempts: v.number(),
+    // The most recent error message (kept for diagnosis, no PII).
+    lastError: v.optional(v.string()),
+    // Next scheduled retry (unix ms). Null after max attempts — the row
+    // becomes a dead letter an admin can inspect.
+    nextRetryAt: v.optional(v.number()),
+    // True once the job permanently failed past its retry budget.
+    dead: v.boolean(),
+  })
+    .index("by_next_retry", ["nextRetryAt"])
+    .index("by_dead", ["dead"]),
+  // Self-auditing session signals: a lightweight, one-way fingerprint of
+  // each session's browser context. PureWire never stores IP addresses or
+  // user agents in the clear — only a salted hash of the UA string plus a
+  // coarse region token derived from a few request hints. When an existing
+  // session suddenly presents a wildly different fingerprint, the session
+  // is silently revoked and the user must re-authenticate with a one-time
+  // email code.
+  sessionSignals: defineTable({
+    sessionId: v.id("authSessions"),
+    uaHash: v.optional(v.string()),
+    regionToken: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_session", ["sessionId"]),
   // Cache of the last scan verdict per URL. urlHash is an FNV-1a hash of
   // the normalized URL; the row remembers what the platform decided the
   // last time a link appeared, so admins can audit why a link was blocked

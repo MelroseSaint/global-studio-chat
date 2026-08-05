@@ -9,6 +9,7 @@ import {
 import { scanForRacism } from "@/lib/racism-guard";
 import { detectMedia, resembleConfigured, resembleApiKey } from "@/lib/resemble";
 
+import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
 
 export type { AiScanResult };
@@ -458,12 +459,12 @@ export const scanMediaForAi = action({
       // byte-level metadata scan. Only fires when the API key is set — graceful
       // degradation (detection is skipped, never fails an upload).
       if (resembleConfigured()) {
+        const mime =
+          item.kind === "image" ? "image/jpeg"
+          : item.kind === "video" ? "video/mp4"
+          : item.kind === "audio" ? "audio/wav"
+          : "application/octet-stream";
         try {
-          const mime =
-            item.kind === "image" ? "image/jpeg"
-            : item.kind === "video" ? "video/mp4"
-            : item.kind === "audio" ? "audio/wav"
-            : "application/octet-stream";
           const voice = await detectMedia(bytes, mime, `upload.${item.kind === "image" ? "jpg" : item.kind === "video" ? "mp4" : "wav"}`, resembleApiKey());
           if (voice !== null) {
             evidence.resemble = {
@@ -484,6 +485,23 @@ export const scanMediaForAi = action({
           }
         } catch (err) {
           console.warn("Resemble detection failed:", err);
+          // Dead-letter the failed external job instead of silently
+          // dropping it: the retry sweep will re-attempt it, and if it
+          // keeps failing the admin queue surfaces it. The media scan
+          // itself continues with the byte-level verdict either way.
+          try {
+            await ctx.runMutation(internal.retryQueue.enqueueInternal, {
+              jobType: "resemble-detect",
+              payload: {
+                kind: item.kind,
+                storageId: item.storageId,
+                mime,
+              },
+              lastError: err instanceof Error ? err.message : String(err),
+            });
+          } catch {
+            // The DLQ itself must never break an upload.
+          }
         }
       }
       // OCR-based racism check

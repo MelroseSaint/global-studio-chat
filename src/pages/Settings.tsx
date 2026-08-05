@@ -1,14 +1,18 @@
 import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
+  Download,
   Laptop,
   Loader2,
   LogOut,
   MapPin,
+  MessageSquare,
   Plus,
   Save,
   ShieldCheck,
   Trash2,
+  VolumeX,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -80,6 +84,72 @@ function SettingsForm({ user }: { user: Profile }) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [endingSessions, setEndingSessions] = useState(false);
+
+  // Personal keyword muting.
+  const saveMutesMutation = useMutation(api.mutes.setMutedKeywords);
+  const [mutedKeywords, setMutedKeywords] = useState<string[]>(
+    user.mutedKeywords ?? [],
+  );
+  const [muteInput, setMuteInput] = useState("");
+  const [savingMutes, setSavingMutes] = useState(false);
+  const addMute = () => {
+    const term = muteInput.trim().toLowerCase();
+    if (!term || mutedKeywords.includes(term)) return;
+    setMutedKeywords((prev) => [...prev, term]);
+    setMuteInput("");
+  };
+  const saveMutes = async () => {
+    setSavingMutes(true);
+    try {
+      await saveMutesMutation({ keywords: mutedKeywords });
+      toast.success("Mute list saved.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save.");
+    } finally {
+      setSavingMutes(false);
+    }
+  };
+
+  // Granular DM permission.
+  const setDmPermissionMutation = useMutation(api.users.setDmPermission);
+  const [dmPermission, setDmPermission] = useState<string>(
+    (user as { dmPermission?: string }).dmPermission ?? "everyone",
+  );
+  const saveDmPermission = async (value: string) => {
+    try {
+      await setDmPermissionMutation({
+        dmPermission: value as "everyone" | "following" | "nobody",
+      });
+      toast.success("Message settings updated.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update.");
+    }
+  };
+
+  // User data export.
+  const exportData = useQuery(api.exportData.exportMyData);
+  const [exporting, setExporting] = useState(false);
+  const downloadExport = () => {
+    if (!exportData) {
+      toast.error("Your data isn't ready yet — try again in a moment.");
+      return;
+    }
+    setExporting(true);
+    try {
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `purewire-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Export downloaded.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const eraseAccount = async () => {
     if (deleting) return;
@@ -497,6 +567,140 @@ function SettingsForm({ user }: { user: Profile }) {
 
       <Separator />
 
+      {/* Feed control — personal keyword muting */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <VolumeX className="size-4 text-oxide dark:text-oxide-light" />
+            Muted words & phrases
+          </CardTitle>
+          <CardDescription>
+            Posts mentioning anything on your personal list are hidden from
+            your feed. Matching is Unicode-aware — "café" and "cafe" are the
+            same word — and only ever applied to your own views. Nobody else
+            sees your list.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-1.5">
+            {mutedKeywords.map((k) => (
+              <span
+                key={k}
+                className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs"
+              >
+                {k}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMutedKeywords((prev) => prev.filter((x) => x !== k))
+                  }
+                  className="rounded-full p-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+                  aria-label={`Remove ${k}`}
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+            {mutedKeywords.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No muted words yet — add topics you'd rather not see.
+              </p>
+            ) : null}
+          </div>
+          <div className="flex gap-2">
+            <Input
+              value={muteInput}
+              onChange={(e) => setMuteInput(e.target.value)}
+              placeholder="e.g. election, spoilers"
+              className="max-w-xs"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addMute();
+                }
+              }}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={addMute}
+              disabled={!muteInput.trim()}
+            >
+              <Plus className="size-4" />
+              Add
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={saveMutes}
+              disabled={savingMutes}
+              title="Save your mute list"
+            >
+              {savingMutes ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              Save
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Separator />
+
+      {/* Direct messages — who can reach you */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MessageSquare className="size-4 text-oxide dark:text-oxide-light" />
+            Who can message you
+          </CardTitle>
+          <CardDescription>
+            PureWire DMs are end-to-end encrypted — but you decide who can
+            even open a conversation with you in the first place, before any
+            message or key exchange happens.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                { value: "everyone", label: "Everyone" },
+                { value: "following", label: "Accounts I follow" },
+                { value: "nobody", label: "Nobody" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => {
+                  setDmPermission(opt.value);
+                  void saveDmPermission(opt.value);
+                }}
+                className={cn(
+                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                  dmPermission === opt.value
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {dmPermission === "everyone"
+              ? "Any member can start a conversation with you."
+              : dmPermission === "following"
+                ? "Only accounts you follow can message you. Other members see a notice instead of a message box."
+                : "No one can open a conversation with you. Your existing threads stay readable."}
+          </p>
+        </CardContent>
+      </Card>
+
+      <Separator />
+
       {/* Data & privacy — full transparency, right to erasure */}
       <Card className="border-oxide/25">
         <CardHeader>
@@ -539,6 +743,33 @@ function SettingsForm({ user }: { user: Profile }) {
             — a plain-language inventory of everything stored, why, for how
             long, and how it is protected.
           </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 p-4">
+            <div className="flex items-start gap-3">
+              <Download className="mt-0.5 size-5 shrink-0 text-primary" />
+              <div>
+                <p className="font-semibold">Download your data</p>
+                <p className="text-sm text-muted-foreground">
+                  A complete JSON archive of everything you've created —
+                  profile, posts, comments, stories, follows, and blocks. Yours
+                  to keep, back up, or take anywhere.
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={downloadExport}
+              disabled={exporting || exportData === undefined}
+            >
+              {exporting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              {exporting ? "Preparing…" : "Download archive"}
+            </Button>
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
             <div className="flex items-start gap-3">
               <AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive" />

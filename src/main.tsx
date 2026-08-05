@@ -45,6 +45,9 @@ const Profile = lazy(() =>
 const Settings = lazy(() =>
   import("@/pages/Settings").then((m) => ({ default: m.Settings })),
 );
+const Status = lazy(() =>
+  import("@/pages/Status").then((m) => ({ default: m.Status })),
+);
 const Support = lazy(() =>
   import("@/pages/Support").then((m) => ({ default: m.Support })),
 );
@@ -77,6 +80,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/auth" element={<Auth />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/terms" element={<Terms />} />
+              <Route path="/status" element={<Status />} />
               <Route
                 element={
                   <RequireAuth>

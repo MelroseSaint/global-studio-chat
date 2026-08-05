@@ -149,6 +149,14 @@ export const updateProfile = mutation({
     bannerStorageId: v.optional(v.union(v.null(), v.id("_storage"))),
     avatarUrl: v.optional(v.union(v.null(), v.string())),
     bannerUrl: v.optional(v.union(v.null(), v.string())),
+    // Granular DM permission: who may open a conversation with this user.
+    dmPermission: v.optional(
+      v.union(
+        v.literal("everyone"),
+        v.literal("following"),
+        v.literal("nobody"),
+      ),
+    ),
     // Home location: a public label plus coordinates. The coordinates are
     // never stored precisely — they are coarsened to a ~1 km cell on write
     // (never the point) and stripped from every client response, matching
@@ -383,6 +391,27 @@ export const updateProfile = mutation({
     await ctx.db.patch(userId, patch);
     const updated = await ctx.db.get(userId);
     return updated ? { ok: true as const, user: publicUser(updated) } : null;
+  },
+});
+
+/**
+ * Granular DM permission: who may open a conversation with this user.
+ * Enforced in dms.openConversation BEFORE any key derivation.
+ */
+export const setDmPermission = mutation({
+  args: {
+    dmPermission: v.union(
+      v.literal("everyone"),
+      v.literal("following"),
+      v.literal("nobody"),
+    ),
+  },
+  handler: async (ctx, { dmPermission }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    await ctx.db.patch(userId, { dmPermission });
   },
 });
 

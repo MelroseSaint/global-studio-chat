@@ -11,7 +11,7 @@ import {
   Shield,
   User,
 } from "lucide-react";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 
 import { api } from "@/convex/_generated/api";
@@ -24,6 +24,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
+import {
+  clientRegionToken,
+  clientUaHash,
+} from "@/lib/session-signal";
 import { cn } from "@/lib/utils";
 
 function NavItem({
@@ -92,6 +96,11 @@ export function AppLayout() {
   const dmUnread = useQuery(api.dms.unreadDmCount);
   const ensureAdminStatus = useMutation(api.admin.ensureAdminStatus);
   const pruneExpiredStories = useMutation(api.account.pruneExpiredStories);
+  // Self-auditing session security: file this device's one-way fingerprint
+  // against the session. A wildly different fingerprint on a later load
+  // silently revokes the session and signs this device out.
+  const sessionSignal = useMutation(api.sessionAudit.signal);
+  const [sessionRevoked, setSessionRevoked] = useState(false);
   // Moderation workload for admins: open tickets + posts waiting on AI
   // review. Skipped for non-admins (the query itself is admin-gated).
   const isAdmin = user?.role === "admin";
@@ -126,6 +135,35 @@ export function AppLayout() {
       void pruneExpiredStories();
     }
   }, [user, ensureAdminStatus, pruneExpiredStories]);
+
+  // Self-auditing session fingerprint: on every shell load, file this
+  // device's fingerprint. If the server finds a different fingerprint on
+  // the same session (stolen cookie, account takeover), it revokes the
+  // session and we sign out with a clear reason.
+  useEffect(() => {
+    if (!user || sessionRevoked) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [uaHash, regionToken] = await Promise.all([
+          clientUaHash(),
+          Promise.resolve(clientRegionToken()),
+        ]);
+        const res = await sessionSignal({ uaHash, regionToken });
+        if (!cancelled && res?.revoked === true) {
+          setSessionRevoked(true);
+          // The session no longer exists server-side — clear the local
+          // auth state so the sign-in gate redirects to /auth.
+          await signOut();
+        }
+      } catch {
+        // Fingerprinting is best-effort; never crash the shell for it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, sessionRevoked, sessionSignal, signOut]);
 
   // PWA app-icon badge: the OS shows the pending moderation workload on the
   // installed PureWire icon so admins know there is work waiting even when

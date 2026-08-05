@@ -605,6 +605,9 @@ export function Landing() {
             <Link to="/terms" className="hover:text-foreground hover:underline">
               Terms
             </Link>
+            <Link to="/status" className="hover:text-foreground hover:underline">
+              Status
+            </Link>
             {isAuthenticated ? (
               <button
                 type="button"

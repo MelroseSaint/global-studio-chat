@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { aiReportTicketArgs } from "@/lib/ai-report";
+import { solveChallenge } from "@/lib/pow";
 import { phishingTicketArgs } from "@/lib/phishing-report";
 
 /**
@@ -127,6 +128,7 @@ export function PostDetail() {
   const postIdTyped = postId as Id<"posts">;
   const post = useQuery(api.posts.getPost, { postId: postIdTyped });
   const addComment = useMutation(api.posts.addComment);
+  const powChallenge = useQuery(api.pow.getChallenge);
   const { results, status, loadMore } = usePaginatedQuery(
     api.posts.listComments,
     { postId: postIdTyped },
@@ -179,7 +181,15 @@ export function PostDetail() {
     if (!text || submitting) return;
     setSubmitting(true);
     try {
-      const res = await addComment({ postId: postIdTyped, content: text });
+      // Proof-of-work before the write — same scheme as posting.
+      const pow = await solveChallenge(powChallenge);
+      const res = await addComment({
+        postId: postIdTyped,
+        content: text,
+        powChallenge: pow.powChallenge,
+        powNonce: pow.powNonce,
+        powIssuedAt: pow.powIssuedAt,
+      });
       if (!res.ok) {
         toast.error(res.error ?? "Could not comment.");
         return;

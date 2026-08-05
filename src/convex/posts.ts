@@ -7,6 +7,7 @@ import { mediaHashesMatch } from "@/lib/perceptual-hash";
 import { scanForRacism } from "@/lib/racism-guard";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
+import { requireProof } from "./pow";
 import { scanBlockedContent } from "./blocklist";
 import { cloudinaryConfig } from "./mediaStorage";
 import { parseUrlHost } from "./phishing";
@@ -17,6 +18,7 @@ import {
   locationValidator,
 } from "./location";
 import { cleanupMediaItems, sweepPostEngagement } from "./mediaCleanup";
+import { textMatchesMutes } from "./mutes";
 import { publicLocation, publicUser } from "./privacy";
 import {
   enforceActive,
@@ -264,10 +266,26 @@ export const createPost = action({
     aiMediaStatus: v.optional(AI_MEDIA_STATUS),
     // Optional place the post was shared from (see the Local feed).
     location: v.optional(locationValidator),
+    // Client-side proof-of-work (hashcash): the browser solves a ~50 ms
+    // puzzle before submitting. Verified here — a bot that wants to flood
+    // the API has to burn proportional CPU per attempt on top of the
+    // server-side rate limits.
+    powChallenge: v.optional(v.string()),
+    powNonce: v.optional(v.string()),
+    powIssuedAt: v.optional(v.number()),
   },
   handler: async (
     ctx,
-    { content, creatorDisclosure, media, mediaHashes, location },
+    {
+      content,
+      creatorDisclosure,
+      media,
+      mediaHashes,
+      location,
+      powChallenge,
+      powNonce,
+      powIssuedAt,
+    },
   ): Promise<CreatePostResult> => {
     // The action is the public gate for post creation. It authenticates,
     // then VERIFIES the media itself (reading the actual stored bytes via
@@ -279,6 +297,9 @@ export const createPost = action({
     if (userId === null) {
       throw new ConvexError("Not authenticated");
     }
+    // Proof-of-work gate: verify before ANY scan or DB work so a flood of
+    // forged payloads never reaches the expensive media pipeline.
+    await requireProof(powChallenge, powNonce, powIssuedAt);
     let verifiedStatus: "clean" | "review" | "blocked" = "clean";
     // Positive Content Credentials provenance: true when any attached item's
     // C2PA manifest declared a camera capture. Verified server-side from
@@ -749,6 +770,30 @@ export const createPostInternal = internalMutation({
   },
 });
 
+/**
+ * Author (or admin) control: lock or unlock comments on a post. When
+ * locked, no new comments can be added (existing ones stay readable).
+ */
+export const setCommentsLocked = mutation({
+  args: { postId: v.id("posts"), locked: v.boolean() },
+  handler: async (ctx, { postId, locked }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const post = await ctx.db.get(postId);
+    if (post === null) return;
+    const user = await ctx.db.get(userId);
+    if (post.authorId !== userId && user?.role !== "admin") {
+      throw new Error("You can only lock comments on your own posts.");
+    }
+    await ctx.db.patch(postId, {
+      commentsLocked: locked,
+      commentsLockedAt: locked ? Date.now() : undefined,
+    });
+  },
+});
+
 export const deletePost = mutation({
   args: { postId: v.id("posts") },
   handler: async (ctx, { postId }) => {
@@ -953,9 +998,21 @@ export const feed = query({
       base = base.filter((q) => q.neq(q.field("aiStatus"), "review"));
     }
     const result = await base.order("desc").paginate(paginationOpts);
-    const page = await Promise.all(
+    // Personal keyword muting: posts whose content mentions any muted term
+    // are filtered after pagination (they still exist; they're just hidden
+    // from this viewer). This keeps the index query untouched while giving
+    // users real control over what enters their feed.
+    let mutedKeywords: string[] | undefined;
+    if (viewerId !== null) {
+      const viewer = await ctx.db.get(viewerId);
+      mutedKeywords = viewer?.mutedKeywords;
+    }
+    let page = await Promise.all(
       result.page.map((p) => withAuthor(ctx, p, viewerId)),
     );
+    if (mutedKeywords !== undefined && mutedKeywords.length > 0) {
+      page = page.filter((p) => !textMatchesMutes(p.content, mutedKeywords));
+    }
     return { ...result, page };
   },
 });
@@ -1062,15 +1119,30 @@ export const unlikePost = mutation({
 });
 
 export const addComment = mutation({
-  args: { postId: v.id("posts"), content: v.string() },
-  handler: async (ctx, { postId, content }) => {
+  args: {
+    postId: v.id("posts"),
+    content: v.string(),
+    // Client-side proof-of-work, same scheme as createPost.
+    powChallenge: v.optional(v.string()),
+    powNonce: v.optional(v.string()),
+    powIssuedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, { postId, content, powChallenge, powNonce, powIssuedAt }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
     }
+    await requireProof(powChallenge, powNonce, powIssuedAt);
     const text = content.trim();
     if (text.length === 0 || text.length > 500) {
       throw new Error("Comment must be between 1 and 500 characters.");
+    }
+    // Comment control: a locked post stops ALL new comments (top-level and
+    // replies). The author or an admin turned it off; the thread stays
+    // readable but nothing new can be added.
+    const lockPost = await ctx.db.get(postId);
+    if (lockPost !== null && lockPost.commentsLocked === true) {
+      throw new Error("Comments are disabled on this post.");
     }
     // A sandboxed account's comment is silently absorbed — stored for their
     // own UI but invisible to the author and everyone else.

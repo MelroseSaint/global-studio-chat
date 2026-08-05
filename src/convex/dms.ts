@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { cleanupMediaItems } from "./mediaCleanup";
+import { requireProof } from "./pow";
 import { publicUser } from "./privacy";
 import { enforceActive, enforceRateLimit, hiddenAuthorIds } from "./security";
 
@@ -178,6 +179,27 @@ export const openConversation = mutation({
     if (hidden.includes(userId)) {
       throw new Error("You can't message this account right now.");
     }
+    // Granular DM permissions: the target decides who may open a
+    // conversation with them, enforced BEFORE any encryption key is
+    // derived or ciphertext stored.
+    const permission = target.dmPermission ?? "everyone";
+    if (permission === "nobody") {
+      throw new Error("This member isn't accepting messages right now.");
+    }
+    if (permission === "following") {
+      // Only accounts the target follows may message them.
+      const targetFollowsMe = await ctx.db
+        .query("follows")
+        .withIndex("by_pair", (q) =>
+          q.eq("followerId", userId).eq("followingId", me),
+        )
+        .first();
+      if (targetFollowsMe === null) {
+        throw new Error(
+          "This member only accepts messages from people they follow.",
+        );
+      }
+    }
     const [a, b] = sortedPair(me, userId);
     const existing = await findConversation(ctx, a, b);
     const conversationId =
@@ -345,12 +367,22 @@ export const sendMessage = mutation({
     ciphertext: v.string(),
     iv: v.string(),
     media: v.optional(dmMediaValidator),
+    // Client-side proof-of-work, same scheme as createPost. DM spam is the
+    // classic bot attack vector — a puzzle per message multiplies with the
+    // per-action rate limit.
+    powChallenge: v.optional(v.string()),
+    powNonce: v.optional(v.string()),
+    powIssuedAt: v.optional(v.number()),
   },
-  handler: async (ctx, { conversationId, ciphertext, iv, media }) => {
+  handler: async (
+    ctx,
+    { conversationId, ciphertext, iv, media, powChallenge, powNonce, powIssuedAt },
+  ) => {
     const me = await getAuthUserId(ctx);
     if (me === null) {
       throw new Error("Not authenticated");
     }
+    await requireProof(powChallenge, powNonce, powIssuedAt);
     await enforceActive(ctx, me);
     const conversation = await ctx.db.get(conversationId);
     if (

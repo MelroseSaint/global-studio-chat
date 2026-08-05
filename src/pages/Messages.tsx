@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { scanWithBlocklist } from "@/convex/phishing";
+import { solveChallenge } from "@/lib/pow";
 import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -151,6 +152,7 @@ export function Messages() {
   const setDmPublicKey = useMutation(api.dms.setDmPublicKey);
   const openConversation = useMutation(api.dms.openConversation);
   const sendMessage = useMutation(api.dms.sendMessage);
+  const powChallenge = useQuery(api.pow.getChallenge);
   const markConversationRead = useMutation(api.dms.markConversationRead);
   const deleteConversation = useMutation(api.dms.deleteConversation);
   const discardUploads = useMutation(api.media.discardUploads);
@@ -498,11 +500,17 @@ export function Messages() {
       } else if (media) {
         iv = media.iv;
       }
+      // Proof-of-work: a small local puzzle per message, so DM-spam bots
+      // pay real compute per write on top of the per-action rate limit.
+      const pow = await solveChallenge(powChallenge);
       await sendMessage({
         conversationId: activeId as Id<"dmConversations">,
         ciphertext,
         iv,
         ...(media !== undefined ? { media } : {}),
+        powChallenge: pow.powChallenge,
+        powNonce: pow.powNonce,
+        powIssuedAt: pow.powIssuedAt,
       });
       setDraft("");
       setPendingMedia(null);
