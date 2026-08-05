@@ -636,8 +636,12 @@ export const createPostInternal = internalMutation({
         error: `That can't be posted — ${racismScan.reason}.`,
       };
     }
+    let racismReviewCategory: string | undefined;
+    let racismEvasionScore: number | undefined;
     if (racismScan.status === "review") {
       needsReview = true;
+      racismReviewCategory = racismScan.category;
+      racismEvasionScore = racismScan.evasionScore;
       aiStatusReason =
         aiStatusReason !== undefined
           ? `${aiStatusReason} · ${racismScan.reason}`
@@ -684,6 +688,11 @@ export const createPostInternal = internalMutation({
       originalityVerified: fp !== undefined,
       aiStatus: needsReview ? "review" : "clean",
       aiStatusReason: needsReview ? aiStatusReason : undefined,
+      // Racism-prevention review data: the matched category and evasion
+      // score, stored so the racism-review admin tab can filter and label
+      // posts without parsing aiStatusReason.
+      racismReviewCategory,
+      racismEvasionScore,
       // Content Credentials provenance the server verified from the stored
       // bytes — the "Content Credentials verified" label on the post.
       c2paVerifiedHuman,

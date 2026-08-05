@@ -31,6 +31,8 @@ export const ADMIN_ACTIONS = {
   "admin.moderatePost": api.admin.moderatePost,
   "admin.resolveAiReview": api.admin.resolveAiReview,
   "admin.resolveAiReviewBatch": api.admin.resolveAiReviewBatch,
+  "admin.resolveRacismReview": api.admin.resolveRacismReview,
+  "admin.resolveRacismReviewBatch": api.admin.resolveRacismReviewBatch,
   "security.setAccountStatus": api.security.setAccountStatus,
   "security.setShadowban": api.security.setShadowban,
   "security.reinstateAccount": api.security.reinstateAccount,

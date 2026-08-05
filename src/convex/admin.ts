@@ -45,7 +45,7 @@ async function requireAdmin(ctx: QueryCtx) {
 export const dashboardStats = query({
   handler: async (ctx) => {
     await requireAdmin(ctx);
-    const [users, posts, stories, tickets, follows, comments, aiReview, flagged] =
+    const [users, posts, stories, tickets, follows, comments, aiReview, racismReview, flagged] =
       await Promise.all([
         ctx.db.query("users").collect(),
         ctx.db.query("posts").collect(),
@@ -56,6 +56,13 @@ export const dashboardStats = query({
         ctx.db
           .query("posts")
           .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
+          .collect(),
+        // Racism review is a subset of AI review — posts flagged with a
+        // racism category that a human moderator must judge.
+        ctx.db
+          .query("posts")
+          .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
+          .filter((q) => q.neq(q.field("racismReviewCategory"), undefined))
           .collect(),
         // Only accounts that actually need a decision — not every user
         // that was ever auto-scored "active".
@@ -81,6 +88,7 @@ export const dashboardStats = query({
       comments: comments.length,
       likes: (await ctx.db.query("likes").collect()).length,
       aiReview: aiReview.length,
+      racismReview: racismReview.length,
       security: flagged.length,
     };
   },
@@ -389,6 +397,74 @@ export const resolveAiReviewBatch = mutation({
       const post = await ctx.db.get(postId);
       if (post !== null && post.aiStatus === "review") {
         await ctx.db.patch(postId, { aiStatus: "clean" });
+      }
+    }
+  },
+});
+
+/** Racism-prevention review: posts flagged with a racism signal that a
+ *  human moderator must judge — same pattern as the AI review queue. */
+export const listRacismReview = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    await requireAdmin(ctx);
+    const result = await ctx.db
+      .query("posts")
+      .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
+      .filter((q) => q.neq(q.field("racismReviewCategory"), undefined))
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map(async (p) => {
+        const author = await ctx.db.get(p.authorId);
+        return {
+          ...p,
+          author: author
+            ? {
+                ...publicUser(author),
+                avatarUrl:
+                  author.avatarUrl ??
+                  (author.avatarStorageId
+                    ? await ctx.storage.getUrl(author.avatarStorageId)
+                    : null),
+              }
+            : null,
+        };
+      }),
+    );
+    return { ...result, page };
+  },
+});
+
+/** Admin clears a racism-flagged post — it stays live but the flag is gone. */
+export const resolveRacismReview = mutation({
+  args: { postId: v.id("posts") },
+  handler: async (ctx, { postId }) => {
+    await requireAdmin(ctx);
+    const post = await ctx.db.get(postId);
+    if (post !== null) {
+      await ctx.db.patch(postId, {
+        aiStatus: "clean" as const,
+        racismReviewCategory: undefined,
+        racismEvasionScore: undefined,
+      });
+    }
+  },
+});
+
+/** Admin bulk-clears racism-flagged posts. */
+export const resolveRacismReviewBatch = mutation({
+  args: { postIds: v.array(v.id("posts")) },
+  handler: async (ctx, { postIds }) => {
+    await requireAdmin(ctx);
+    for (const postId of postIds) {
+      const post = await ctx.db.get(postId);
+      if (post !== null && post.racismReviewCategory !== undefined) {
+        await ctx.db.patch(postId, {
+          aiStatus: "clean" as const,
+          racismReviewCategory: undefined,
+          racismEvasionScore: undefined,
+        });
       }
     }
   },

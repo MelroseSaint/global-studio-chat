@@ -343,6 +343,7 @@ const STAT_CARDS = [
   { key: "stories", label: "Stories", icon: ImageIcon },
   { key: "openTickets", label: "Open tickets", icon: Flag },
   { key: "aiReview", label: "AI review", icon: ScanSearch },
+  { key: "racismReview", label: "Racism", icon: Shield },
   { key: "security", label: "Security", icon: ShieldAlert },
 ] as const;
 
@@ -446,6 +447,7 @@ function AdminDashboard({ meId }: { meId: string }) {
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>
           <TabsTrigger value="aiReview">AI review</TabsTrigger>
+          <TabsTrigger value="racismReview">Racism</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="silenced">Silenced</TabsTrigger>
           <TabsTrigger value="blocklist">Blocklist</TabsTrigger>
@@ -456,6 +458,7 @@ function AdminDashboard({ meId }: { meId: string }) {
       {tab === "tickets" && <TicketsPanel />}
       {tab === "posts" && <PostsPanel />}
       {tab === "aiReview" && <AiReviewPanel />}
+      {tab === "racismReview" && <RacismReviewPanel />}
       {tab === "security" && <SecurityPanel />}
       {tab === "silenced" && <SilencedPanel />}
       {tab === "blocklist" && <BlocklistPanel />}
@@ -2288,6 +2291,95 @@ function AiReviewPanel() {
         busy={busy}
         onConfirm={(standardId, note) => void confirmRemove(standardId, note)}
       />
+    </div>
+  );
+}
+
+function RacismReviewPanel() {
+  const moderatePost = useOfflineMutation(api.admin.moderatePost, "admin.moderatePost");
+  const resolveRacismReview = useOfflineMutation(api.admin.resolveRacismReview, "admin.resolveRacismReview");
+  const resolveRacismReviewBatch = useOfflineMutation(api.admin.resolveRacismReviewBatch, "admin.resolveRacismReviewBatch");
+  const { results, status, loadMore } = usePaginatedQuery(api.admin.listRacismReview, {}, { initialNumItems: 15 });
+  const { ref, inView } = useInView();
+  useEffect(() => { if (inView && status === "CanLoadMore") { void loadMore(15); } }, [inView, status, loadMore]);
+
+  const posts = results as unknown as {
+    _id: string; _creationTime: number; content: string;
+    aiStatusReason?: string | null; racismReviewCategory?: string | null;
+    racismEvasionScore?: number | null; reportCount?: number | null;
+    author: { username?: string | null; name?: string | null } | null;
+  }[];
+
+  const [approvingPage, setApprovingPage] = useState(false);
+  const approvePage = async () => {
+    if (posts.length === 0 || approvingPage) return;
+    setApprovingPage(true);
+    try {
+      await resolveRacismReviewBatch({ postIds: posts.map(p => p._id as Id<"posts">) });
+      toast.success(posts.length === 1 ? "Cleared — post stays live." : posts.length + " posts cleared.");
+    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not approve."); }
+    finally { setApprovingPage(false); }
+  };
+
+  const approve = async (postId: string) => {
+    try {
+      await resolveRacismReview({ postId: postId as Id<"posts"> });
+      toast.success("Cleared — post stays live.");
+    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not update."); }
+  };
+
+  const [pendingRemove, setPendingRemove] = useState<{ postId: string; author: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const confirmRemove = async (standardId: string, note: string) => {
+    if (!pendingRemove) return;
+    setBusy(true);
+    try {
+      await moderatePost({ postId: pendingRemove.postId as Id<"posts">, standardId, note });
+      setPendingRemove(null);
+      toast.success("Post removed.");
+    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not remove."); }
+    finally { setBusy(false); }
+  };
+
+  const catLabel = (c: string | null | undefined) => ({ racial_slur:"Racial slur", ethnic_slur:"Ethnic slur", racial_dehumanization:"Racial dehumanization", racial_supremacy:"Racial supremacy", racial_inferiority:"Racial inferiority claim", racial_segregation:"Segregation advocacy", racial_harassment:"Racial harassment", racial_violence:"Call for racial violence", holocaust_denial:"Holocaust/genocide denial", racial_stereotype_attack:"Stereotype used to attack", coded_hate:"Coded racial language" } as Record<string,string>)[c ?? ""] ?? c;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {status === "LoadingFirstPage" && Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+      {posts.length === 0 && status !== "LoadingFirstPage" && (
+        <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+          No posts flagged for racism review. Every post is scanned for racial and ethnic hate before it goes live.
+        </p>
+      )}
+      {posts.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground"><b className="text-foreground">{posts.length}</b> posts flagged — a human moderator must judge each one.</p>
+          <Button size="sm" variant="outline" disabled={approvingPage} onClick={() => void approvePage()}>
+            {approvingPage ? <Loader2 className="mr-1 size-4 animate-spin" /> : <CheckCheck className="mr-1 size-4" />} Clear page
+          </Button>
+        </div>
+      )}
+      {posts.map((p, i) => (
+        <motion.div key={p._id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.02, 0.3) }} className="flex items-center justify-between gap-3 rounded-xl border p-3">
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground"><b className="text-foreground">@{p.author?.username}</b> · {timeAgo(p._creationTime)}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {catLabel(p.racismReviewCategory) && <Badge variant="outline" className="shrink-0 text-[11px]"><Flag className="mr-1 size-3" />{catLabel(p.racismReviewCategory)}</Badge>}
+              {p.racismEvasionScore != null && p.racismEvasionScore > 0 && <Badge variant="outline" className="shrink-0 text-[11px] text-oxide dark:text-oxide-light">Evasion {p.racismEvasionScore}/10</Badge>}
+            </div>
+            <p className="mt-1 line-clamp-2 text-sm">{p.content}</p>
+            {p.aiStatusReason && <p className="mt-1 flex items-start gap-1 text-[11px] text-oxide dark:text-oxide-light"><ScanSearch className="mt-0.5 size-3 shrink-0" /><span className="line-clamp-2">{p.aiStatusReason}</span></p>}
+            {(p.reportCount ?? 0) > 0 && <p className="mt-1 text-xs text-muted-foreground"><Flag className="mr-1 inline-block size-3" />{p.reportCount} open report{p.reportCount !== 1 ? "s" : ""}</p>}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button variant="outline" size="sm" className="text-xs" onClick={() => void approve(p._id)}><CheckCheck className="mr-1 size-3" />Clear</Button>
+            <Button variant="ghost" size="sm" className="text-xs text-destructive hover:text-destructive" onClick={() => setPendingRemove({ postId: p._id, author: p.author?.username ?? null })}><Trash2 className="size-3" /></Button>
+          </div>
+        </motion.div>
+      ))}
+      <div ref={ref} className="h-8" />
+      {status === "LoadingMore" && <Skeleton className="h-12" />}
+      <StandardViolationDialog title="Remove this post" open={pendingRemove !== null} onOpenChange={(open) => { if (!open) setPendingRemove(null); }} description={pendingRemove ? 'Removing @' + (pendingRemove.author ?? "unknown") + "'s post — cite the PureWire Standard principle it violates." : ""} confirmLabel="Remove post" busy={busy} onConfirm={(standardId, note) => void confirmRemove(standardId, note)} />
     </div>
   );
 }

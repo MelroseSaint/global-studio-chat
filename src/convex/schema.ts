@@ -170,6 +170,12 @@ const schema = defineSchema({
       v.literal("ai-assisted"),
       v.literal("ai-generated"),
     )),
+    // Racism-prevention review data: set when a post enters the review
+    // queue with a racism signal. The racism-review admin tab queries these
+    // fields so a moderator can see the matched category and evasion score
+    // without parsing aiStatusReason.
+    racismReviewCategory: v.optional(v.string()),
+    racismEvasionScore: v.optional(v.number()),
     likeCount: v.number(),
     commentCount: v.number(),
     shareCount: v.number(),
