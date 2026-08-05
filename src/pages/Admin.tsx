@@ -9,10 +9,12 @@ import {
   Ellipsis,
   EyeOff,
   Flag,
+  Heart,
   History,
   Image as ImageIcon,
   Loader2,
   Lock,
+  MessageCircle,
   MessagesSquare,
   ScanSearch,
   Shield,
@@ -341,11 +343,20 @@ const STAT_CARDS = [
   { key: "stories", label: "Stories", icon: ImageIcon },
 ] as const;
 
+const EXTRA_STAT_CARDS = [
+  { key: "follows", label: "Follows", icon: UserCheck },
+  { key: "likes", label: "Likes", icon: Heart },
+  { key: "comments", label: "Comments", icon: MessageCircle },
+  { key: "racismReview", label: "Racism", icon: Shield },
+  { key: "security", label: "Security", icon: ShieldAlert },
+] as const;
+
 function AdminDashboard({ meId }: { meId: string }) {
   const raw = useQuery(api.admin.dashboardStats);
   // Map backend key names to frontend tab keys where they differ.
   const stats = raw === undefined ? undefined : { ...raw };
   const [tab, setTab] = useState("users");
+  const [showMoreStats, setShowMoreStats] = useState(false);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 overflow-x-clip p-4 pb-24 sm:p-6">
@@ -376,6 +387,38 @@ function AdminDashboard({ meId }: { meId: string }) {
           </Card>
         ))}
       </div>
+
+      {/* Collapsible extra stats: hidden by default to keep the dashboard
+          compact; one click reveals the full picture. */}
+      <button
+        type="button"
+        onClick={() => setShowMoreStats((v) => !v)}
+        className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+      >
+        {showMoreStats ? (
+          <ChevronUp className="size-3.5" />
+        ) : (
+          <ChevronDown className="size-3.5" />
+        )}
+        {showMoreStats ? "Less stats" : "More stats"}
+      </button>
+      {showMoreStats && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+          {EXTRA_STAT_CARDS.map(({ key, label, icon: Icon }) => (
+            <Card key={key}>
+              <CardContent className="p-3">
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Icon className="size-4 shrink-0" />
+                  <span className="text-xs font-medium">{label}</span>
+                </div>
+                <p className="mt-1 text-xl font-bold sm:text-2xl">
+                  {stats === undefined ? "\u2026" : String(stats[key])}
+                </p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Tab bar: single scrollable row — never wraps, never overlaps. */}
       <Tabs value={tab} onValueChange={setTab}>
