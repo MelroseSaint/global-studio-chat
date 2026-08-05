@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { requireAdmin } from "./admin";
 
 // ────────────────────────────────────────────────────────────
@@ -17,14 +17,23 @@ export const create = mutation({
       v.literal("event"),
       v.literal("community"),
     ),
+    // Unix ms timestamp. When set to a future time, the announcement is
+    // "scheduled" and goes live automatically when that time arrives.
+    // Omit (or set to a past time) for an immediately-active announcement.
+    scheduledAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const adminId = await requireAdmin(ctx);
+    const now = Date.now();
+    const isScheduled =
+      args.scheduledAt !== undefined && args.scheduledAt > now;
+
     await ctx.db.insert("announcements", {
       title: args.title.trim(),
       body: args.body.trim(),
       category: args.category,
-      active: true,
+      status: isScheduled ? "scheduled" : "active",
+      scheduledAt: args.scheduledAt,
       authorId: adminId,
     });
   },
@@ -44,7 +53,14 @@ export const update = mutation({
         v.literal("community"),
       ),
     ),
-    active: v.optional(v.boolean()),
+    status: v.optional(
+      v.union(
+        v.literal("active"),
+        v.literal("scheduled"),
+        v.literal("inactive"),
+      ),
+    ),
+    scheduledAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
@@ -52,7 +68,8 @@ export const update = mutation({
     if (args.title !== undefined) patch.title = args.title.trim();
     if (args.body !== undefined) patch.body = args.body.trim();
     if (args.category !== undefined) patch.category = args.category;
-    if (args.active !== undefined) patch.active = args.active;
+    if (args.status !== undefined) patch.status = args.status;
+    if (args.scheduledAt !== undefined) patch.scheduledAt = args.scheduledAt;
     await ctx.db.patch(args.announcementId, patch);
   },
 });
@@ -66,15 +83,36 @@ export const remove = mutation({
 });
 
 // ────────────────────────────────────────────────────────────
+//  Auto-activation: called on every home-page load so scheduled
+//  announcements go live without a cron setup. Minimal work —
+//  only fetches rows whose scheduledAt <= now and patches them.
+// ────────────────────────────────────────────────────────────
+
+export const activateScheduled = internalMutation({
+  handler: async (ctx) => {
+    const now = Date.now();
+    // Fetch all scheduled announcements whose time has come.
+    // The by_scheduled index is ordered, so we can scan from the
+    // earliest scheduled time up to now.
+    const due = await ctx.db
+      .query("announcements")
+      .withIndex("by_status", (q) => q.eq("status", "scheduled"))
+      .filter((q) => q.lte(q.field("scheduledAt"), now))
+      .collect();
+
+    for (const a of due) {
+      await ctx.db.patch(a._id, { status: "active" });
+    }
+  },
+});
+
+// ────────────────────────────────────────────────────────────
 //  Queries
 // ────────────────────────────────────────────────────────────
 
-/** All announcements (active + inactive) for the admin panel. */
+/** All announcements (active + scheduled + inactive) for the admin panel. */
 export const listAll = query({
   handler: async (ctx) => {
-    // No admin gate — the query is only used by the admin panel which
-    // already gates at the route level, and a logged-out visitor can't
-    // reach the admin page. Still, we don't leak anything sensitive here.
     const all = await ctx.db.query("announcements").order("desc").collect();
     return all.map((a) => ({
       ...a,
@@ -83,22 +121,38 @@ export const listAll = query({
   },
 });
 
-/** Active announcements the current user hasn't dismissed yet. */
+/** Active announcements the current user hasn't dismissed yet.
+ *  Includes scheduled announcements whose time has come (treated as
+ *  active by the query filter — the actual status promotion happens
+ *  via the internal activateScheduled mutation, called from a cron or
+ *  admin action). */
 export const activeForUser = query({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
     const userId = identity.subject as unknown as string;
+    const now = Date.now();
 
+    // Get active announcements.
     const active = await ctx.db
       .query("announcements")
-      .withIndex("by_active", (q) => q.eq("active", true))
+      .withIndex("by_status", (q) => q.eq("status", "active"))
       .order("desc")
       .collect();
 
+    // Get scheduled announcements whose time has come (not yet promoted
+    // to "active" by the cron — we show them immediately on first load).
+    const due = await ctx.db
+      .query("announcements")
+      .withIndex("by_status", (q) => q.eq("status", "scheduled"))
+      .filter((q) => q.lte(q.field("scheduledAt"), now))
+      .collect();
+
+    const allVisible = [...active, ...due];
+
     // Filter out announcements this user already dismissed.
     const results = [];
-    for (const a of active) {
+    for (const a of allVisible) {
       const dismissed = await ctx.db
         .query("announcementDismissals")
         .withIndex("by_pair", (q) =>
@@ -131,7 +185,7 @@ export const dismiss = mutation({
         q.eq("userId", userId as any).eq("announcementId", args.announcementId),
       )
       .first();
-    if (existing !== null) return; // Already dismissed — idempotent.
+    if (existing !== null) return;
 
     await ctx.db.insert("announcementDismissals", {
       announcementId: args.announcementId,

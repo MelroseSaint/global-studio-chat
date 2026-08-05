@@ -534,6 +534,8 @@ const schema = defineSchema({
   // Admin announcements: shown in a subtle dismissible banner on the home
   // page. Each user can dismiss an announcement once — the dismissal is
   // recorded so the banner stays hidden even after a reload.
+  // Status: "active" (visible now), "scheduled" (auto-activates when
+  // scheduledAt elapses), "inactive" (manually hidden).
   announcements: defineTable({
     title: v.string(),
     body: v.string(),
@@ -544,9 +546,18 @@ const schema = defineSchema({
       v.literal("event"),
       v.literal("community"),
     ),
-    active: v.boolean(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("scheduled"),
+      v.literal("inactive"),
+    ),
+    // Unix ms timestamp when a scheduled announcement should go live.
+    // Absent for immediately-active announcements.
+    scheduledAt: v.optional(v.number()),
     authorId: v.id("users"),
-  }).index("by_active", ["active"]),
+  })
+    .index("by_status", ["status"])
+    .index("by_scheduled", ["scheduledAt"]),
   announcementDismissals: defineTable({
     announcementId: v.id("announcements"),
     userId: v.id("users"),
