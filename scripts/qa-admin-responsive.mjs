@@ -309,7 +309,7 @@ async function inspectAdmin(page, widthLabel, width) {
       // so one huge support message can't blow a card taller than the
       // screen. Data-aware: only messages long enough to clamp render the
       // toggle (short messages and the empty state skip).
-      const showMore = page.locator("button:has-text('Show more')");
+      const showMore = page.getByRole("button", { name: "Show more", exact: true });
       if ((await showMore.count()) > 0) {
         check(
           `${widthLabel}: long ticket messages clamped (Show more present)`,
@@ -317,11 +317,12 @@ async function inspectAdmin(page, widthLabel, width) {
         );
         await showMore.first().click();
         await page.waitForTimeout(300);
+        const showLess = page.getByRole("button", { name: "Show less", exact: true });
         check(
           `${widthLabel}: ticket clamp expands to Show less`,
-          (await page.locator("button:has-text('Show less')").count()) > 0,
+          (await showLess.count()) > 0,
         );
-        await page.locator("button:has-text('Show less')").first().click();
+        await showLess.first().click();
         await page.waitForTimeout(200);
       }
     }
@@ -414,7 +415,8 @@ async function inspectProfile(page, widthLabel) {
   // The "Original" badge streams in with the post card's AI-scan verdict,
   // so a single instant count races it on a slow runner — poll, don't
   // sleep (the same lesson as the tab panels).
-  const badgeDeadline = Date.now() + PANEL_WAIT_MS;
+  const badgeStart = Date.now();
+  const badgeDeadline = badgeStart + PANEL_WAIT_MS;
   let badgeSeen = false;
   while (Date.now() < badgeDeadline) {
     if ((await page.getByText("Original", { exact: true }).count()) > 0) {
@@ -426,6 +428,7 @@ async function inspectProfile(page, widthLabel) {
   check(
     `${widthLabel}: profile post card renders with the Original badge`,
     badgeSeen,
+    badgeSeen ? "" : `not seen in ${Date.now() - badgeStart}ms`,
   );
   await measurePage(page, `${widthLabel}: profile`, check);
 }
