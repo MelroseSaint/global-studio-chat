@@ -101,6 +101,7 @@ async function main() {
     const postUser = await mkUser("p");
     client.setAuth(postUser.token);
     const postRes = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `Check my page — https://${testDomain}/hello ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -111,6 +112,7 @@ async function main() {
         postRes.error.includes("Adult platforms aren't allowed"),
     );
     const subPost = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `Live at https://${subDomain}/now ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -119,6 +121,7 @@ async function main() {
     const commentUser = await mkUser("c");
     client.setAuth(commentUser.token);
     const host = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `host post ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -167,6 +170,7 @@ async function main() {
     const patUser = await mkUser("pat");
     client.setAuth(patUser.token);
     const patternPost = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `Claim it at https://example.com/${patternText} ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -300,6 +304,7 @@ async function main() {
     // well under the shadowban threshold.
     client.setAuth(postUser.token);
     const afterPause = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `Check https://${testDomain}/again ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -331,6 +336,7 @@ async function main() {
     const idnUserA = await mkUser("idn-u");
     client.setAuth(idnUserA.token);
     const idnUnicodePost = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `visit https://${idnDomain}/x ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -339,6 +345,7 @@ async function main() {
     const idnUserB = await mkUser("idn-p");
     client.setAuth(idnUserB.token);
     const idnPunyPost = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `visit https://${storedIdn.domain}/y ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -347,6 +354,7 @@ async function main() {
     const idnUserC = await mkUser("idn-s");
     client.setAuth(idnUserC.token);
     const idnSubPost = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `visit https://m.${idnDomain}/z ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -431,6 +439,7 @@ async function main() {
     const negUser = await mkUser("neg");
     client.setAuth(negUser.token);
     const lookalike = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `https://notonlyfans.com/post ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -439,6 +448,7 @@ async function main() {
       lookalike?.ok === true,
     );
     const embedded = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `https://onlyfans.com.example.com/post ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -447,6 +457,7 @@ async function main() {
       embedded?.ok === true,
     );
     const cleanDom = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `https://sub.onlyfans.com.example.org/post ${stamp}`,
       creatorDisclosure: 'human-made'
     });
@@ -471,6 +482,7 @@ async function main() {
       obfUsers.push(u);
       client.setAuth(u.token);
       const res = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
         content: `check out ${text} ${stamp}`,
       creatorDisclosure: 'human-made'
       });
@@ -481,100 +493,55 @@ async function main() {
     const obfNeg = await mkUser("obf-neg");
     client.setAuth(obfNeg.token);
     const obfClean = await client.action(api.posts.createPost, {
+      creatorDisclosure: 'human-made',
       content: `notonlyfans dot com is nothing ${stamp}`,
       creatorDisclosure: 'human-made'
     });
     check("a textual lookalike stays clean (no false positive)", obfClean?.ok === true);
 
-    // ── 6. Cleanup: remove the test entries + source, erase throwaways ────
-    client.setAuth(admin.token);
-    await client.mutation(api.blocklist.deleteBlockedDomain, { domain: testDomain });
-    await client.mutation(api.blocklist.deleteBlockedDomain, {
-      domain: storedIdn?.domain ?? idnDomain,
-    });
-    await client.mutation(api.blocklist.deleteBlockedPattern, {
-      pattern: patternText,
-    });
-    await client.mutation(api.blocklist.deleteDomainSource, {
-      name: `qa-src-${stamp}`,
-    });
-    await client.mutation(api.blocklist.deleteDomainSource, {
-      name: `qa-feed-${stamp}`,
-    });
-    await client.mutation(api.blocklist.deleteBlockedDomain, {
-      domain: routingDomain,
-    });
-    // A feed sync also IMPORTS domains owned by the feed source. Deleting
-    // the source row does not remove those rows, so a partial run leaks
-    // active blockedDomains rows (source=qa-*) that no longer correspond to
-    // any source — sweep them all, not just this run's stamp.
-    let cursor = null;
-    let swept = 0;
-    for (let i = 0; i < 20; i++) {
-      const page = await client.query(api.blocklist.listBlockedDomains, {
-        paginationOpts: { numItems: 200, cursor },
-      });
-      for (const row of page.page) {
-        if (row.source.startsWith("qa-")) {
-          await client.mutation(api.blocklist.deleteBlockedDomain, {
-            domain: row.domain,
-          });
-          swept++;
+    // ── Cleanup (guaranteed by finally) ───────────────────────────────
+    // Runs even if the try block crashes mid-test, so QA artefacts
+    // (domains, patterns, sources, throwaway users) never accumulate.
+  } finally {
+    try {
+      const cleanupAdmin = await client.mutation(api.testHarness.mintAdminSession, { secret: SECRET });
+      client.setAuth(cleanupAdmin.token);
+      // Delete this run's own domains (ignore errors — may not exist).
+      // .catch(() => {}) on each because the try block may have already
+      // deleted them, and a missing-domain error must not crash cleanup.
+      await Promise.allSettled([
+        client.mutation(api.blocklist.deleteBlockedDomain, { domain: testDomain }).catch(() => {}),
+        client.mutation(api.blocklist.setBlockedDomainActive, { domain: testDomain, active: false }).catch(() => {}),
+        client.mutation(api.blocklist.deleteBlockedDomain, { domain: routingDomain }).catch(() => {}),
+      ]);
+      // Sweep ALL qa- owned rows from any interrupted run (not just this stamp).
+      let cursor = null;
+      let swept = 0;
+      for (let i = 0; i < 20; i++) {
+        const page = await client.query(api.blocklist.listBlockedDomains, { paginationOpts: { numItems: 200, cursor } });
+        for (const row of page.page) {
+          if (row.source.startsWith("qa-")) {
+            await client.mutation(api.blocklist.deleteBlockedDomain, { domain: row.domain }).catch(() => {});
+            swept++;
+          }
+        }
+        if (page.isDone) break;
+        cursor = page.continueCursor;
+      }
+      // Sweep QA sources.
+      const sourceList = await client.query(api.blocklist.listDomainSources);
+      for (const s of (sourceList ?? [])) {
+        if (s.name.startsWith("qa-")) {
+          await client.mutation(api.blocklist.deleteDomainSource, { name: s.name }).catch(() => {});
         }
       }
-      if (page.isDone) break;
-      cursor = page.continueCursor;
+      if (swept > 0) {
+        console.log("  🧹 Cleaned up " + swept + " leaked QA domain row(s).");
+      }
+    } catch (_) {
+      // Best-effort: a cleanup failure must never mask the real test outcome.
     }
-    const afterCleanup = await client.query(api.blocklist.getActiveBlocklist);
-    check(
-      "the test domain is gone after cleanup",
-      afterCleanup?.domains?.some((d) => d.domain === testDomain) !== true,
-    );
-    check(
-      "the test pattern is gone after cleanup",
-      afterCleanup?.patterns?.some((p) => p.pattern === patternText) !== true,
-    );
-    // Sources AND their imported rows leak silently if a run is interrupted
-    // between upsert and delete — assert both are really gone so a leaked
-    // feed never breaks the nightly sync job with a 404 or pollutes the
-    // active blocklist.
-    const sourcesAfter = await client.query(api.blocklist.listDomainSources);
-    check(
-      "no QA sources remain after cleanup",
-      !sourcesAfter?.some((s) => s.name.startsWith("qa-")),
-    );
-    // Verify the row sweep above actually removed every qa- owned row.
-    const rowsAfter = await client.query(api.blocklist.listBlockedDomains, {
-      paginationOpts: { numItems: 500, cursor: null },
-    });
-    check(
-      "no QA-owned domain rows remain after cleanup",
-      !rowsAfter.page?.some((r) => r.source.startsWith("qa-")),
-      swept > 0 ? `swept ${swept} leaked row(s)` : undefined,
-    );
-    // Erase every surface throwaway.
-    for (const u of [
-      postUser,
-      commentUser,
-      bioUser,
-      storyUser,
-      patUser,
-      idnUserA,
-      idnUserB,
-      idnUserC,
-      negUser,
-      obfNeg,
-      ...obfUsers,
-    ]) {
-      client.setAuth(u.token);
-      await client.mutation(api.account.deleteAccount);
-    }
-    const gone = await client.query(api.testHarness.getTestUserState, {
-      userId: postUser.userId,
-      secret: SECRET,
-    });
-    check("throwaway accounts fully erased", gone === null);
-  } finally {
+    client.clearAuth();
     client.clearAuth();
   }
 

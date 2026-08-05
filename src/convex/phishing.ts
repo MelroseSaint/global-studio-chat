@@ -406,7 +406,8 @@ export function scanWithBlocklist(
   if (text.length === 0) {
     return { status: "clean" };
   }
-  for (const raw of extractUrls(text)) {
+  const rawUrls = extractUrls(text);
+  for (const raw of rawUrls) {
     const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
     const parsed = parseUrl(withScheme);
     if (parsed === null) continue;
@@ -447,7 +448,19 @@ export function scanWithBlocklist(
   // Textual obfuscation: "onlyfans dot com" / "onlyfans[.]com" written to
   // dodge the URL extractor. Only acts when the reconstructed domain is an
   // actual blocked entry — ordinary prose is never flagged.
+  // Filter: skip any candidate that was already checked by the URL parser
+  // above (e.g. "onlyfans.com" embedded in "onlyfans.com.example.com" must
+  // not be re-checked as obfuscation — the host chain already covered it).
+  const parsedHosts = new Set(rawUrls.map((raw) => {
+    const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = parseUrl(withScheme);
+    return parsed?.host ?? null;
+  }).filter(Boolean) as string[]);
   for (const candidate of extractObfuscatedDomains(text)) {
+    // Skip if candidate equals or is a suffix of any already-parsed host.
+    if ([...parsedHosts].some((h) => h.endsWith(candidate) && (h === candidate || h.endsWith("." + candidate)))) {
+      continue;
+    }
     const hit = matchBlockedHost(candidate, entries);
     if (hit !== null) {
       const label = BLOCK_CATEGORY_LABEL[hit.category];
