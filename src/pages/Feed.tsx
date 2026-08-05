@@ -1,6 +1,6 @@
-import { usePaginatedQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
-import { Inbox, LocateFixed, MapPin } from "lucide-react";
+import { Bell, Inbox, LocateFixed, MapPin, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 
@@ -150,6 +150,7 @@ export function Feed() {
       </div>
 
       <StoriesBar />
+      <AnnouncementBanner />
       <Composer />
 
       {status === "LoadingFirstPage" && (
@@ -235,4 +236,83 @@ export function Feed() {
 function useTabsState<T extends string>(initial: T) {
   const [value, setValue] = useState<T>(initial);
   return [value, setValue] as const;
+}
+
+// ────────────────────────────────────────────────────────────
+//  Admin announcement banner
+// ────────────────────────────────────────────────────────────
+
+const CATEGORY_COLORS: Record<string, string> = {
+  platform: "border-l-blue-500",
+  safety: "border-l-red-500",
+  feature: "border-l-emerald-500",
+  event: "border-l-amber-500",
+  community: "border-l-violet-500",
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  platform: "Platform",
+  safety: "Safety",
+  feature: "Feature",
+  event: "Event",
+  community: "Community",
+};
+
+/** A thin, dismissible banner that shows active admin announcements.
+ *  Each user can dismiss each announcement once — it won't return. */
+function AnnouncementBanner() {
+  const announcements = useQuery(api.announcements.activeForUser);
+  const dismiss = useMutation(api.announcements.dismiss);
+  // Keep a local set so the banner vanishes instantly on dismiss while the
+  // mutation is in-flight (optimistic UI — the query re-checks on reload).
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+
+  if (announcements === undefined) return null; // Still loading.
+  const visible = announcements.filter((a) => !dismissed.has(a._id));
+  if (visible.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5 px-4 pt-2 sm:px-5">
+      {visible.map((a) => (
+        <motion.div
+          key={a._id}
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          className={cn(
+            "relative flex items-start gap-2.5 rounded-lg border border-l-[3px] bg-muted/40 px-3 py-2.5 text-sm",
+            CATEGORY_COLORS[a.category] ?? "border-l-muted-foreground",
+          )}
+        >
+          <Bell className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {CATEGORY_LABELS[a.category] ?? a.category}
+              </span>
+              {a.title ? (
+                <span className="truncate font-semibold">{a.title}</span>
+              ) : null}
+            </div>
+            {a.body ? (
+              <p className="mt-0.5 leading-snug text-muted-foreground line-clamp-2">
+                {a.body}
+              </p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setDismissed((s) => new Set(s).add(a._id));
+              void dismiss({ announcementId: a._id });
+            }}
+            className="-mr-1 -mt-1 shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label="Dismiss"
+          >
+            <X className="size-3.5" />
+          </button>
+        </motion.div>
+      ))}
+    </div>
+  );
 }

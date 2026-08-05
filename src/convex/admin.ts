@@ -31,7 +31,7 @@ export const ensureAdminStatus = mutation({
   },
 });
 
-async function requireAdmin(ctx: QueryCtx) {
+export async function requireAdmin(ctx: QueryCtx) {
   const userId = await getAuthUserId(ctx);
   if (userId === null) {
     throw new Error("Not authenticated");

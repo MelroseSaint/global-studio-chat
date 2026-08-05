@@ -531,6 +531,29 @@ const schema = defineSchema({
     lastSuccessfulSyncAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
   }).index("by_enabled", ["enabled"]),
+  // Admin announcements: shown in a subtle dismissible banner on the home
+  // page. Each user can dismiss an announcement once — the dismissal is
+  // recorded so the banner stays hidden even after a reload.
+  announcements: defineTable({
+    title: v.string(),
+    body: v.string(),
+    category: v.union(
+      v.literal("platform"),
+      v.literal("safety"),
+      v.literal("feature"),
+      v.literal("event"),
+      v.literal("community"),
+    ),
+    active: v.boolean(),
+    authorId: v.id("users"),
+  }).index("by_active", ["active"]),
+  announcementDismissals: defineTable({
+    announcementId: v.id("announcements"),
+    userId: v.id("users"),
+  })
+    .index("by_announcement", ["announcementId"])
+    .index("by_user", ["userId"])
+    .index("by_pair", ["userId", "announcementId"]),
   // Cache of the last scan verdict per URL. urlHash is an FNV-1a hash of
   // the normalized URL; the row remembers what the platform decided the
   // last time a link appeared, so admins can audit why a link was blocked

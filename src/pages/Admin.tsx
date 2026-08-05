@@ -36,6 +36,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { AdminOfflineBanner } from "@/components/AdminOfflineBanner";
 import { AiEvidencePanel } from "@/components/AiEvidencePanel";
 import { BlocklistPanel } from "@/components/BlocklistPanel";
+import { AnnouncementsPanel } from "@/components/AnnouncementsPanel";
 import { StandardViolationDialog } from "@/components/StandardViolationDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Badge } from "@/components/ui/badge";
@@ -522,6 +523,7 @@ function AdminDashboard({ meId }: { meId: string }) {
           <TabsTrigger value="security" className="shrink-0">Security</TabsTrigger>
           <TabsTrigger value="silenced" className="shrink-0">Silenced</TabsTrigger>
           <TabsTrigger value="blocklist" className="shrink-0">Blocklist</TabsTrigger>
+          <TabsTrigger value="announcements" className="shrink-0">Announcements</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -534,6 +536,7 @@ function AdminDashboard({ meId }: { meId: string }) {
       {tab === "security" && <SecurityPanel />}
       {tab === "silenced" && <SilencedPanel />}
       {tab === "blocklist" && <BlocklistPanel />}
+      {tab === "announcements" && <AnnouncementsPanel />}
     </div>
   );
 }
