@@ -103,22 +103,38 @@ function makeChunk(type, data) {
 // ── Resemble v2 API helpers ─────────────────────────────────────────
 
 async function submitDetectJob(bytes, mimeType, fileName) {
-  const formData = new FormData();
-  formData.append("file", new Blob([bytes], { type: mimeType }), fileName);
-  formData.append("audio_source_tracing", "true");
-  formData.append("zero_retention_mode", "true");
-
-  const res = await fetch(`${BASE_URL}/detect`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: formData,
-  });
-  if (!res.ok) {
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  // Try with zero_retention_mode first, fall back without it if the plan
+  // doesn't support the feature.
+  for (const flags of [
+    { audio_source_tracing: "true", zero_retention_mode: "true" },
+    { audio_source_tracing: "true" },
+  ]) {
+    const formData = new FormData();
+    formData.append("file", new Blob([bytes], { type: mimeType }), fileName);
+    for (const [key, value] of Object.entries(flags)) {
+      formData.append(key, value);
+    }
+    const res = await fetch(`${BASE_URL}/detect`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return json.item?.uuid ?? null;
+    }
     const body = await res.text().catch(() => "?");
+    if (
+      res.status === 400 &&
+      body.includes("Zero Retention") &&
+      flags.zero_retention_mode !== undefined
+    ) {
+      continue;
+    }
     throw new Error(`Resemble submit returned ${res.status}: ${body}`);
   }
-  const json = await res.json();
-  return json.item?.uuid ?? null;
+  return null;
 }
 
 async function pollJob(uuid, maxWaitMs = 60_000) {

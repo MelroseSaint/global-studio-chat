@@ -57,29 +57,51 @@ async function submitDetectJob(
   fileName: string,
   apiKey: string,
 ): Promise<string | null> {
-  const formData = new FormData();
-  formData.append("file", new Blob([fileBytes], { type: mimeType }), fileName);
-  // Enable all useful flags in a single job:
-  // - audio_source_tracing → which AI platform made it
-  // - zero_retention_mode → auto-delete after analysis (privacy)
-  formData.append("audio_source_tracing", "true");
-  formData.append("zero_retention_mode", "true");
+  const headers = { Authorization: `Bearer ${apiKey}` };
 
-  const res = await fetch(`${BASE_URL}/detect`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: formData,
-  });
-
-  if (!res.ok) {
-    console.warn(
-      `Resemble detect submit returned ${res.status}: ${await res.text().catch(() => "?")}`,
+  // Try with all privacy/convenience flags first (zero retention +
+  // audio source tracing). Some plans don't support zero retention —
+  // catch the 400 and retry without it rather than failing.
+  for (const flags of [
+    { audio_source_tracing: "true", zero_retention_mode: "true" },
+    { audio_source_tracing: "true" },
+  ]) {
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new Blob([fileBytes], { type: mimeType }),
+      fileName,
     );
+    for (const [key, value] of Object.entries(flags)) {
+      formData.append(key, value);
+    }
+
+    const res = await fetch(`${BASE_URL}/detect`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    if (res.ok) {
+      const json: { item?: { uuid?: string }; success?: boolean } =
+        await res.json();
+      return json.item?.uuid ?? null;
+    }
+
+    const body = await res.text().catch(() => "?");
+    // Zero retention not available on this plan — retry without it.
+    if (
+      res.status === 400 &&
+      body.includes("Zero Retention") &&
+      flags.zero_retention_mode !== undefined
+    ) {
+      continue;
+    }
+    console.warn(`Resemble detect submit returned ${res.status}: ${body}`);
     return null;
   }
 
-  const json: { item?: { uuid?: string }; success?: boolean } = await res.json();
-  return json.item?.uuid ?? null;
+  return null;
 }
 
 /** Poll GET /detect/{uuid} until completed or failed. */
