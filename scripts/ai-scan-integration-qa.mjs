@@ -206,26 +206,35 @@ async function main() {
       // ── 5. Resemble v2 signal ─────────────────────────────────────────
       const hasResembleKey = evidence.resemble !== undefined;
       if (hasResembleKey) {
-        check(
-          "Resemble v2 was called for the image",
-          true,
-          `isAi=${evidence.resemble.isAi} confidence=${(evidence.resemble.confidence * 100).toFixed(0)}%`,
-        );
-        check(
-          "…and Resemble returned a confidence score",
-          typeof evidence.resemble.confidence === "number" && evidence.resemble.confidence >= 0,
-        );
-        check(
-          "…and Resemble returned an isAi boolean",
-          typeof evidence.resemble.isAi === "boolean",
-        );
-        check(
-          "…and metrics label is present",
-          typeof evidence.resemble.metrics?.label === "string",
-          `label="${evidence.resemble.metrics?.label}"`,
-        );
-        if (evidence.resemble.sourceLabel) {
-          console.log(`  ℹ️  Resemble source tracing: ${evidence.resemble.sourceLabel}`);
+        // Resemble v2 returned a result — verify its shape.
+        if (evidence.resemble === null) {
+          check(
+            "Resemble v2 was called but returned null — API key may be invalid or endpoint unreachable",
+            false,
+            "Check that RESEMBLE_API_KEY is a v2 Bearer token from app.resemble.ai/account/api (legacy Token keys won't work).",
+          );
+        } else {
+          check(
+            "Resemble v2 returned a verdict for the image",
+            true,
+            `isAi=${evidence.resemble.isAi} confidence=${(evidence.resemble.confidence * 100).toFixed(0)}%`,
+          );
+          check(
+            "…and Resemble returned a confidence score",
+            typeof evidence.resemble.confidence === "number" && evidence.resemble.confidence >= 0,
+          );
+          check(
+            "…and Resemble returned an isAi boolean",
+            typeof evidence.resemble.isAi === "boolean",
+          );
+          check(
+            "…and metrics label is present",
+            typeof evidence.resemble.metrics?.label === "string",
+            `label="${evidence.resemble.metrics?.label}"`,
+          );
+          if (evidence.resemble.sourceLabel) {
+            console.log(`  ℹ️  Resemble source tracing: ${evidence.resemble.sourceLabel}`);
+          }
         }
       } else {
         console.log("  ⏭️  RESEMBLE_API_KEY not set — Resemble v2 was not called");
