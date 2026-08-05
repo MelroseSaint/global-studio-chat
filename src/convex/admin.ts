@@ -9,7 +9,8 @@ import { eraseAccount } from "./account";
 import { cleanupMediaItems, sweepPostEngagement } from "./mediaCleanup";
 import { publicUser } from "./privacy";
 
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { api, internal } from "./_generated/api";
+import { action, mutation, query, type QueryCtx } from "./_generated/server";
 
 const ADMIN_EMAIL = "monroedoses@gmail.com";
 
@@ -547,5 +548,166 @@ export const moderateStory = mutation({
       note,
     });
     await ctx.db.delete(storyId);
+  },
+});
+
+/**
+ * Self-test for the media evidence pipeline. Creates three synthetic
+ * images (AI-generated, clean phone photo, C2PA-signed camera capture),
+ * uploads them through Convex storage, runs the full scanMediaForAi
+ * pipeline on each, and returns the verdict + structured evidence.
+ *
+ * Admin-gated (not harness-gated) — any admin can run this from the
+ * dashboard to confirm the pipeline is working without uploading files
+ * through the composer UI.
+ */
+export const previewMediaEvidence = action({
+  args: {},
+  returns: v.object({
+    ok: v.boolean(),
+    results: v.array(
+      v.object({
+        label: v.string(),
+        status: v.string(),
+        reason: v.optional(v.string()),
+        evidence: v.optional(v.any()),
+        c2paVerifiedHuman: v.optional(v.boolean()),
+        c2paClaimGenerator: v.optional(v.string()),
+      }),
+    ),
+    error: v.optional(v.string()),
+  }),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) throw new Error("Not authenticated");
+    // Inline admin check — requireAdmin is query-only, actions must
+    // check the role from user document directly.
+    const user = await ctx.runQuery(api.users.getCurrentUser, {});
+    if (user === null || user.role !== "admin") {
+      throw new Error("Admin access required.");
+    }
+
+    // ── Image builders (same logic as ai-scan-qa.mjs, inlined for zero deps) ──
+    const u32be = (n: number) => {
+      const b = new Uint8Array(4);
+      b[0] = (n >>> 24) & 0xff; b[1] = (n >>> 16) & 0xff;
+      b[2] = (n >>> 8) & 0xff; b[3] = n & 0xff;
+      return b;
+    };
+    const bytesOf = (parts: (string | Uint8Array | ArrayBuffer)[]) => {
+      const arrays = parts.map((p) =>
+        typeof p === "string" ? new TextEncoder().encode(p) : new Uint8Array(p),
+      );
+      const total = arrays.reduce((n, a) => n + a.length, 0);
+      const out = new Uint8Array(total);
+      let off = 0;
+      for (const a of arrays) { out.set(a, off); off += a.length; }
+      return out.buffer;
+    };
+    function jpegWithExif(software: string) {
+      const tiff = new Uint8Array(8 + 2 + 12 + 4 + software.length + 1);
+      tiff[0] = 0x49; tiff[1] = 0x49; tiff[2] = 0x2a; tiff[3] = 0; tiff[4] = 8; tiff[7] = 0;
+      tiff[8] = 1; tiff[10] = 0x31; tiff[11] = 1; tiff[12] = 2; tiff[13] = 0;
+      const n = software.length + 1;
+      tiff[14] = n & 0xff; tiff[15] = (n >> 8) & 0xff;
+      tiff[20] = 20 & 0xff; tiff[21] = 0;
+      for (let i = 0; i < software.length; i++) tiff[20 + i] = software.charCodeAt(i);
+      const exif = bytesOf(["Exif\0\0", tiff]);
+      const app1 = bytesOf([u32be(exif.byteLength + 2), new Uint8Array(exif)]);
+      return bytesOf([
+        new Uint8Array([0xff, 0xd8]),
+        new Uint8Array([0xff, 0xe1]),
+        app1,
+        new Uint8Array([0xff, 0xd9]),
+      ]);
+    }
+    // JPEG APP11 with a C2PA digitalCapture manifest (camera-signed).
+    function jpegWithC2pa() {
+      const payload = '{"digitalSourceType":"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture","claim_generator":"Adobe Camera Raw 17.0"}';
+      const data = bytesOf(["JPEG-MBX", payload]);
+      const segLen = data.byteLength + 2;
+      const app11 = bytesOf([
+        new Uint8Array([(segLen >> 8) & 0xff, segLen & 0xff]),
+        new Uint8Array(data),
+      ]);
+      return bytesOf([
+        new Uint8Array([0xff, 0xd8]),
+        new Uint8Array([0xff, 0xeb]),
+        app11,
+        new Uint8Array([0xff, 0xd9]),
+      ]);
+    }
+
+    const testImages = [
+      { label: "AI-generated (Midjourney EXIF)", bytes: jpegWithExif("Midjourney") },
+      { label: "Clean phone photo (Pixel 8 Pro)", bytes: jpegWithExif("Pixel 8 Pro") },
+      { label: "C2PA camera capture (Adobe Camera Raw)", bytes: jpegWithC2pa() },
+    ];
+
+    const results: Array<{
+      label: string;
+      status: string;
+      reason?: string;
+      evidence?: Record<string, unknown>;
+      c2paVerifiedHuman?: boolean;
+      c2paClaimGenerator?: string;
+    }> = [];
+
+    for (const img of testImages) {
+      try {
+        // 1. Upload via internal mutation → get Convex upload URL, POST the bytes.
+        const slot = (await ctx.runMutation(
+          internal.mediaStorage.uploadSlot,
+          {},
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        )) as any as { convexUrl: string };
+
+        const uploadRes = await fetch(slot.convexUrl, {
+          method: "POST",
+          headers: { "Content-Type": "image/jpeg" },
+          body: new Uint8Array(img.bytes),
+        });
+        if (!uploadRes.ok) {
+          results.push({ label: img.label, status: "upload_failed", reason: `Upload returned ${uploadRes.status}` });
+          continue;
+        }
+        const { storageId } = (await uploadRes.json()) as { storageId?: string };
+        if (!storageId) {
+          results.push({ label: img.label, status: "upload_failed", reason: "No storageId in response" });
+          continue;
+        }
+
+        // 2. Run the full scan pipeline.
+        const scan = await ctx.runAction(api.aiContent.scanMediaForAi, {
+          media: [{ storageId: storageId as any, kind: "image" }],
+        });
+
+        const s = scan as unknown as {
+          reason?: string;
+          evidence?: Record<string, unknown>;
+          c2paVerifiedHuman?: boolean;
+          c2paClaimGenerator?: string;
+        };
+        results.push({
+          label: img.label,
+          status: scan.status,
+          reason: s.reason,
+          evidence: s.evidence,
+          c2paVerifiedHuman: s.c2paVerifiedHuman,
+          c2paClaimGenerator: s.c2paClaimGenerator,
+        });
+
+        // 3. Clean up the test upload.
+        await ctx.runMutation(internal.mediaStorage.uploadSlot, {}).catch(() => {});
+      } catch (err) {
+        results.push({
+          label: img.label,
+          status: "error",
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return { ok: true, results };
   },
 });

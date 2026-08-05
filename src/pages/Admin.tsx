@@ -1,4 +1,4 @@
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useAction, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
   Ban,
@@ -357,6 +357,32 @@ function AdminDashboard({ meId }: { meId: string }) {
   const stats = raw === undefined ? undefined : { ...raw };
   const [tab, setTab] = useState("users");
   const [showMoreStats, setShowMoreStats] = useState(false);
+  const [previewRunning, setPreviewRunning] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewResults, setPreviewResults] = useState<
+    Array<{
+      label: string;
+      status: string;
+      reason?: string;
+      evidence?: Record<string, unknown>;
+      c2paVerifiedHuman?: boolean;
+      c2paClaimGenerator?: string;
+    }>
+  >([]);
+
+  const previewEvidence = useAction(api.admin.previewMediaEvidence);
+  const runPreview = async () => {
+    setPreviewRunning(true);
+    setPreviewError(null);
+    try {
+      const result = await previewEvidence({});
+      setPreviewResults(result.results);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewRunning(false);
+    }
+  };
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 overflow-x-clip p-4 pb-24 sm:p-6">
@@ -416,6 +442,70 @@ function AdminDashboard({ meId }: { meId: string }) {
                 </p>
               </CardContent>
             </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Preview media evidence: admins can verify the scan pipeline
+          without uploading files through the composer. */}
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={previewRunning}
+          onClick={() => void runPreview()}
+        >
+          {previewRunning ? (
+            <Loader2 className="mr-1 size-3.5 animate-spin" />
+          ) : (
+            <ScanSearch className="mr-1 size-3.5" />
+          )}
+          Preview media evidence
+        </Button>
+        {previewError && (
+          <span className="text-xs text-destructive">{previewError}</span>
+        )}
+      </div>
+      {previewResults.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-xl border bg-muted/30 p-3">
+          <p className="text-xs font-medium text-muted-foreground">
+            Pipeline self-test — {previewResults.length} test images scanned
+          </p>
+          {previewResults.map((r, i) => (
+            <div key={i} className="rounded-lg border bg-background p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium">{r.label}</span>
+                <span
+                  className={
+                    r.status === "blocked"
+                      ? "rounded-full bg-destructive/15 px-1.5 py-0.5 text-[11px] font-semibold text-destructive"
+                      : r.status === "clean"
+                        ? "rounded-full bg-moss/15 px-1.5 py-0.5 text-[11px] font-semibold text-moss"
+                        : "rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+                  }
+                >
+                  {r.status.toUpperCase()}
+                </span>
+              </div>
+              {r.reason && (
+                <p className="mt-1 text-xs text-muted-foreground">{r.reason}</p>
+              )}
+              {r.c2paVerifiedHuman && (
+                <p className="mt-1 text-xs text-copper">
+                  C2PA verified — camera capture{r.c2paClaimGenerator ? ` · ${r.c2paClaimGenerator}` : ""}
+                </p>
+              )}
+              {r.evidence && (
+                <details className="mt-1">
+                  <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
+                    Raw evidence
+                  </summary>
+                  <pre className="mt-1 max-h-40 overflow-auto rounded bg-muted p-2 text-[10px]">
+                    {JSON.stringify(r.evidence, null, 2)}
+                  </pre>
+                </details>
+              )}
+            </div>
           ))}
         </div>
       )}
