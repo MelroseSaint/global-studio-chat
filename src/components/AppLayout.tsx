@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
+import { detectAutomation } from "@/lib/automation-signal";
 import {
   clientRegionToken,
   clientUaHash,
@@ -100,6 +101,11 @@ export function AppLayout() {
   // against the session. A wildly different fingerprint on a later load
   // silently revokes the session and signs this device out.
   const sessionSignal = useMutation(api.sessionAudit.signal);
+  // Browser-automation detection: the client scores its own browser for
+  // headless/CDP/driver markers and files the coarse score. Feeding the
+  // silent-flag pipeline, so driven browsers quietly lose reach instead of
+  // getting a single user-facing rejection.
+  const reportAutomation = useMutation(api.automation.report);
   const [sessionRevoked, setSessionRevoked] = useState(false);
   // Moderation workload for admins: open tickets + posts waiting on AI
   // review. Skipped for non-admins (the query itself is admin-gated).
@@ -164,6 +170,23 @@ export function AppLayout() {
       cancelled = true;
     };
   }, [user, sessionRevoked, sessionSignal, signOut]);
+
+  // Browser-automation detection: score this browser once per session and
+  // file the coarse result. Non-blocking and best-effort — a real user
+  // whose browser trips a weak signal is never interrupted; the score only
+  // feeds the quiet escalation pipeline when several strong automation
+  // markers agree.
+  useEffect(() => {
+    if (!user || sessionRevoked) return;
+    try {
+      const { score, signals } = detectAutomation();
+      if (score > 0 || signals.length > 0) {
+        void reportAutomation({ score, signals }).catch(() => {});
+      }
+    } catch {
+      // Detection is optional; never let it affect the shell.
+    }
+  }, [user, sessionRevoked, reportAutomation]);
 
   // PWA app-icon badge: the OS shows the pending moderation workload on the
   // installed PureWire icon so admins know there is work waiting even when

@@ -100,6 +100,14 @@ const schema = defineSchema({
     // views. Stored here (not a separate table) because it's a per-user
     // preference, exactly like links/location.
     mutedKeywords: v.optional(v.array(v.string())),
+    // Browser-automation signal: a coarse 0–100 likelihood that this
+    // account's browser is being driven by automation (headless,
+    // Playwright/Puppeteer/CDP), computed client-side and filed by
+    // automation.report. Only the score + matched signal names are ever
+    // stored — never a raw fingerprint. Feeds the silent-flag pipeline.
+    automationScore: v.optional(v.number()),
+    automationSignals: v.optional(v.array(v.string())),
+    automationReportedAt: v.optional(v.number()),
     // Home location: the user's optional chosen place — a public label,
     // optionally with a coarsened anchor. Coordinates are rounded to a
     // ~1 km grid on every write (never the precise point) and stripped

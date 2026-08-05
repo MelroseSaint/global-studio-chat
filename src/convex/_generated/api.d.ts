@@ -14,6 +14,7 @@ import type * as aiContent from "../aiContent.js";
 import type * as announcements from "../announcements.js";
 import type * as auth from "../auth.js";
 import type * as auth_email from "../auth/email.js";
+import type * as automation from "../automation.js";
 import type * as blocklist from "../blocklist.js";
 import type * as dms from "../dms.js";
 import type * as exportData from "../exportData.js";
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   announcements: typeof announcements;
   auth: typeof auth;
   "auth/email": typeof auth_email;
+  automation: typeof automation;
   blocklist: typeof blocklist;
   dms: typeof dms;
   exportData: typeof exportData;

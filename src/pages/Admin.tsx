@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AdminOfflineBanner } from "@/components/AdminOfflineBanner";
+import { cn } from "@/lib/utils";
 import { AiEvidencePanel } from "@/components/AiEvidencePanel";
 import { BlocklistPanel } from "@/components/BlocklistPanel";
 import { AnnouncementsPanel } from "@/components/AnnouncementsPanel";
@@ -1298,6 +1299,8 @@ function SecurityPanel() {
     riskReasons?: string[] | null;
     shadowban?: boolean | null;
     silentFlags?: number | null;
+    automationScore?: number | null;
+    automationSignals?: string[] | null;
     moderationStandardId?: string | null;
     moderationNote?: string | null;
   }[];
@@ -1413,6 +1416,30 @@ function SecurityPanel() {
                       className="rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive"
                     >
                       {r}
+                    </span>
+                  ))}
+                </p>
+              ) : null}
+              {u.automationScore !== undefined &&
+              u.automationScore !== null &&
+              u.automationScore > 0 ? (
+                <p className="mt-0.5 flex flex-wrap items-center gap-1">
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[11px]",
+                      u.automationScore >= 70
+                        ? "bg-destructive/10 text-destructive"
+                        : "bg-amber-500/10 text-amber-600",
+                    )}
+                  >
+                    automation {u.automationScore}/100
+                  </span>
+                  {u.automationSignals?.slice(0, 3).map((s) => (
+                    <span
+                      key={s}
+                      className="rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+                    >
+                      {s}
                     </span>
                   ))}
                 </p>
