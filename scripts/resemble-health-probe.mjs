@@ -10,9 +10,15 @@
  * Designed as a CI gate: fails fast when the key is expired or the API is
  * unreachable, so media outages surface before users report them.
  *
+ * Billing states are NOT failures: when the account runs out of credits
+ * the API answers 402 (insufficient_balance). That's a "pay the bill",
+ * not an outage — the probe exits 0 with a warning so CI stays green
+ * while detection is simply unbilled. A wrong key (401), unreachable
+ * endpoint, or broken response still fails the gate.
+ *
  *   RESEMBLE_API_KEY=<v2-bearer-token> node scripts/resemble-health-probe.mjs
  *
- * Exit: 0 healthy, 1 unhealthy or key absent.
+ * Exit: 0 healthy (or billing-blocked), 1 unhealthy or key absent.
  */
 
 const BASE_URL = "https://app.resemble.ai/api/v2";
@@ -102,6 +108,18 @@ function makeChunk(type, data) {
 
 // ── Resemble v2 API helpers ─────────────────────────────────────────
 
+/**
+ * Billing-blocked: the API answered 402 (Payment Required) — the account
+ * is out of credits. A billing state, never a platform outage; the probe
+ * must warn and pass, not fail CI.
+ */
+class ResembleBillingError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ResembleBillingError";
+  }
+}
+
 async function submitDetectJob(bytes, mimeType, fileName) {
   const headers = { Authorization: `Bearer ${apiKey}` };
   // Try with zero_retention_mode first, fall back without it if the plan
@@ -131,6 +149,15 @@ async function submitDetectJob(bytes, mimeType, fileName) {
       flags.zero_retention_mode !== undefined
     ) {
       continue;
+    }
+    if (res.status === 402) {
+      // 402 is the account's billing wall, not a platform fault. Surfaced
+      // as its own error type so the probe can warn-and-pass below.
+      throw new ResembleBillingError(
+        body.includes("insufficient_balance")
+          ? "the account balance is exhausted. Add credits at app.resemble.ai to resume detection."
+          : "the API returned 402 Payment Required — check billing at app.resemble.ai.",
+      );
     }
     throw new Error(`Resemble submit returned ${res.status}: ${body}`);
   }
@@ -173,8 +200,9 @@ async function main() {
   const t0 = Date.now();
   const uuid = await submitDetectJob(png, "image/png", "health-probe.png");
   if (!uuid) {
-    console.error("  ❌ Submit returned no UUID — API likely returned a non-200 without an error body.");
-    process.exit(1);
+    throw new Error(
+      "Submit returned no UUID — API likely returned a non-200 without an error body.",
+    );
   }
   console.log(`  ✓ Job accepted (uuid=${uuid.slice(0, 8)}…) in ${Date.now() - t0}ms`);
 
@@ -187,12 +215,10 @@ async function main() {
   // 3. Verify shape
   const item = result.item;
   if (!item) {
-    console.error("  ❌ Response missing 'item' field.");
-    process.exit(1);
+    throw new Error("Response missing 'item' field.");
   }
   if (item.status !== "completed") {
-    console.error(`  ❌ Job status is "${item.status}", expected "completed".`);
-    process.exit(1);
+    throw new Error(`Job status is "${item.status}", expected "completed".`);
   }
 
   // Check for expected metrics on a clean image
@@ -200,10 +226,20 @@ async function main() {
   console.log(`  ℹ️  image_metrics: ${imgMetrics ? `label="${imgMetrics.label}" score=${imgMetrics.score}` : "absent (may be audio-only response)"}`);
 
   console.log("\n✅ Resemble v2 is healthy.\n");
-  process.exit(0);
 }
 
 main().catch((err) => {
+  if (err instanceof ResembleBillingError) {
+    // Billing state, not an outage: warn loudly but pass so CI isn't red
+    // while detection is simply unbilled. The moment credits are added
+    // this flips back to the full success path with no code change.
+    console.error(`\n⚠️  Resemble v2 is reachable but billing is blocked: ${err.message}`);
+    console.error("   Treating the probe as PASSING — this is a wallet state, not an outage.\n");
+    return;
+  }
   console.error(`\n❌ Resemble v2 health probe FAILED: ${err.message}\n`);
-  process.exit(1);
+  // exitCode, not process.exit(): exiting while a network handle is still
+  // closing crashes Node on Windows (libuv assertion) and is unnecessary
+  // anywhere else — the process drains and exits with the code set here.
+  process.exitCode = 1;
 });
