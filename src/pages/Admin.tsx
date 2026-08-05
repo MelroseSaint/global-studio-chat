@@ -345,11 +345,14 @@ const STAT_CARDS = [
   { key: "openTickets", label: "Open tickets", icon: Flag },
   { key: "aiReview", label: "AI review", icon: ScanSearch },
   { key: "racismReview", label: "Racism", icon: Shield },
+  { key: "storyReview", label: "Stories", icon: ImageIcon },
   { key: "security", label: "Security", icon: ShieldAlert },
 ] as const;
 
 function AdminDashboard({ meId }: { meId: string }) {
-  const stats = useQuery(api.admin.dashboardStats);
+  const raw = useQuery(api.admin.dashboardStats);
+  // Map backend key names to frontend tab keys where they differ.
+  const stats = raw === undefined ? undefined : { ...raw, storyReview: raw.aiReviewStories };
   const [tab, setTab] = useState("users");
   // The stats strip is a swipeable row on phones; these flags track whether
   // there is more to swipe and whether the user has reached either edge, so
@@ -449,6 +452,7 @@ function AdminDashboard({ meId }: { meId: string }) {
           <TabsTrigger value="posts">Content</TabsTrigger>
           <TabsTrigger value="aiReview">AI review</TabsTrigger>
           <TabsTrigger value="racismReview">Racism</TabsTrigger>
+          <TabsTrigger value="storyReview">Stories</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="silenced">Silenced</TabsTrigger>
           <TabsTrigger value="blocklist">Blocklist</TabsTrigger>
@@ -460,6 +464,7 @@ function AdminDashboard({ meId }: { meId: string }) {
       {tab === "posts" && <PostsPanel />}
       {tab === "aiReview" && <AiReviewPanel />}
       {tab === "racismReview" && <RacismReviewPanel />}
+      {tab === "storyReview" && <StoryReviewPanel />}
       {tab === "security" && <SecurityPanel />}
       {tab === "silenced" && <SilencedPanel />}
       {tab === "blocklist" && <BlocklistPanel />}
@@ -2240,6 +2245,109 @@ function AiReviewPanel() {
         busy={busy}
         onConfirm={(standardId, note) => void confirmRemove(standardId, note)}
       />
+    </div>
+  );
+}
+
+
+function StoryReviewPanel() {
+  const moderateStory = useOfflineMutation(api.admin.moderateStory, "admin.moderateStory");
+  const resolveAiReviewStory = useOfflineMutation(api.admin.resolveAiReviewStory, "admin.resolveAiReviewStory");
+  const resolveAiReviewStoryBatch = useOfflineMutation(
+    api.admin.resolveAiReviewStoryBatch,
+    "admin.resolveAiReviewStoryBatch",
+  );
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.admin.listAiReviewStories,
+    {},
+    { initialNumItems: 15 },
+  );
+  const { ref, inView } = useInView();
+  useEffect(() => { if (inView && status === "CanLoadMore") { void loadMore(15); } }, [inView, status, loadMore]);
+
+  const stories = results as unknown as {
+    _id: string;
+    _creationTime: number;
+    caption?: string | null;
+    aiStatusReason?: string | null;
+    aiEvidence?: {
+      byteScan?: { status: string; reason?: string };
+      resemble?: { isAi: boolean; confidence: number; metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number }; sourceLabel?: string | null } | null;
+      c2pa?: { humanCapture: boolean; claimGenerator?: string } | null;
+      ocrRacism?: { status: string; reason: string } | null;
+    } | null;
+    author: { username?: string | null; name?: string | null } | null;
+  }[];
+
+  const [evidenceIds, setEvidenceIds] = useState<Set<string>>(new Set());
+  const [approvingPage, setApprovingPage] = useState(false);
+
+  const approvePage = async () => {
+    if (stories.length === 0 || approvingPage) return;
+    setApprovingPage(true);
+    try {
+      await resolveAiReviewStoryBatch({ storyIds: stories.map(s => s._id as Id<"stories">) });
+      toast.success(stories.length === 1 ? "Cleared — story stays live." : stories.length + " stories cleared.");
+    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not approve."); }
+    finally { setApprovingPage(false); }
+  };
+
+  const approve = async (storyId: string) => {
+    try {
+      await resolveAiReviewStory({ storyId: storyId as Id<"stories"> });
+      toast.success("Cleared — story stays live.");
+    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not update."); }
+  };
+
+  const [pendingRemove, setPendingRemove] = useState<{ storyId: string; author: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const confirmRemove = async (standardId: string, note: string) => {
+    if (!pendingRemove) return;
+    setBusy(true);
+    try {
+      await moderateStory({ storyId: pendingRemove.storyId as Id<"stories">, standardId, note });
+      setPendingRemove(null);
+      toast.success("Story removed.");
+    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not remove."); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {status === "LoadingFirstPage" && Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+      {stories.length === 0 && status !== "LoadingFirstPage" && (
+        <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+          No stories waiting on review. Every story is scanned for AI-generated content before it goes live.
+        </p>
+      )}
+      {stories.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground"><b className="text-foreground">{stories.length}</b> stories waiting — a human moderator must judge each one.</p>
+          <Button size="sm" variant="outline" disabled={approvingPage} onClick={() => void approvePage()}>
+            {approvingPage ? <Loader2 className="mr-1 size-4 animate-spin" /> : <CheckCheck className="mr-1 size-4" />} Clear page
+          </Button>
+        </div>
+      )}
+      {stories.map((s, i) => (
+        <motion.div key={s._id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.02, 0.3) }} className="flex items-center justify-between gap-3 rounded-xl border p-3">
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground"><b className="text-foreground">@{s.author?.username}</b> · {timeAgo(s._creationTime)}</p>
+            <p className="mt-1 line-clamp-2 text-sm">{s.caption ?? "(no caption)"}</p>
+            {s.aiStatusReason && <p className="mt-1 flex items-start gap-1 text-[11px] text-oxide dark:text-oxide-light"><ScanSearch className="mt-0.5 size-3 shrink-0" /><span className="line-clamp-2">{s.aiStatusReason}</span></p>}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button variant="outline" size="sm" className="text-xs" onClick={() => void approve(s._id)}><CheckCheck className="mr-1 size-3" />Clear</Button>
+            <Button variant="ghost" size="sm" className="text-xs text-destructive hover:text-destructive" onClick={() => setPendingRemove({ storyId: s._id, author: s.author?.username ?? null })}><Trash2 className="size-3" /></Button>
+          </div>
+          <button type="button" onClick={() => setEvidenceIds((prev) => { const next = new Set(prev); if (next.has(s._id)) next.delete(s._id); else next.add(s._id); return next; })} className="mt-2 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
+            {evidenceIds.has(s._id) ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />} Evidence
+          </button>
+          {evidenceIds.has(s._id) ? <AiEvidencePanel post={s as any} /> : null}
+        </motion.div>
+      ))}
+      <div ref={ref} className="h-8" />
+      {status === "LoadingMore" && <Skeleton className="h-12" />}
+      <StandardViolationDialog title="Remove this story" open={pendingRemove !== null} onOpenChange={(open) => { if (!open) setPendingRemove(null); }} description={pendingRemove ? "Removing @" + (pendingRemove.author ?? "unknown") + "'s story — cite the PureWire Standard principle it violates." : ""} confirmLabel="Remove story" busy={busy} onConfirm={(standardId, note) => void confirmRemove(standardId, note)} />
     </div>
   );
 }

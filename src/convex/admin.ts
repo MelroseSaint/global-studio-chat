@@ -45,7 +45,7 @@ async function requireAdmin(ctx: QueryCtx) {
 export const dashboardStats = query({
   handler: async (ctx) => {
     await requireAdmin(ctx);
-    const [users, posts, stories, tickets, follows, comments, aiReview, racismReview, flagged] =
+    const [users, posts, stories, tickets, follows, comments, aiReview, racismReview, flagged, aiReviewStories] =
       await Promise.all([
         ctx.db.query("users").collect(),
         ctx.db.query("posts").collect(),
@@ -57,15 +57,11 @@ export const dashboardStats = query({
           .query("posts")
           .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
           .collect(),
-        // Racism review is a subset of AI review — posts flagged with a
-        // racism category that a human moderator must judge.
         ctx.db
           .query("posts")
           .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
           .filter((q) => q.neq(q.field("racismReviewCategory"), undefined))
           .collect(),
-        // Only accounts that actually need a decision — not every user
-        // that was ever auto-scored "active".
         ctx.db
           .query("users")
           .filter((q) =>
@@ -76,6 +72,10 @@ export const dashboardStats = query({
               q.eq(q.field("shadowban"), true),
             ),
           )
+          .collect(),
+        ctx.db
+          .query("stories")
+          .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
           .collect(),
       ]);
     return {
@@ -90,6 +90,7 @@ export const dashboardStats = query({
       aiReview: aiReview.length,
       racismReview: racismReview.length,
       security: flagged.length,
+      aiReviewStories: aiReviewStories.length,
     };
   },
 });
@@ -467,5 +468,84 @@ export const resolveRacismReviewBatch = mutation({
         });
       }
     }
+  },
+});
+
+/** Stories flagged for AI review — same pattern as posts. */
+export const listAiReviewStories = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    await requireAdmin(ctx);
+    const result = await ctx.db
+      .query("stories")
+      .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map(async (s) => {
+        const author = await ctx.db.get(s.authorId);
+        return {
+          ...s,
+          author: author
+            ? {
+                ...publicUser(author),
+                avatarUrl:
+                  author.avatarUrl ??
+                  (author.avatarStorageId
+                    ? await ctx.storage.getUrl(author.avatarStorageId)
+                    : null),
+              }
+            : null,
+        };
+      }),
+    );
+    return { ...result, page };
+  },
+});
+
+/** Admin clears a flagged story — mark it clean. */
+export const resolveAiReviewStory = mutation({
+  args: { storyId: v.id("stories") },
+  handler: async (ctx, { storyId }) => {
+    await requireAdmin(ctx);
+    const story = await ctx.db.get(storyId);
+    if (story !== null) {
+      await ctx.db.patch(storyId, { aiStatus: "clean" });
+    }
+  },
+});
+
+/** Admin bulk-clears story review flags. */
+export const resolveAiReviewStoryBatch = mutation({
+  args: { storyIds: v.array(v.id("stories")) },
+  handler: async (ctx, { storyIds }) => {
+    await requireAdmin(ctx);
+    for (const storyId of storyIds) {
+      const story = await ctx.db.get(storyId);
+      if (story !== null && story.aiStatus === "review") {
+        await ctx.db.patch(storyId, { aiStatus: "clean" });
+      }
+    }
+  },
+});
+
+/** Admin removes a story (with Standard citation). */
+export const moderateStory = mutation({
+  args: {
+    storyId: v.id("stories"),
+    standardId: v.string(),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, { storyId, standardId, note }) => {
+    await requireAdmin(ctx);
+    const story = await ctx.db.get(storyId);
+    if (story === null) return;
+    await ctx.db.insert("moderationLog", {
+      targetUserId: story.authorId,
+      action: "flag",
+      standardId,
+      note,
+    });
+    await ctx.db.delete(storyId);
   },
 });
