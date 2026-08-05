@@ -182,30 +182,55 @@ export function AppLayout() {
           <NavItem to={profileTo} icon={User} label="Profile" />
           <NavItem to="/settings" icon={Settings} label="Settings" />
           <NavItem to="/support" icon={LifeBuoy} label="Support" />
-          {isAdmin && (
-            <NavItem
-              to="/admin"
-              icon={Shield}
-              label="Admin"
-              badge={moderationTotal}
-              title={workloadTitle}
-              ariaLabel={
-                workload === undefined || moderationTotal === 0
-                  ? "Admin"
-                  : `Admin — ${moderationTotal} item${moderationTotal === 1 ? "" : "s"} awaiting moderation`
-              }
-            />
-          )}
         </nav>
         <div className="border-t p-3">
-          <button
-            onClick={() => void handleSignOut()}
-            aria-label="Sign out"
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-foreground/80 transition-colors hover:bg-muted hover:text-foreground sm:justify-center lg:justify-start"
-          >
-            <LogOut className="size-5" />
-            <span className="hidden lg:inline">Sign out</span>
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-foreground/80 transition-colors hover:bg-muted hover:text-foreground sm:justify-center lg:justify-start"
+                aria-label={
+                  isAdmin && moderationTotal > 0
+                    ? `More — ${moderationTotal} item${moderationTotal === 1 ? "" : "s"} awaiting moderation`
+                    : "More"
+                }
+              >
+                <span className="relative">
+                  <MoreHorizontal className="size-5" />
+                  {isAdmin && moderationTotal > 0 ? (
+                    <span className="absolute -right-1.5 -top-1 size-2 rounded-full bg-primary" />
+                  ) : null}
+                </span>
+                <span className="hidden lg:inline">More</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" className="w-52">
+              {isAdmin ? (
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onSelect={() => navigate("/admin")}
+                  title={workloadTitle}
+                >
+                  <Shield />
+                  Admin
+                  {moderationTotal > 0 ? (
+                    <span className="ml-auto flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
+                      {moderationTotal > 99 ? "99+" : moderationTotal}
+                    </span>
+                  ) : null}
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                className="cursor-pointer"
+                onSelect={() => void handleSignOut()}
+              >
+                <LogOut />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </aside>
 
