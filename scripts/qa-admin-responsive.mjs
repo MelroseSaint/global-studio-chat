@@ -304,6 +304,27 @@ async function inspectAdmin(page, widthLabel, width) {
         await page.waitForTimeout(200);
       }
     }
+    if (tab === "Tickets") {
+      // Long ticket messages clamp at 3 lines behind a "Show more" toggle,
+      // so one huge support message can't blow a card taller than the
+      // screen. Data-aware: only messages long enough to clamp render the
+      // toggle (short messages and the empty state skip).
+      const showMore = page.locator("button:has-text('Show more')");
+      if ((await showMore.count()) > 0) {
+        check(
+          `${widthLabel}: long ticket messages clamped (Show more present)`,
+          true,
+        );
+        await showMore.first().click();
+        await page.waitForTimeout(300);
+        check(
+          `${widthLabel}: ticket clamp expands to Show less`,
+          (await page.locator("button:has-text('Show less')").count()) > 0,
+        );
+        await page.locator("button:has-text('Show less')").first().click();
+        await page.waitForTimeout(200);
+      }
+    }
     if (tab === "Security") {
       // The per-account audit trail is collapsed behind its "Audit trail"
       // toggle, so a long history never inflates every row (the tablet
@@ -390,9 +411,21 @@ async function inspectProfile(page, widthLabel) {
     stats.following === 0,
     `actual ${stats.following}`,
   );
+  // The "Original" badge streams in with the post card's AI-scan verdict,
+  // so a single instant count races it on a slow runner — poll, don't
+  // sleep (the same lesson as the tab panels).
+  const badgeDeadline = Date.now() + PANEL_WAIT_MS;
+  let badgeSeen = false;
+  while (Date.now() < badgeDeadline) {
+    if ((await page.getByText("Original", { exact: true }).count()) > 0) {
+      badgeSeen = true;
+      break;
+    }
+    await page.waitForTimeout(PANEL_POLL_MS);
+  }
   check(
     `${widthLabel}: profile post card renders with the Original badge`,
-    (await page.getByText("Original", { exact: true }).count()) > 0,
+    badgeSeen,
   );
   await measurePage(page, `${widthLabel}: profile`, check);
 }

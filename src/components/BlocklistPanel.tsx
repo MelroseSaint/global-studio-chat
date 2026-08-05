@@ -345,9 +345,11 @@ export function BlocklistPanel() {
             className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3"
           >
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="flex items-center gap-1.5 font-mono text-sm font-semibold">
-                <Globe className="size-4 text-muted-foreground" />
-                {d.domain}
+              <span className="flex min-w-0 items-center gap-1.5 font-mono text-sm font-semibold">
+                <Globe className="size-4 shrink-0 text-muted-foreground" />
+                {/* break-all: a long domain is an unbroken string that would
+                    otherwise overflow the card on a tablet row */}
+                <span className="break-all">{d.domain}</span>
               </span>
               <Badge variant="outline">{label}</Badge>
               <Badge variant={d.action === "block" ? "destructive" : "outline"}>
