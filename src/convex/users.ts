@@ -16,6 +16,7 @@ import {
   detectReciprocalFollow,
 } from "./farmNetwork";
 import { scanBlockedContent } from "./blocklist";
+import { scanForRacism } from "@/lib/racism-guard";
 import {
   enforceActive,
   enforceRateLimit,
@@ -192,6 +193,42 @@ export const updateProfile = mutation({
     // The rejection is a structured result, NOT a throw — the quiet-flag
     // escalation must commit, and Convex rolls every write back when a
     // mutation throws. Same atomicity pattern as createPost.
+    // Racism scan on display name: the name is a public identity surface.
+    if (args.name !== undefined && args.name.trim().length > 0) {
+      const nameScan = scanForRacism(args.name);
+      if (nameScan.status === "blocked") {
+        await escalateSilently(ctx, userId, 5, "harassment", "racism-block-profile");
+        return {
+          ok: false,
+          error: `That display name can't be used — ${nameScan.reason}.`,
+        };
+      }
+      if (nameScan.status === "review") {
+        await escalateSilently(ctx, userId, 2, "harassment", "racism-review-profile");
+        return {
+          ok: false,
+          error: `That display name can't be used — ${nameScan.reason}.`,
+        };
+      }
+    }
+    // Racism scan on bio: the same public identity surface as the name.
+    if (args.bio !== undefined && args.bio.trim().length > 0) {
+      const bioRacismScan = scanForRacism(args.bio);
+      if (bioRacismScan.status === "blocked") {
+        await escalateSilently(ctx, userId, 5, "harassment", "racism-block-profile");
+        return {
+          ok: false,
+          error: `That bio can't be used — ${bioRacismScan.reason}.`,
+        };
+      }
+      if (bioRacismScan.status === "review") {
+        await escalateSilently(ctx, userId, 2, "harassment", "racism-review-profile");
+        return {
+          ok: false,
+          error: `That bio can't be used — ${bioRacismScan.reason}.`,
+        };
+      }
+    }
     if (args.bio !== undefined && args.bio.trim().length > 0) {
       const bioScan = await scanBlockedContent(ctx, args.bio);
       if (bioScan.status !== "clean") {

@@ -4,6 +4,7 @@ import { ConvexError, v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { mediaHashesMatch } from "@/lib/perceptual-hash";
+import { scanForRacism } from "@/lib/racism-guard";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
 import { scanBlockedContent } from "./blocklist";
@@ -626,6 +627,22 @@ export const createPostInternal = internalMutation({
         aiStatusReason !== undefined ? ` · ${aiStatusReason}` : ""
       }`;
     }
+    // ── Racism scan: the same pipeline (block → reject, review → queue) ──
+    const racismScan = scanForRacism(text);
+    if (racismScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 5, "harassment", "racism-block-post");
+      return {
+        ok: false,
+        error: `That can't be posted — ${racismScan.reason}.`,
+      };
+    }
+    if (racismScan.status === "review") {
+      needsReview = true;
+      aiStatusReason =
+        aiStatusReason !== undefined
+          ? `${aiStatusReason} · ${racismScan.reason}`
+          : racismScan.reason;
+    }
     // AI-assisted disclosure: allowed but flagged for human review (a human
     // used tools; the work is primarily theirs, but the platform verifies —
     // the disclosure chip is visible on the post and the review queue sees
@@ -1087,6 +1104,23 @@ export const addComment = mutation({
         ok: false,
         error:
           "This link can't be posted as-is — share the direct link instead.",
+      };
+    }
+    // Racism scan: comments get the same check. Blocked is rejected;
+    // review-tier is also rejected — comments have no human queue.
+    const racismCommentScan = scanForRacism(text);
+    if (racismCommentScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 5, "harassment", "racism-block-comment");
+      return {
+        ok: false,
+        error: `That can't be posted — ${racismCommentScan.reason}.`,
+      };
+    }
+    if (racismCommentScan.status === "review") {
+      await escalateSilently(ctx, userId, 2, "harassment", "racism-review-comment");
+      return {
+        ok: false,
+        error: `That may not be allowed — ${racismCommentScan.reason}. Rephrase or report the content you're responding to.`,
       };
     }
     const post = await ctx.db.get(postId);

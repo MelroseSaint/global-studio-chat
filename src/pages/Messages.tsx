@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { scanWithBlocklist } from "@/convex/phishing";
+import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { Button } from "@/components/ui/button";
@@ -389,7 +390,18 @@ export function Messages() {
     // encrypted — PureWire never sees plaintext, so the check has to
     // happen before the first byte leaves the browser. Hard scam signals
     // are blocked outright; merely-suspicious links ask the sender first.
+    // The racism gate runs the same way: client-side, before encryption,
+    // so the server never sees the plaintext that triggered it.
     if (text) {
+      const racismResult = scanForRacism(text);
+      if (racismResult.status === "blocked") {
+        toast.error(`That can't be sent — ${racismResult.reason}.`);
+        return;
+      }
+      if (racismResult.status === "review") {
+        toast.error(`That may not be allowed — ${racismResult.reason}. Rephrase to send.`);
+        return;
+      }
       const verdict = scanWithBlocklist(
         text,
         activeBlocklist?.domains ?? [],

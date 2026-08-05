@@ -336,7 +336,8 @@ export type SilentFlagReason =
   | "ai" // repeated AI-suspicious text or media
   | "farm-reciprocal" // instant mutual follows (network boosting)
   | "farm-churn" // quick follow/unfollow churn
-  | "scam"; // phishing / credential- or money-harvesting attempts
+  | "scam" // phishing / credential- or money-harvesting attempts
+  | "harassment"; // racial/ethnic hate, targeted harassment, or intimidation
 
 /**
  * Add points to an account's silent-infraction counter, record why, and

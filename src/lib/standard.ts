@@ -76,6 +76,12 @@ export const STANDARD_PRINCIPLES: StandardPrinciple[] = [
     detail:
       "Adult subscription, cam, video, and chat sites can't be shared, posted, or linked on PureWire.",
   },
+  {
+    id: "no-racism",
+    title: "No racial or ethnic hate.",
+    detail:
+      "Racial slurs, ethnic dehumanization, supremacy claims, segregation advocacy, and calls for racial violence have no place on PureWire.",
+  },
 ];
 
 /** Look up a principle by its stable id. */
