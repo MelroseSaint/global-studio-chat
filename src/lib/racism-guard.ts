@@ -254,7 +254,7 @@ const TOKENS: readonly RacismToken[] = [
     severity: 5,
     language: "en",
     variants: ["k1ll all"],
-    contextRequired: false,
+    contextRequired: true,
   },
   // ── Coded hate language (severity 3, always context-required) ───────────
   {
@@ -353,14 +353,16 @@ function normalizeFragmentation(text: string): string {
 }
 
 /** Collapse suspicious repeated characters: sluuuuur → slur.
- *  Only collapses letters repeated 3+ times, and only when the resulting
- *  word length after collapse is in a plausible slur range (3-10 chars),
- *  so legitimate repeated letters ("goooood") are rarely affected. */
+ *  Only collapses letters repeated 3+ times within a word, and only when
+ *  the collapsed word is short — long genuine words with repeats are
+ *  untouched. No word-boundary constraint so mid-word stuffing is caught. */
 function collapseRepeated(text: string): string {
-  return text.replace(/\b([a-zA-Z])\1{2,}\b/g, (m) => {
+  // Collapse any letter repeated 3+ times within a word — sluuuuur→slur.
+  return text.replace(/([a-zA-Z])\1{2,}/g, (m) => {
     const collapsed = m.replace(/(.)\1+/g, "$1");
-    // Only collapse short words where the repetition looks evasive.
-    if (collapsed.length >= 3 && collapsed.length <= 10) return collapsed;
+    // Only collapse short runs of repeats; a paragraph of repeated
+    // identical chars isn't a slur evasion, it's gibberish.
+    if (collapsed.length <= 10) return collapsed;
     return m;
   });
 }
@@ -378,10 +380,7 @@ const LEET_MAP: Record<string, string> = {
 };
 
 function normalizeLeet(text: string): string {
-  // Only substitute when the leet character appears within a word context
-  // (surrounded by letters), so "I have $50" and "top 10" stay intact
-  // while "n1gger" → "nigger" and "p@ki" → "paki" still normalize.
-  return text.replace(/([a-z])[@4!10$57]([a-z])/gi, (_, before, ch, after) =>
+  return text.replace(/([a-z])([4@3!10$57])([a-z])/gi, (_, before, ch, after) =>
     before + (LEET_MAP[ch] ?? ch) + after,
   );
 }
@@ -423,7 +422,7 @@ function computeEvasionScore(
   if (raw.length !== stripZeroWidth(raw).length) score += 3;
   // Leetspeak characters detected.
   if (raw !== leetNormalized) {
-    const leetChars = raw.match(/[@4!10$57]/g);
+    const leetChars = raw.match(/[@34!10$57]/g);
     if (leetChars && leetChars.length >= 2) score += 2;
     if (leetChars && leetChars.length >= 1) score += 1;
   }
@@ -493,6 +492,14 @@ export function scanForRacism(content: string): RacismVerdict {
       for (const term of terms) {
         const idx = candidate.indexOf(term);
         if (idx === -1) continue;
+        // Word-boundary check: the matched term must be a whole token,
+        // not a substring of a larger word. "snigger" must NOT match
+        // "nigger", and "trigger" must NOT match a slur substring.
+        const before = idx > 0 ? candidate.charAt(idx - 1) : " ";
+        const after = idx + term.length < candidate.length
+          ? candidate.charAt(idx + term.length)
+          : " ";
+        if (/[a-z]/.test(before) || /[a-z]/.test(after)) continue;
         // Track the best (highest severity) match, breaking ties by
         // preferring contextRequired=false (more definitive).
         if (bestMatch === null) {
@@ -515,11 +522,14 @@ export function scanForRacism(content: string): RacismVerdict {
   const discussion = isDiscussionContext(raw, index);
 
   // High-severity unambiguous attack in a direct context → BLOCK.
+  // Severity 4-5 terms that are contextFree (not contextRequired)
+  // auto-block when there's no discussion/reporting context and evasion
+  // is low — the writer clearly meant the attack.
   if (
-    token.severity >= 5 &&
+    token.severity >= 4 &&
     !token.contextRequired &&
     !discussion &&
-    evasionScore <= 3 // high evasion with an unambiguous hit = still block
+    evasionScore <= 3
   ) {
     return {
       status: "blocked",
@@ -529,17 +539,27 @@ export function scanForRacism(content: string): RacismVerdict {
     };
   }
 
-  // Context-required term in reporting/discussion context → ALLOW (clean).
-  if (token.contextRequired && discussion) {
+  // Discussion/reporting/educational context → ALL content is clean.
+  // A slur quoted in a report or a term discussed in class is not hate
+  // speech — the distinction the engine is built for.
+  if (discussion) {
     return { status: "clean" };
   }
 
-  // Everything else → REVIEW (human moderator judges).
+  // Context-required term without discussion context → REVIEW.
+  if (token.contextRequired) {
+    return {
+      status: "review",
+      reason: `Suspected ${RACISM_CATEGORY_LABEL[token.category]}`,
+      category: token.category,
+      evasionScore,
+    };
+  }
+
+  // Low-severity unambiguous term without evasion or context → REVIEW.
   return {
     status: "review",
-    reason: discussion
-      ? `Possible protected discussion — ${RACISM_CATEGORY_LABEL[token.category]} mentioned in reporting/discussion context`
-      : `Suspected ${RACISM_CATEGORY_LABEL[token.category]}`,
+    reason: `Suspected ${RACISM_CATEGORY_LABEL[token.category]}`,
     category: token.category,
     evasionScore,
   };

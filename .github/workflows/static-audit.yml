@@ -69,6 +69,16 @@ jobs:
       - name: Run the anti-AI scanner QA
         run: npm run qa:ai-scan
 
+      # The racism-prevention engine must never regress: this offline QA
+      # exercises every normalization path (zero-width, whitespace,
+      # fragmentation, repeated-char, leetspeak, homoglyph) plus the
+      # categorized lexicon and context analysis against slurs, spacing
+      # attacks, Unicode attacks, quoted/reported speech, educational
+      # discussion, and false positives — 72 assertions that must all
+      # stay green on every push.
+      - name: Run the racism prevention QA
+        run: npm run qa:racism
+
       # The blocklist feeds (data/adult/* and the public/ mirror) are
       # GENERATED from BANNED_ADULT_HOSTS in src/convex/phishing.ts. This
       # gate re-runs the generator and fails the push if it produces any
