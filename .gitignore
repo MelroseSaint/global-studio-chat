@@ -26,6 +26,13 @@ desktop-v2.db
 desktop-v2.db-shm
 desktop-v2.db-wal
 
+# Installed community skills (downloaded from source repos)
+.agents/
+.claude/
+
+# Local data stores
+data/
+
 # Vercel CLI local state. Only the public project link file is committed so
 # GitHub Actions CI can resolve the project; .vercel/.env* (real env values)
 # and the generated README stay out of git.
