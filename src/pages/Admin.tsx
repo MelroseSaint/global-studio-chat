@@ -2269,6 +2269,8 @@ function RacismReviewPanel() {
     author: { username?: string | null; name?: string | null } | null;
   }[];
 
+  const [evidenceIds, setEvidenceIds] = useState<Set<string>>(new Set());
+
   const [approvingPage, setApprovingPage] = useState(false);
   const approvePage = async () => {
     if (posts.length === 0 || approvingPage) return;
@@ -2334,6 +2336,28 @@ function RacismReviewPanel() {
             <Button variant="outline" size="sm" className="text-xs" onClick={() => void approve(p._id)}><CheckCheck className="mr-1 size-3" />Clear</Button>
             <Button variant="ghost" size="sm" className="text-xs text-destructive hover:text-destructive" onClick={() => setPendingRemove({ postId: p._id, author: p.author?.username ?? null })}><Trash2 className="size-3" /></Button>
           </div>
+          <button
+            type="button"
+            onClick={() =>
+              setEvidenceIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(p._id)) next.delete(p._id);
+                else next.add(p._id);
+                return next;
+              })
+            }
+            className="mt-2 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {evidenceIds.has(p._id) ? (
+              <ChevronUp className="size-3.5" />
+            ) : (
+              <ChevronDown className="size-3.5" />
+            )}
+            Evidence
+          </button>
+          {evidenceIds.has(p._id) ? (
+            <AiEvidencePanel post={p} />
+          ) : null}
         </motion.div>
       ))}
       <div ref={ref} className="h-8" />
