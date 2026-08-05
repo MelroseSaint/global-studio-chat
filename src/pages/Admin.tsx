@@ -9,12 +9,10 @@ import {
   Ellipsis,
   EyeOff,
   Flag,
-  Heart,
   History,
   Image as ImageIcon,
   Loader2,
   Lock,
-  MessageCircle,
   MessagesSquare,
   ScanSearch,
   Shield,
@@ -26,7 +24,7 @@ import {
   UserCheck,
   Users,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -338,54 +336,16 @@ export function Admin() {
 const STAT_CARDS = [
   { key: "users", label: "Users", icon: Users },
   { key: "posts", label: "Posts", icon: MessagesSquare },
-  { key: "follows", label: "Follows", icon: UserCheck },
-  { key: "likes", label: "Likes", icon: Heart },
-  { key: "comments", label: "Comments", icon: MessageCircle },
-  { key: "stories", label: "Stories", icon: ImageIcon },
-  { key: "openTickets", label: "Open tickets", icon: Flag },
   { key: "aiReview", label: "AI review", icon: ScanSearch },
-  { key: "racismReview", label: "Racism", icon: Shield },
-  { key: "storyReview", label: "Stories", icon: ImageIcon },
-  { key: "security", label: "Security", icon: ShieldAlert },
+  { key: "openTickets", label: "Open tickets", icon: Flag },
+  { key: "stories", label: "Stories", icon: ImageIcon },
 ] as const;
 
 function AdminDashboard({ meId }: { meId: string }) {
   const raw = useQuery(api.admin.dashboardStats);
   // Map backend key names to frontend tab keys where they differ.
-  const stats = raw === undefined ? undefined : { ...raw, storyReview: raw.aiReviewStories };
+  const stats = raw === undefined ? undefined : { ...raw };
   const [tab, setTab] = useState("users");
-  // The stats strip is a swipeable row on phones; these flags track whether
-  // there is more to swipe and whether the user has reached either edge, so
-  // the fading-edge gradients (and the "swipe for more" cue on the right)
-  // appear only while there is actually more to discover — and gracefully
-  // fade out once the relevant edge is reached. On tablets and up the strip
-  // is a grid (no scrolling), so the affordances stay hidden there entirely
-  // (sm:hidden below).
-  const statsScrollRef = useRef<HTMLDivElement>(null);
-  const [statsOverflow, setStatsOverflow] = useState(false);
-  const [statsAtStart, setStatsAtStart] = useState(true);
-  const [statsAtEnd, setStatsAtEnd] = useState(true);
-
-  useEffect(() => {
-    const el = statsScrollRef.current;
-    if (!el) return;
-    const update = () => {
-      const canScroll = el.scrollWidth > el.clientWidth + 8;
-      setStatsOverflow(canScroll);
-      setStatsAtStart(!canScroll || el.scrollLeft <= 8);
-      setStatsAtEnd(
-        !canScroll || el.scrollLeft + el.clientWidth >= el.scrollWidth - 8,
-      );
-    };
-    update();
-    el.addEventListener("scroll", update, { passive: true });
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => {
-      el.removeEventListener("scroll", update);
-      ro.disconnect();
-    };
-  }, []);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 overflow-x-clip p-4 pb-24 sm:p-6">
@@ -400,62 +360,35 @@ function AdminDashboard({ meId }: { meId: string }) {
         </p>
       </div>
 
-      <div>
-        <div className="relative">
-          <div
-            ref={statsScrollRef}
-            className="flex snap-x gap-3 overflow-x-auto pb-1 sm:grid sm:snap-none sm:grid-cols-3 sm:overflow-visible sm:pb-0 md:grid-cols-5 lg:grid-cols-5"
-          >
-            {STAT_CARDS.map(({ key, label, icon: Icon }) => (
-              <Card key={key} className="min-w-[9rem] snap-start sm:min-w-0">
-                <CardContent className="p-3">
-                  <div className="flex items-center gap-1.5 text-muted-foreground">
-                    <Icon className="size-4 shrink-0" />
-                    <span className="text-xs font-medium">{label}</span>
-                  </div>
-                  <p className="mt-1 text-xl font-bold sm:text-2xl">
-                    {stats === undefined ? "…" : String(stats[key])}
-                  </p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-          {/* Fading left edge on phones: signals cards continue behind when scrolled. */}
-          <div
-            aria-hidden="true"
-            className={`pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-background to-transparent transition-opacity duration-300 sm:hidden ${
-              statsOverflow && !statsAtStart ? "opacity-100" : "opacity-0"
-            }`}
-          />
-          {/* Fading right edge on phones: signals cards continue past the fold. */}
-          <div
-            aria-hidden="true"
-            className={`pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background to-transparent transition-opacity duration-300 sm:hidden ${
-              statsOverflow && !statsAtEnd ? "opacity-100" : "opacity-0"
-            }`}
-          />
-        </div>
-        <p
-          className={`mt-1 flex items-center justify-end gap-0.5 text-[11px] font-medium text-muted-foreground transition-opacity duration-300 sm:hidden ${
-            statsOverflow && !statsAtEnd ? "opacity-100" : "opacity-0"
-          }`}
-        >
-          <ChevronsRight className="size-3.5" />
-          Swipe for more
-        </p>
+      {/* Stats strip: key metrics in a responsive grid that never overflows. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+        {STAT_CARDS.map(({ key, label, icon: Icon }) => (
+          <Card key={key}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Icon className="size-4 shrink-0" />
+                <span className="text-xs font-medium">{label}</span>
+              </div>
+              <p className="mt-1 text-xl font-bold sm:text-2xl">
+                {stats === undefined ? "\u2026" : String(stats[key])}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
+      {/* Tab bar: single scrollable row — never wraps, never overlaps. */}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-4 md:grid-cols-4 lg:grid-cols-7">
-          <TabsTrigger value="users">Users</TabsTrigger>
-          <TabsTrigger value="tickets">Tickets</TabsTrigger>
-          <TabsTrigger value="posts">Content</TabsTrigger>
-          <TabsTrigger value="aiReview">AI review</TabsTrigger>
-          <TabsTrigger value="racismReview">Racism</TabsTrigger>
-          <TabsTrigger value="storyReview">Stories</TabsTrigger>
-          <TabsTrigger value="security">Security</TabsTrigger>
-          <TabsTrigger value="silenced">Silenced</TabsTrigger>
-          <TabsTrigger value="blocklist">Blocklist</TabsTrigger>
+        <TabsList className="flex w-full gap-1 overflow-x-auto">
+          <TabsTrigger value="users" className="shrink-0">Users</TabsTrigger>
+          <TabsTrigger value="tickets" className="shrink-0">Tickets</TabsTrigger>
+          <TabsTrigger value="posts" className="shrink-0">Content</TabsTrigger>
+          <TabsTrigger value="aiReview" className="shrink-0">AI review</TabsTrigger>
+          <TabsTrigger value="racismReview" className="shrink-0">Racism</TabsTrigger>
+          <TabsTrigger value="storyReview" className="shrink-0">Stories</TabsTrigger>
+          <TabsTrigger value="security" className="shrink-0">Security</TabsTrigger>
+          <TabsTrigger value="silenced" className="shrink-0">Silenced</TabsTrigger>
+          <TabsTrigger value="blocklist" className="shrink-0">Blocklist</TabsTrigger>
         </TabsList>
       </Tabs>
 
