@@ -715,6 +715,57 @@ export const listFlaggedAccounts = query({
 });
 
 /**
+ * Admin: complete flagged-accounts report for CSV export — every account
+ * needing a Security decision (suspicious/restricted/banned), newest
+ * first, including the bot/farm signals and the automation-likelihood
+ * score with its matched signal names. Non-paginated so a moderator can
+ * pull the whole queue in one file instead of paging through the tab;
+ * capped at 1000 rows so a single export can't blow a query's response
+ * budget (the tab itself remains the surface for very large queues).
+ *
+ * Privacy: exactly the `publicUser` shape the tab already shows — masked
+ * email, no plain address, no coordinates — plus the moderation fields.
+ */
+export const exportFlaggedAccounts = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const me = await ctx.db.get(userId);
+    if (me?.role !== "admin") {
+      throw new Error("Admins only");
+    }
+    const rows = await ctx.db
+      .query("users")
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("accountStatus"), "suspicious"),
+          q.eq(q.field("accountStatus"), "restricted"),
+          q.eq(q.field("accountStatus"), "banned"),
+        ),
+      )
+      .order("desc")
+      .take(1000);
+    return rows.map((u) => ({
+      ...publicUser(u),
+      accountStatus: u.accountStatus ?? "active",
+      riskScore: u.riskScore ?? 0,
+      riskReasons: u.riskReasons ?? [],
+      shadowban: u.shadowban ?? false,
+      silentFlags: u.silentFlags ?? 0,
+      automationScore: u.automationScore ?? null,
+      automationSignals: u.automationSignals ?? [],
+      automationReportedAt: u.automationReportedAt ?? null,
+      moderationStandardId: u.moderationStandardId ?? null,
+      moderationNote: u.moderationNote ?? null,
+      createdAt: u._creationTime,
+    }));
+  },
+});
+
+/**
  * Admin: accounts quietly shadowbanned by the silent-flag system, newest
  * first, for the dedicated Silenced tab. Each row carries the current
  * (decayed) flag total, the lifetime total that never resets, and a reason

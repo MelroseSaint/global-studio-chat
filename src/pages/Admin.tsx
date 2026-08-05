@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsRight,
+  Download,
   Ellipsis,
   EyeOff,
   Flag,
@@ -78,6 +79,36 @@ import { useAuth } from "@/hooks/use-auth";
 import { useOfflineMutation } from "@/hooks/use-offline-mutation";
 import { timeAgo } from "@/lib/format";
 import { STANDARD_PRINCIPLES, standardById } from "@/lib/standard";
+
+/**
+ * Download a table of rows as a UTF-8 CSV. Quoted per RFC 4180 (a BOM
+ * prefix keeps Excel from misreading non-ASCII). Used by the Security tab
+ * so moderators can pull a full flagged-accounts report.
+ */
+function downloadCsv(
+  filename: string,
+  rows: Array<Record<string, string | number | boolean | null | undefined>>,
+) {
+  if (rows.length === 0) return;
+  const headers = [...new Set(rows.flatMap((r) => Object.keys(r)))];
+  const cell = (v: unknown) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, "\"\"")}"` : s;
+  };
+  const lines = [
+    headers.join(","),
+    ...rows.map((r) => headers.map((h) => cell(r[h])).join(",")),
+  ];
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 /** A small badge naming the Standard principle an account was cited under. */
 function StandardChip({ standardId }: { standardId?: string | null }) {
@@ -1258,6 +1289,8 @@ function SecurityPanel() {
     {},
     { initialNumItems: 15 },
   );
+  // Full report for the CSV export — the whole queue, not just loaded pages.
+  const flaggedExport = useQuery(api.security.exportFlaggedAccounts);
   const { ref, inView } = useInView();
 
   useEffect(() => {
@@ -1268,6 +1301,32 @@ function SecurityPanel() {
 
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+
+  const downloadReport = () => {
+    if (flaggedExport === undefined) return;
+    const rows = flaggedExport.map((u) => ({
+      username: u.username ?? "",
+      name: u.name ?? "",
+      email: u.maskedEmail ?? "",
+      accountStatus: u.accountStatus ?? "active",
+      riskScore: u.riskScore ?? 0,
+      riskReasons: (u.riskReasons ?? []).join(" | "),
+      shadowban: u.shadowban === true ? "yes" : "",
+      silentFlags: u.silentFlags ?? 0,
+      automationScore: u.automationScore ?? "",
+      automationSignals: (u.automationSignals ?? []).join(" | "),
+      moderationStandardId: u.moderationStandardId ?? "",
+      moderationNote: u.moderationNote ?? "",
+      joined: new Date(u.createdAt).toISOString(),
+    }));
+    downloadCsv(
+      `purewire-security-flagged-${new Date().toISOString().slice(0, 10)}.csv`,
+      rows,
+    );
+    toast.success(
+      `Exported ${rows.length} flagged account${rows.length === 1 ? "" : "s"}.`,
+    );
+  };
 
   const confirmRemove = async (userId: string, standardId: string, note: string) => {
     setRemoving(true);
@@ -1381,6 +1440,25 @@ function SecurityPanel() {
 
   return (
     <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-muted-foreground">
+          Accounts flagged for review
+          {flaggedExport !== undefined && flaggedExport.length > 0
+            ? ` — ${flaggedExport.length} total`
+            : ""}
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          disabled={flaggedExport === undefined || flaggedExport.length === 0}
+          onClick={() => void downloadReport()}
+          title="Download the full flagged-accounts list as a CSV, including risk and automation signals"
+        >
+          <Download className="size-4" />
+          Export CSV
+        </Button>
+      </div>
       {status === "LoadingFirstPage" &&
         Array.from({ length: 2 }).map((_, i) => (
           <Skeleton key={i} className="h-20" />
