@@ -21,8 +21,23 @@
  *     plugins, and chrome API all restored — still caught by the residual
  *     CDP-injected cdc_ global and the headless outer===inner viewport,
  *     both compounding and below the auto bar.
+ *   - A fully hardened bot: Playwright-with-stealth that also patches the
+ *     viewport and removes the cdc_ globals — every easy AND hard tell
+ *     scrubbed except touch-consistency. The zero-touch-on-a-mobile-UA
+ *     tell still trips, proving a residual signal survives even the best
+ *     client-side patching.
  *   - Partial profiles: a single weak signal (e.g. only a bare UA) must
  *     NOT trip the ≥70 + 2-signal escalation bar alone.
+ *
+ * Honest gap, documented on purpose: the hardened profile marks the upper
+ * bound of what client-side detection alone can promise. One weak
+ * residual signal (score 15) can never reach the ≥70 + 2-signal
+ * escalation bar by itself — that bar exists so no single signal can
+ * convict anyone. A fully-stealthed bot is therefore caught client-side
+ * only as a weak hint; the real backstops are the server-side layers
+ * this module feeds (proof-of-work, rate limits, behavioral/farm
+ * scoring, and member reports). The test asserts the gap is real rather
+ * than pretending detection is total.
  *
  * Pure offline unit test: imports detectAutomation directly (Node 22+
  * type stripping + the same resolve hook the other QA scripts use). No
@@ -203,6 +218,47 @@ const stealthProfile = () => ({
     outerHeight: 720,
     innerWidth: 1280,
     innerHeight: 720, // headless: no chrome frame
+  },
+});
+
+/**
+ * Fully hardened bot: Playwright-with-stealth taken all the way — the
+ * viewport is patched to a real phone frame (outer ≠ inner), the
+ * cdc_-prefixed globals are scrubbed, __playwright is gone, and every
+ * surface this detector reads looks real: webdriver false, a normal
+ * Android Chrome Mobile UA, plugins and chrome.csi/loadTimes restored,
+ * permissions present. The ONE thing the patching misses is
+ * touch-consistency: the UA claims a touch-capable Android phone but
+ * maxTouchPoints is 0 — a real Android device always reports touch
+ * points, and no stealth plugin patches navigator.maxTouchPoints to lie
+ * the other way. That residual tell is exactly the weak signal this test
+ * asserts survives, and its single-signal score is the honest gap the
+ * header documents.
+ */
+const hardenedProfile = () => ({
+  navigator: {
+    webdriver: false, // patched
+    userAgent:
+      "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+    plugins: { length: 5 }, // patched present
+    mimeTypes: { length: 10 },
+    permissions: {}, // patched present
+    maxTouchPoints: 0, // ← the residual tell: a real Android phone reports > 0
+  },
+  window: {
+    getOwnPropertyNames: () => [
+      // cdc_ globals scrubbed; __playwright gone — nothing left here
+      "window",
+      "document",
+      "location",
+      "chrome",
+      "onload",
+    ],
+    chrome: { csi: () => {}, loadTimes: () => {} }, // patched present
+    outerWidth: 412, // real phone frame: outer ≠ inner, no dimensionClue
+    outerHeight: 915,
+    innerWidth: 412,
+    innerHeight: 824,
   },
 });
 
@@ -392,6 +448,48 @@ check(
     !stealth.signals.includes("headlessChrome") &&
     !stealth.signals.includes("noChromeApi"),
   JSON.stringify(stealth.signals),
+);
+
+// 8. Fully hardened bot: viewport patched, cdc_ globals scrubbed — the
+//    only remaining tell is touch-consistency (a touch-capable Android UA
+//    reporting zero touch points, which no stealth plugin patches the
+//    "real" way). It must still be caught by that residual signal, and the
+//    test must assert honestly that a single weak signal cannot escalate
+//    alone — that's the documented detection gap, and it's what the
+//    server-side layers (POW, rate limits, farm scoring, reports) exist
+//    to backstop.
+const hardened = detectAutomation(hardenedProfile());
+check(
+  "hardened profile is still caught (zeroTouchOnTouchUa)",
+  hardened.signals.includes("zeroTouchOnTouchUa"),
+  JSON.stringify(hardened.signals),
+);
+check(
+  "hardened profile trips exactly one residual signal",
+  hardened.signals.length === 1,
+  `signals: ${hardened.signals.join(", ")}`,
+);
+check(
+  "hardened profile scores 15 (zero-touch only)",
+  hardened.score === 15,
+  `score ${hardened.score}`,
+);
+check(
+  "hardened profile's scrubbed surfaces are clean",
+  !hardened.signals.includes("webdriver") &&
+    !hardened.signals.includes("cdpInjected") &&
+    !hardened.signals.includes("playwright") &&
+    !hardened.signals.includes("headlessChrome") &&
+    !hardened.signals.includes("noPlugins") &&
+    !hardened.signals.includes("noChromeApi") &&
+    !hardened.signals.includes("missingPermissions") &&
+    !hardened.signals.includes("dimensionClue"),
+  JSON.stringify(hardened.signals),
+);
+check(
+  "hardened profile stays below escalation bar (the honest gap)",
+  hardened.score < 70 || hardened.signals.length < 2,
+  `score ${hardened.score}, signals ${hardened.signals.length}`,
 );
 
 // ────────────────────────────────────────────────────────────
