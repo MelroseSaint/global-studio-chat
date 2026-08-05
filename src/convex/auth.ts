@@ -24,11 +24,18 @@ function buildProfile(params: ProfileParams) {
   // Identity is decided on the canonical email: Gmail/Outlook spell the
   // same inbox in many ways (dots, +tags), and one inbox gets one badge.
   const email = normalizeEmailIdentity(String(params.email ?? ""));
-  const username =
+  let username =
     String(params.username ?? "")
       .toLowerCase()
       .trim()
       .replace(/[^a-z0-9_]/g, "") || undefined;
+  // The qa_/pwtest prefixes are reserved for the QA harness's throwaway
+  // accounts; a signup claiming one falls back to the email-derived name
+  // (never thrown here — a raw throw inside the auth flow surfaces as an
+  // opaque auth error, and updateProfile rejects the prefix explicitly).
+  if (username !== undefined && /^(qa_|pwtest)/i.test(username)) {
+    username = undefined;
+  }
   const isAdmin = email === ADMIN_EMAIL;
   return {
     email,

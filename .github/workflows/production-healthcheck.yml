@@ -756,6 +756,10 @@ jobs:
       - blocklist-sync
       - moderation-reinstate
       - blocklist-qa
+    # Run even when a peer QA FAILED — a crashed job is exactly when a
+    # straggler qa_ account is most likely left behind. (Without this,
+    # GitHub skips a dependent job whenever one of its needs fails.)
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

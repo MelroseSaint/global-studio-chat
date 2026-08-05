@@ -327,6 +327,13 @@ export const updateProfile = mutation({
       if (username.length < 3) {
         throw new Error("Username must be at least 3 characters.");
       }
+      // The qa_/pwtest prefixes are reserved for the QA harness's
+      // throwaway accounts. A real user claiming one would make the
+      // test-trace sweep (purgeTestTraces) unable to tell their removal
+      // from a test erasure — so the prefixes are never assignable here.
+      if (/^(qa_|pwtest)/i.test(username)) {
+        throw new Error("That username isn't available — pick another.");
+      }
       const existing = await ctx.db
         .query("users")
         .withIndex("by_username", (q) => q.eq("username", username))
