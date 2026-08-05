@@ -4,11 +4,8 @@
  *
  * Builds a real JPEG with "Midjourney" in the EXIF Software tag, uploads it
  * through Convex storage, runs the full server-side scanMediaForAi action,
- * and verifies:
- *
- *   1. Byte-level scan catches the EXIF marker (status: "blocked").
- *   2. When RESEMBLE_API_KEY is set, the Resemble v2 API is called and its
- *      verdict lands in the evidence object.
+ * and verifies the byte-level scan catches the EXIF marker (status:
+ * "blocked") and the structured evidence object is populated.
  *
  * Harness-gated: requires TEST_HARNESS_ENABLED=1 + TEST_HARNESS_SECRET.
  *
@@ -202,51 +199,9 @@ async function main() {
         evidence.byteScan?.status === "blocked",
         `byteScan.status=${evidence.byteScan?.status} reason="${evidence.byteScan?.reason ?? ""}"`,
       );
-
-      // ── 5. Resemble v2 signal ─────────────────────────────────────────
-      const hasResembleKey = evidence.resemble !== undefined;
-      if (hasResembleKey) {
-        // Resemble v2 returned a result — verify its shape.
-        if (evidence.resemble === null) {
-          check(
-            "Resemble v2 was called but returned null — API key may be invalid or endpoint unreachable",
-            false,
-            "Check that RESEMBLE_API_KEY is a v2 Bearer token from app.resemble.ai/account/api (legacy Token keys won't work).",
-          );
-        } else {
-          check(
-            "Resemble v2 returned a verdict for the image",
-            true,
-            `isAi=${evidence.resemble.isAi} confidence=${(evidence.resemble.confidence * 100).toFixed(0)}%`,
-          );
-          check(
-            "…and Resemble returned a confidence score",
-            typeof evidence.resemble.confidence === "number" && evidence.resemble.confidence >= 0,
-          );
-          check(
-            "…and Resemble returned an isAi boolean",
-            typeof evidence.resemble.isAi === "boolean",
-          );
-          check(
-            "…and metrics label is present",
-            typeof evidence.resemble.metrics?.label === "string",
-            `label="${evidence.resemble.metrics?.label}"`,
-          );
-          if (evidence.resemble.sourceLabel) {
-            console.log(`  ℹ️  Resemble source tracing: ${evidence.resemble.sourceLabel}`);
-          }
-        }
-      } else {
-        console.log("  ⏭️  RESEMBLE_API_KEY not set — Resemble v2 was not called");
-        check(
-          "Resemble signal skipped gracefully (no API key)",
-          true,
-          "Set RESEMBLE_API_KEY in Convex env to enable",
-        );
-      }
     }
 
-    // ── 6. Cleanup — delete the storage object ──────────────────────────
+    // ── 5. Cleanup — delete the storage object ──────────────────────────
     client.setAuth(user.token);
     await client.mutation(api.media.discardUploads, {
       items: [{ storageId }],

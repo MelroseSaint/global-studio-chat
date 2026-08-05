@@ -21,7 +21,6 @@
     "qa:salt": "node scripts/salt-rotation-qa.mjs",
     "qa:ai-scan": "node scripts/ai-scan-qa.mjs",
     "qa:ai-scan-integration": "node scripts/ai-scan-integration-qa.mjs",
-    "qa:resemble-health": "node scripts/resemble-health-probe.mjs",
     "qa:racism": "node scripts/racism-qa.mjs",
     "qa:automation": "node scripts/automation-qa.mjs",
     "qa:video-privacy": "node scripts/video-privacy-qa.mjs",

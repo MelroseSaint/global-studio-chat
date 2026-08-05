@@ -98,7 +98,7 @@ export const createStoryInternal = internalMutation({
     // actual bytes via scanMediaForAi before delegating here).
     aiMediaStatus: v.optional(AI_MEDIA_STATUS),
     // Structured evidence from the multi-signal media assessment — byte
-    // scan, Resemble voice detection, C2PA provenance, OCR racism.
+    // scan, C2PA provenance, OCR racism.
     aiEvidence: v.optional(v.any()),
   },
   handler: async (ctx, { media, caption, aiMediaStatus, aiEvidence }) => {

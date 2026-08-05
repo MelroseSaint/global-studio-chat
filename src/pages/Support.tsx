@@ -176,7 +176,7 @@ export function Support() {
               Text is checked for machine patterns. Images, audio, and video
               are checked for AI-generator metadata (Midjourney, Stable
               Diffusion, DALL·E, etc.), C2PA Content Credentials, and
-              deepfake markers via Resemble v2. Self-identified AI and
+              container-level deepfake markers. Self-identified AI and
               C2PA manifests asserting AI creation are blocked. Suspicious
               content enters human review — and the author is told honestly
               why.

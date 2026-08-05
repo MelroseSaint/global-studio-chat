@@ -36,7 +36,6 @@ import type * as placesInternal from "../placesInternal.js";
 import type * as posts from "../posts.js";
 import type * as pow from "../pow.js";
 import type * as privacy from "../privacy.js";
-import type * as retryQueue from "../retryQueue.js";
 import type * as security from "../security.js";
 import type * as sessionAudit from "../sessionAudit.js";
 import type * as staticHosting from "../staticHosting.js";
@@ -82,7 +81,6 @@ declare const fullApi: ApiFromModules<{
   posts: typeof posts;
   pow: typeof pow;
   privacy: typeof privacy;
-  retryQueue: typeof retryQueue;
   security: typeof security;
   sessionAudit: typeof sessionAudit;
   staticHosting: typeof staticHosting;

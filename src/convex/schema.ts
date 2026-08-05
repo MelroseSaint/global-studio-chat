@@ -176,9 +176,9 @@ const schema = defineSchema({
     // queue so a human can judge the flag without re-reading everything.
     aiStatusReason: v.optional(v.string()),
     // Structured evidence from the multi-signal media assessment — byte
-    // scan verdict, Resemble voice detection score, C2PA provenance, and
-    // OCR racism result. Shown in the admin review queue's evidence panel
-    // so a moderator sees exactly which signal triggered the flag.
+    // scan verdict, C2PA provenance, and OCR racism result. Shown in the
+    // admin review queue's evidence panel so a moderator sees exactly
+    // which signal triggered the flag.
     aiEvidence: v.optional(v.any()),
     // Content Credentials (C2PA) provenance, verified server-side from the
     // stored media bytes: true when any attached item's manifest declared a
@@ -260,8 +260,8 @@ const schema = defineSchema({
     // the admin review queue so a human can judge without re-reading it.
     aiStatusReason: v.optional(v.string()),
     // Structured evidence from the multi-signal media assessment — byte
-    // scan verdict, Resemble voice detection score, C2PA provenance, and
-    // OCR racism result. Same shape as posts.aiEvidence.
+    // scan verdict, C2PA provenance, and OCR racism result. Same shape as
+    // posts.aiEvidence.
     aiEvidence: v.optional(v.any()),
   })
     .index("by_author", ["authorId"])
@@ -596,25 +596,6 @@ const schema = defineSchema({
     .index("by_announcement", ["announcementId"])
     .index("by_user", ["userId"])
     .index("by_pair", ["userId", "announcementId"]),
-  // Dead-letter queue for external jobs that fail (Resemble v2 detection,
-  // OCR, C2PA verification, link previews). A failed job is recorded here
-  // and retried by the retry sweep; rows older than the retention window
-  // are pruned so the table never grows without bound.
-  jobRetries: defineTable({
-    jobType: v.string(),
-    payload: v.any(),
-    // How many retries have been attempted so far.
-    attempts: v.number(),
-    // The most recent error message (kept for diagnosis, no PII).
-    lastError: v.optional(v.string()),
-    // Next scheduled retry (unix ms). Null after max attempts — the row
-    // becomes a dead letter an admin can inspect.
-    nextRetryAt: v.optional(v.number()),
-    // True once the job permanently failed past its retry budget.
-    dead: v.boolean(),
-  })
-    .index("by_next_retry", ["nextRetryAt"])
-    .index("by_dead", ["dead"]),
   // Self-auditing session signals: a lightweight, one-way fingerprint of
   // each session's browser context. PureWire never stores IP addresses or
   // user agents in the clear — only a salted hash of the UA string plus a

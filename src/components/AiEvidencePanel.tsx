@@ -3,9 +3,9 @@ import { ShieldCheck } from "lucide-react";
 /**
  * Structured evidence panel for the admin AI review queue (and the racism
  * review queue). Reads the aiEvidence object stored on every post that had
- * media attached — byte scan verdict, Resemble voice detection confidence,
- * C2PA provenance, and OCR racism result — so moderators see exactly which
- * signal triggered the flag instead of a generic "media flagged" message.
+ * media attached — byte scan verdict, C2PA provenance, and OCR racism
+ * result — so moderators see exactly which signal triggered the flag
+ * instead of a generic "media flagged" message.
  */
 export function AiEvidencePanel({
   post,
@@ -14,7 +14,6 @@ export function AiEvidencePanel({
     aiStatusReason?: string | null;
     aiEvidence?: {
       byteScan?: { status: string; reason?: string };
-      resemble?: { isAi: boolean; confidence: number; metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number }; sourceLabel?: string | null } | null;
       c2pa?: { humanCapture: boolean; claimGenerator?: string } | null;
       ocrRacism?: { status: string; reason: string } | null;
     } | null;
@@ -44,32 +43,6 @@ export function AiEvidencePanel({
                 </span>
               ) : null}
             </span>
-          </div>
-        ) : null}
-
-        {/* ── Resemble voice detection ──────────────────── */}
-        {ev?.resemble ? (
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between gap-2">
-              <span className="shrink-0 font-medium text-muted-foreground">
-                Resemble voice
-              </span>
-              <span
-                className={
-                  ev.resemble.isAi
-                    ? "rounded-full bg-destructive/15 px-1.5 py-0.5 text-[11px] font-semibold text-destructive"
-                    : "rounded-full bg-moss/15 px-1.5 py-0.5 text-[11px] font-semibold text-moss"
-                }
-              >
-                {ev.resemble.isAi ? "AI VOICE" : "HUMAN"}
-              </span>
-            </div>
-            <ConfidenceBar confidence={ev.resemble.confidence} />
-            {ev.resemble.sourceLabel ? (
-              <span className="text-[11px] text-muted-foreground">
-                Source: {ev.resemble.sourceLabel}
-              </span>
-            ) : null}
           </div>
         ) : null}
 
@@ -186,31 +159,4 @@ function VerdictBadge({ status }: { status: string }) {
   );
 }
 
-/**
- * Horizontal confidence bar with color coding:
- * >= 0.7 → oxide (red, high confidence AI)
- * >= 0.5 → copper (amber, moderate)
- * <  0.5 → moss (green, low — likely human)
- */
-function ConfidenceBar({ confidence }: { confidence: number }) {
-  const pct = Math.round(confidence * 100);
-  const color =
-    confidence >= 0.7
-      ? "var(--color-oxide)"
-      : confidence >= 0.5
-        ? "var(--color-copper)"
-        : "var(--color-moss)";
-  return (
-    <div className="flex items-center gap-2">
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full transition-all"
-          style={{ width: `${pct}%`, backgroundColor: color }}
-        />
-      </div>
-      <span className="shrink-0 tabular-nums text-muted-foreground">
-        {pct}%
-      </span>
-    </div>
-  );
-}
+

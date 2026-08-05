@@ -2205,7 +2205,6 @@ function AiReviewPanel() {
     // AiMediaEvidence in aiContent.ts). Stored when media was attached.
     aiEvidence?: {
       byteScan?: { status: string; reason?: string };
-      resemble?: { isAi: boolean; confidence: number; metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number }; sourceLabel?: string | null } | null;
       c2pa?: { humanCapture: boolean; claimGenerator?: string } | null;
       ocrRacism?: { status: string; reason: string } | null;
     } | null;
@@ -2446,7 +2445,6 @@ function StoryReviewPanel() {
     aiStatusReason?: string | null;
     aiEvidence?: {
       byteScan?: { status: string; reason?: string };
-      resemble?: { isAi: boolean; confidence: number; metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number }; sourceLabel?: string | null } | null;
       c2pa?: { humanCapture: boolean; claimGenerator?: string } | null;
       ocrRacism?: { status: string; reason: string } | null;
     } | null;
@@ -2516,7 +2514,7 @@ function StoryReviewPanel() {
           <button type="button" onClick={() => setEvidenceIds((prev) => { const next = new Set(prev); if (next.has(s._id)) next.delete(s._id); else next.add(s._id); return next; })} className="mt-2 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
             {evidenceIds.has(s._id) ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />} Evidence
           </button>
-          {evidenceIds.has(s._id) ? <AiEvidencePanel post={s as any} /> : null}
+          {evidenceIds.has(s._id) ? <AiEvidencePanel post={s} /> : null}
         </motion.div>
       ))}
       <div ref={ref} className="h-8" />
@@ -2539,7 +2537,6 @@ function RacismReviewPanel() {
     aiStatusReason?: string | null;
     aiEvidence?: {
       byteScan?: { status: string; reason?: string };
-      resemble?: { isAi: boolean; confidence: number; metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number }; sourceLabel?: string | null } | null;
       c2pa?: { humanCapture: boolean; claimGenerator?: string } | null;
       ocrRacism?: { status: string; reason: string } | null;
     } | null;

@@ -308,7 +308,7 @@ export const createPost = action({
     let c2paVerifiedHuman: boolean | undefined;
     let c2paClaimGenerator: string | undefined;
     // Structured evidence from the multi-signal media assessment — byte
-    // scan verdict, Resemble voice score, C2PA provenance, OCR racism —
+    // scan verdict, C2PA provenance, OCR racism —
     // stored on the post so the admin review queue has the full picture.
     let aiEvidence: Record<string, unknown> | undefined;
     if (media !== undefined && media.length > 0) {
@@ -392,7 +392,7 @@ export const createPostInternal = internalMutation({
     // credentials. Shown in the admin evidence panel.
     c2paClaimGenerator: v.optional(v.string()),
     // Structured evidence from the multi-signal media assessment — byte
-    // scan, Resemble voice detection, C2PA provenance, OCR racism. Stored
+    // scan, C2PA provenance, OCR racism. Stored
     // on the post so the admin review queue's evidence panel shows exactly
     // which signal triggered the flag (and with what confidence).
     aiEvidence: v.optional(v.any()),

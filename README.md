@@ -80,18 +80,14 @@ Blocked → rejected with an honest reason
   JPEG/EXIF/XMP, MP4 atoms, ID3v2 frames, FLAC Vorbis comments, WebP, GIF.
   Detects AI-generator markers (Midjourney, Stable Diffusion, DALL·E,
   Imagen, etc.) in the file's own metadata.
-- **Resemble v2 API** — deepfake detection for images, audio, and video
-  with confidence scoring, per-media-type metrics, and audio source tracing
-  (identifies ElevenLabs, Resemble, etc.). Gracefully degrades when the
-  API key is absent.
 - **C2PA / Content Credentials** — verifies C2PA manifests in JPEG APP11,
   PNG iTXt, MP4 jumb, and WebP jumb containers. Camera-capture manifests
   earn a "Content Credentials verified" chip; `trainedAlgorithmicMedia`
   manifests block the file on its own admission.
 - **AI evidence panel** — every flagged post/story shows structured
-  evidence in the admin review queue: byte scan verdict, Resemble confidence
-  bar with source tracing, C2PA provenance + credential issuer, OCR racism
-  detection, AI detector signal, creator disclosure, and user report count.
+  evidence in the admin review queue: byte scan verdict, C2PA provenance +
+  credential issuer, OCR racism detection, AI detector signal, creator
+  disclosure, and user report count.
 - **Preview media evidence** — admins can run a self-test from the dashboard
   that creates 3 synthetic test images (AI-generated, clean phone photo,
   C2PA camera capture) and runs the full scan pipeline — verifying the
@@ -155,7 +151,7 @@ place:
 | **Users** | All accounts with role management, verify/unverify, and owner protection |
 | **Tickets** | Support tickets with violation, post, author, and AI evidence inline |
 | **Content** | Recent posts with moderation actions |
-| **AI review** | Flagged posts with structured evidence panel (byte scan, Resemble, C2PA, OCR, AI detector, reports) |
+| **AI review** | Flagged posts with structured evidence panel (byte scan, C2PA, OCR, AI detector, reports) |
 | **Racism** | Posts flagged for racial/ethnic hate with category, evasion score, evidence panel |
 | **Stories** | Flagged stories with the same evidence panel as posts |
 | **Security** | Suspicious/restricted/banned accounts with audit trail |
@@ -179,7 +175,7 @@ place:
 | Frontend | React + Vite + TypeScript, Tailwind (shadcn/ui components) | PWA, served by Vercel |
 | Backend | Convex (TypeScript functions + schema) | Database, auth, moderation, feeds, DMs |
 | Media | Cloudinary (primary) with Convex storage fallback | Photos/videos/audio live outside the database |
-| Deepfake detection | Resemble v2 API | Image, audio, and video deepfake detection |
+| AI content detection | In-house byte-level scanner + C2PA verification | AI-generator metadata, provenance, deepfake markers |
 | Email | Resend | Verification and password-reset codes |
 | Bot check | Cloudflare Turnstile | Human-only email triggers |
 | Delivery | Vercel (primary) | `purewire.vercel.app` |
@@ -211,9 +207,6 @@ place:
 - **Self-auditing sessions** — a one-way UA hash + coarse timezone/language
   token is filed per session; a wildly different fingerprint on a later
   load silently revokes the session (stolen-cookie protection)
-- **Dead-letter queue** — failed external jobs (Resemble detection, link
-  scans) are retried on a backoff schedule, then surfaced as dead letters
-  to admins instead of silently dropping
 - **Anti-bot challenge detection** — link previews run
   [`is-antibot`](https://github.com/microlinkhq/is-antibot) (MIT) on every
   fetched URL; a destination answering with a Cloudflare/DataDome/…
@@ -258,7 +251,6 @@ annotated reference.
 | `TURNSTILE_SECRET_KEY` | Server-side Turnstile verification |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_UPLOAD_PRESET` | Unsigned upload preset |
 | `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Signed deletes + video re-uploads |
-| `RESEMBLE_API_KEY` | Resemble v2 Bearer token for deepfake detection |
 | `TEST_HARNESS_ENABLED` / `TEST_HARNESS_SECRET` | QA harness (disabled in production) |
 
 ## QA suite
@@ -285,7 +277,6 @@ All scripts runnable locally against the live site:
 | `npm run qa:admin-responsive` | Admin dashboard at 320/390/768 px widths |
 | `npm run qa:pages-inflation` | Page inflation at 800px with root-font-size scaling |
 | `npm run qa:cloudinary-health` | Unsigned-preset upload probe |
-| `npm run qa:resemble-health` | Resemble v2 API connectivity probe |
 | `npm run qa:session-audit` | Session-lifetime guarantees |
 | `npm run qa:count-drift` | Data-integrity DQS audit (harness-gated) |
 | `npm run qa:cleanup-test-users` | Sweep leftover QA accounts (harness-gated) |

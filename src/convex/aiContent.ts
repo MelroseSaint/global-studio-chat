@@ -7,9 +7,7 @@ import {
   type C2paInfo,
 } from "@/lib/ai-media-scan";
 import { scanForRacism } from "@/lib/racism-guard";
-import { detectMedia, resembleConfigured, resembleApiKey } from "@/lib/resemble";
 
-import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
 
 export type { AiScanResult };
@@ -359,25 +357,15 @@ export type AiMediaStatus =
 
 /**
  * Structured evidence from the multi-signal media assessment. Every signal
- * the scanner examined — byte-level metadata, external voice detection,
- * Content Credentials provenance, and OCR-racism — is recorded here so the
- * admin review queue can show exactly what was found and why the post was
- * flagged, blocked, or cleared.
+ * the scanner examined — byte-level metadata, Content Credentials
+ * provenance, and OCR-racism — is recorded here so the admin review queue
+ * can show exactly what was found and why the post was flagged, blocked,
+ * or cleared.
  */
 export interface AiMediaEvidence {
   /** The byte-level scan verdict: which generator marker was found (if any),
    * or "clean" when no known AI tool metadata was present. */
   byteScan: { status: "clean" | "review" | "blocked"; reason?: string };
-  /** Resemble AI deepfake-detection result (v2 API). Runs on audio, image,
-   * and video when the API key is configured. Null when skipped or failed. */
-  resemble: {
-    isAi: boolean;
-    confidence: number;
-    /** Per-media-type label ("fake"/"real", "Fake"/"Real") and scores. */
-    metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number };
-    /** When audio was synthetic, the likely source platform (e.g. "elevenlabs"). */
-    sourceLabel?: string | null;
-  } | null;
   /** Content Credentials (C2PA) provenance from the file's manifest, when
    * present. Null when C2PA was absent or unreadable. */
   c2pa: { humanCapture: boolean; claimGenerator?: string } | null;
@@ -426,7 +414,6 @@ export const scanMediaForAi = action({
     // non-clean signal that decided the verdict.
     const evidence: AiMediaEvidence = {
       byteScan: { status: "clean" },
-      resemble: null,
       c2pa: null,
       ocrRacism: null,
     };
@@ -453,56 +440,6 @@ export const scanMediaForAi = action({
       if (result.status !== "clean") {
         evidence.byteScan = { status: result.status, reason: result.reason };
         return { status: result.status, reason: result.reason ?? "Media flagged by the AI scan.", evidence };
-      }
-      // Resemble AI deepfake detection (v2): run on ALL media types — audio,
-      // image, and video — for an authoritative second opinion alongside the
-      // byte-level metadata scan. Only fires when the API key is set — graceful
-      // degradation (detection is skipped, never fails an upload).
-      if (resembleConfigured()) {
-        const mime =
-          item.kind === "image" ? "image/jpeg"
-          : item.kind === "video" ? "video/mp4"
-          : item.kind === "audio" ? "audio/wav"
-          : "application/octet-stream";
-        try {
-          const voice = await detectMedia(bytes, mime, `upload.${item.kind === "image" ? "jpg" : item.kind === "video" ? "mp4" : "wav"}`, resembleApiKey());
-          if (voice !== null) {
-            evidence.resemble = {
-              isAi: voice.isAi,
-              confidence: voice.confidence,
-              metrics: voice.metrics,
-              sourceLabel: voice.sourceLabel,
-            };
-            if (voice.isAi) {
-              const pct = Math.round(voice.confidence * 100);
-              const src = voice.sourceLabel ? ` · source: ${voice.sourceLabel}` : "";
-              return {
-                status: "blocked",
-                reason: `This ${item.kind} was identified as AI-generated (confidence: ${pct}%${src}). AI-generated media is not allowed on PureWire.`,
-                evidence,
-              };
-            }
-          }
-        } catch (err) {
-          console.warn("Resemble detection failed:", err);
-          // Dead-letter the failed external job instead of silently
-          // dropping it: the retry sweep will re-attempt it, and if it
-          // keeps failing the admin queue surfaces it. The media scan
-          // itself continues with the byte-level verdict either way.
-          try {
-            await ctx.runMutation(internal.retryQueue.enqueueInternal, {
-              jobType: "resemble-detect",
-              payload: {
-                kind: item.kind,
-                storageId: item.storageId,
-                mime,
-              },
-              lastError: err instanceof Error ? err.message : String(err),
-            });
-          } catch {
-            // The DLQ itself must never break an upload.
-          }
-        }
       }
       // OCR-based racism check
       if (result.ocrText !== undefined && result.ocrText.length > 0) {
