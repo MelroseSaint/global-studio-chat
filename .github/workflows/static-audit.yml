@@ -123,6 +123,19 @@ jobs:
       - run: npm ci
       - run: npm run qa:ai-scan
 
+  automation-qa:
+    name: Automation detector QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:automation
+
   ai-scan-integration:
     name: AI scan integration QA (harness)
     runs-on: ubuntu-latest

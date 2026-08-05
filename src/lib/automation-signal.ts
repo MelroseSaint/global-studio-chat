@@ -23,6 +23,30 @@ export interface AutomationResult {
   signals: string[];
 }
 
+/**
+ * The small slice of browser state the detector reads. Injectable for QA:
+ * a clean profile and a simulated Playwright profile are unit-tested with
+ * the same code path the browser runs.
+ */
+export interface AutomationBrowser {
+  navigator: {
+    webdriver?: boolean;
+    userAgent?: string;
+    plugins?: { length: number };
+    mimeTypes?: { length: number };
+    permissions?: unknown;
+    maxTouchPoints?: number;
+  };
+  window: {
+    getOwnPropertyNames?: (obj: object) => string[];
+    chrome?: Record<string, unknown>;
+    outerWidth?: number;
+    outerHeight?: number;
+    innerWidth?: number;
+    innerHeight?: number;
+  };
+}
+
 /** Automation-likelihood weight per matched signal. */
 const WEIGHTS: Record<string, number> = {
   webdriver: 25,
@@ -39,18 +63,26 @@ const WEIGHTS: Record<string, number> = {
 };
 
 /**
- * Run every check that is safe in this environment and return the scored
- * result. Checks that throw (older browsers, exotic embeddings) are simply
+ * Run every check against a browser environment and return the scored
+ * result. Defaults to the real browser globals; QA passes in synthetic
+ * navigator/window objects to simulate clean and driven-browser profiles.
+ * Checks that throw (older browsers, exotic embeddings) are simply
  * skipped — a failure to fingerprint never blocks a real user.
  */
-export function detectAutomation(): AutomationResult {
+export function detectAutomation(
+  env: AutomationBrowser = {
+    navigator: navigator as AutomationBrowser["navigator"],
+    window: window as AutomationBrowser["window"],
+  },
+): AutomationResult {
   const signals: string[] = [];
+  const { navigator: nav, window: win } = env;
 
   // 1. navigator.webdriver — the single most reliable automation flag.
   //    Set true by Chrome/Edge/Firefox when an automation driver owns the
   //    browser; real users' browsers never set it.
   try {
-    if ((navigator as { webdriver?: boolean }).webdriver === true) {
+    if (nav.webdriver === true) {
       signals.push("webdriver");
     }
   } catch {
@@ -61,27 +93,29 @@ export function detectAutomation(): AutomationResult {
   //    objects on window, and the automation runtime usually patches
   //    window.chrome differently than a real browser.
   try {
-    const keys = Object.getOwnPropertyNames(window).filter((k) =>
-      k.startsWith("cdc_"),
+    const keys = (win.getOwnPropertyNames ?? Object.getOwnPropertyNames).call(
+      null,
+      win,
     );
-    if (keys.length > 0) signals.push("cdpInjected");
+    if (keys.some((k) => k.startsWith("cdc_"))) {
+      signals.push("cdpInjected");
+    }
   } catch {
     /* skip */
   }
 
   // 3. Known automation globals.
   try {
-    const w = window as unknown as Record<string, unknown>;
+    const w = win as unknown as Record<string, unknown>;
     if (
-      typeof (w as { __playwright?: unknown }).__playwright !== "undefined" ||
-      typeof (w as { __pw_manual_eval?: unknown }).__pw_manual_eval !==
-        "undefined"
+      typeof w.__playwright !== "undefined" ||
+      typeof w.__pw_manual_eval !== "undefined"
     ) {
       signals.push("playwright");
     }
     if (
-      typeof (w as { _phantom?: unknown })._phantom !== "undefined" ||
-      typeof (w as { callPhantom?: unknown }).callPhantom !== "undefined"
+      typeof w._phantom !== "undefined" ||
+      typeof w.callPhantom !== "undefined"
     ) {
       signals.push("puppeteer");
     }
@@ -91,7 +125,7 @@ export function detectAutomation(): AutomationResult {
 
   // 4. Headless user agent marker.
   try {
-    const ua = navigator.userAgent ?? "";
+    const ua = nav.userAgent ?? "";
     if (/HeadlessChrome|PhantomJS|Headless/i.test(ua)) {
       signals.push("headlessChrome");
     }
@@ -103,9 +137,9 @@ export function detectAutomation(): AutomationResult {
   //    builds and many automation drivers report none (and no mimeTypes).
   try {
     if (
-      navigator.plugins !== undefined &&
-      navigator.plugins.length === 0 &&
-      (navigator as { mimeTypes?: { length: number } }).mimeTypes?.length === 0
+      nav.plugins !== undefined &&
+      nav.plugins.length === 0 &&
+      nav.mimeTypes?.length === 0
     ) {
       signals.push("noPlugins");
     }
@@ -116,11 +150,11 @@ export function detectAutomation(): AutomationResult {
   // 6. Chrome API surface. Real Chrome exposes chrome.csi / chrome.loadTimes;
   //    headless and CDP-spawned browsers often strip or patch them.
   try {
-    const chromeLike = /Chrome\//.test(navigator.userAgent ?? "");
-    const c = (window as { chrome?: Record<string, unknown> }).chrome;
+    const chromeLike = /Chrome\//.test(nav.userAgent ?? "");
+    const c = win.chrome;
     if (
       chromeLike &&
-      !/Edg\//.test(navigator.userAgent ?? "") &&
+      !/Edg\//.test(nav.userAgent ?? "") &&
       c !== undefined &&
       typeof c.csi === "undefined" &&
       typeof c.loadTimes === "undefined"
@@ -134,7 +168,7 @@ export function detectAutomation(): AutomationResult {
   // 7. Permissions API presence. Automation runtimes sometimes run with a
   //    reduced permissions surface; absence alone is weak, so it's cheap.
   try {
-    if (typeof navigator.permissions === "undefined") {
+    if (typeof nav.permissions === "undefined") {
       signals.push("missingPermissions");
     }
   } catch {
@@ -145,10 +179,10 @@ export function detectAutomation(): AutomationResult {
   //    chrome frame); real desktop browsers differ by > 30 px. Weak signal.
   try {
     if (
-      window.outerWidth > 0 &&
-      window.outerHeight > 0 &&
-      Math.abs(window.outerWidth - window.innerWidth) < 10 &&
-      Math.abs(window.outerHeight - window.innerHeight) < 10
+      (win.outerWidth ?? 0) > 0 &&
+      (win.outerHeight ?? 0) > 0 &&
+      Math.abs((win.outerWidth ?? 0) - (win.innerWidth ?? 0)) < 10 &&
+      Math.abs((win.outerHeight ?? 0) - (win.innerHeight ?? 0)) < 10
     ) {
       signals.push("dimensionClue");
     }
@@ -159,9 +193,8 @@ export function detectAutomation(): AutomationResult {
   // 9. Touch consistency. A touch-capable UA reporting zero touch points is
   //    a common headless/emulator tell.
   try {
-    const ua = (navigator.userAgent ?? "").toLowerCase();
-    const touchPoints = (navigator as { maxTouchPoints?: number })
-      .maxTouchPoints;
+    const ua = (nav.userAgent ?? "").toLowerCase();
+    const touchPoints = nav.maxTouchPoints;
     if (
       (/mobile|android|iphone|ipad/i.test(ua) || (touchPoints ?? 0) > 0) &&
       typeof touchPoints === "number" &&
@@ -177,8 +210,7 @@ export function detectAutomation(): AutomationResult {
   // 10. WebDriver-controlled runtime hint (Selenium sets this on some
   //     browsers; harmless if absent).
   try {
-    const r = (navigator as { webdriver?: boolean }).webdriver;
-    if (r === true && signals.includes("webdriver")) {
+    if (nav.webdriver === true && signals.includes("webdriver")) {
       signals.push("controlledByRuntime");
     }
   } catch {
