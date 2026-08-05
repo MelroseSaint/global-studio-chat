@@ -749,6 +749,10 @@ function TicketsPanel() {
   const { ref, inView } = useInView();
   const [reply, setReply] = useState<Record<string, string>>({});
   const [draftStatus, setDraftStatus] = useState<Record<string, string>>({});
+  // Long ticket messages are clamped by default so one verbose report can't
+  // tower over the queue (the tablet declutter); per-ticket expand reveals
+  // the full text on demand.
+  const [expandedMsg, setExpandedMsg] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (inView && status === "CanLoadMore") {
@@ -872,7 +876,32 @@ function TicketsPanel() {
               ) : null}
             </>
           ) : null}
-          <p className="mt-2 rounded-lg bg-muted/50 p-3 text-sm">{t.message}</p>
+          <div className="mt-2 rounded-lg bg-muted/50 p-3 text-sm">
+            <p
+              className={`whitespace-pre-wrap ${
+                expandedMsg[t._id] ? "" : "line-clamp-3"
+              }`}
+            >
+              {t.message}
+            </p>
+            {t.message.length > 220 ? (
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedMsg((m) => ({ ...m, [t._id]: !m[t._id] }))
+                }
+                aria-expanded={!!expandedMsg[t._id]}
+                className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                {expandedMsg[t._id] ? (
+                  <ChevronUp className="size-3" />
+                ) : (
+                  <ChevronDown className="size-3" />
+                )}
+                {expandedMsg[t._id] ? "Show less" : "Show more"}
+              </button>
+            ) : null}
+          </div>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <Textarea
               value={reply[t._id] ?? ""}

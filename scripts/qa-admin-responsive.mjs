@@ -225,7 +225,13 @@ async function inspectAdmin(page, widthLabel, width) {
           true,
           `${kebabs} actionable rows`,
         );
-        await page.locator(control).first().click();
+        // The kebab menu is the dropdown trigger; `control` is the
+        // Verify/Unverify button, which toggles verification and opens no
+        // menu. Clicking the kebab is what reveals "Remove account".
+        await page
+          .locator('button[aria-label*="Actions for"]')
+          .first()
+          .click();
         await page.waitForTimeout(400);
         const items = await page
           .locator('[data-slot="dropdown-menu-item"]')
@@ -266,6 +272,51 @@ async function inspectAdmin(page, widthLabel, width) {
           (await entries.count()) > 0,
         );
         await logToggle.click();
+        await page.waitForTimeout(200);
+      }
+    }
+    if (tab === "Security") {
+      // The per-account audit trail is collapsed behind its "Audit trail"
+      // toggle, so a long history never inflates every row (the tablet
+      // declutter). Data-aware: only flagged accounts carry the toggle.
+      const trailToggle = page.locator('button:has-text("Audit trail")');
+      if ((await trailToggle.count()) > 0) {
+        check(
+          `${widthLabel}: audit trail collapsed by default`,
+          (await page.getByText("Current flags").count()) === 0,
+        );
+        await trailToggle.first().click();
+        // The history streams in after the toggle opens — poll, don't sleep.
+        const deadline = Date.now() + PANEL_WAIT_MS;
+        while (Date.now() < deadline) {
+          if ((await page.getByText("Current flags").count()) > 0) break;
+          await page.waitForTimeout(PANEL_POLL_MS);
+        }
+        check(
+          `${widthLabel}: audit trail expands to show the history`,
+          (await page.getByText("Current flags").count()) > 0,
+        );
+        await trailToggle.first().click();
+        await page.waitForTimeout(200);
+      }
+    }
+    if (tab === "AI review") {
+      // The per-post evidence block (scan signals) is collapsed behind its
+      // "Evidence" toggle, so the queue stays scannable. Data-aware: only
+      // posts waiting on review carry the toggle.
+      const evidenceToggle = page.locator('button:has-text("Evidence")');
+      if ((await evidenceToggle.count()) > 0) {
+        check(
+          `${widthLabel}: AI review evidence collapsed by default`,
+          (await page.getByText("AI detector").count()) === 0,
+        );
+        await evidenceToggle.first().click();
+        await page.waitForTimeout(300);
+        check(
+          `${widthLabel}: AI review evidence expands to show the scan`,
+          (await page.getByText("AI detector").count()) > 0,
+        );
+        await evidenceToggle.first().click();
         await page.waitForTimeout(200);
       }
     }
