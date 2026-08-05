@@ -2254,7 +2254,17 @@ function RacismReviewPanel() {
 
   const posts = results as unknown as {
     _id: string; _creationTime: number; content: string;
-    aiStatusReason?: string | null; racismReviewCategory?: string | null;
+    aiStatusReason?: string | null;
+    aiEvidence?: {
+      byteScan?: { status: string; reason?: string };
+      resemble?: { isAi: boolean; confidence: number; metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number }; sourceLabel?: string | null } | null;
+      c2pa?: { humanCapture: boolean; claimGenerator?: string } | null;
+      ocrRacism?: { status: string; reason: string } | null;
+    } | null;
+    c2paVerifiedHuman?: boolean | null;
+    c2paClaimGenerator?: string | null;
+    creatorDisclosure?: string | null;
+    racismReviewCategory?: string | null;
     racismEvasionScore?: number | null; reportCount?: number | null;
     author: { username?: string | null; name?: string | null } | null;
   }[];
