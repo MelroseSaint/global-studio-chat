@@ -55,6 +55,7 @@ import { createHash } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -231,7 +232,7 @@ async function backendChecks() {
       content: `Pipeline check video ${stamp}`,
       media: [{ storageId: cleanedItem.storageId, kind: "video", stripped: true }],
       aiMediaStatus: "clean",
-    });
+      ...(await powProof(client))});
     check("posted the cleaned clip", post.ok === true);
     let fetched = null;
     for (let i = 0; i < 20; i++) {

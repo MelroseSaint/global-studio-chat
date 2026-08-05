@@ -31,6 +31,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -123,7 +124,7 @@ async function main() {
     const plainRes = await client.action(api.posts.createPost, {
       content: `Reading this today — https://example.com/article ${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     check("a normal article link posts clean", plainRes.ok === true);
     check(
       "a clean link is not routed to review",
@@ -132,7 +133,7 @@ async function main() {
     const officialRes = await client.action(api.posts.createPost, {
       content: `The platform lives at purewire.vercel.app — ${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     check(
       "the official PureWire domain posts clean",
       officialRes.ok === true && officialRes.aiReviewReason === undefined,
@@ -144,7 +145,7 @@ async function main() {
     const adultRes = await client.action(api.posts.createPost, {
       content: `New content on my page — https://onlyfans.com/fanclub ${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     check("an adult subscription link is blocked in a post", adultRes.ok === false);
     check(
       "the author learns the adult-platform rule by name",
@@ -154,7 +155,7 @@ async function main() {
     const adultSubRes = await client.action(api.posts.createPost, {
       content: `Live now — https://m.chaturbate.com/${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     check(
       "a subdomain of an adult cam site is blocked too",
       adultSubRes.ok === false,
@@ -176,7 +177,7 @@ async function main() {
     const adviceRes = await client.action(api.posts.createPost, {
       content: `Always verify your email after signing up — it protects your account. ${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     check(
       "legit security advice posts clean",
       adviceRes.ok === true && adviceRes.aiReviewReason === undefined,
@@ -184,7 +185,7 @@ async function main() {
     const praiseRes = await client.action(api.posts.createPost, {
       content: `You have won my respect today, friends. ${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     check(
       "innocent 'you have won' phrasing posts clean",
       praiseRes.ok === true && praiseRes.aiReviewReason === undefined,
@@ -194,7 +195,7 @@ async function main() {
     const reviewRes = await client.action(api.posts.createPost, {
       content: `Found something interesting — https://bit.ly/xYz123 ${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     const reviewPostId = reviewRes.ok === true ? reviewRes.postId : null;
     check("a link shortener post is accepted into review", reviewRes.ok === true);
     check(
@@ -232,7 +233,7 @@ async function main() {
     const blockRes = await client.action(api.posts.createPost, {
       content: `FREE followers!! Verify your account at http://purew1re-verify.com/login now ${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     check(
       "a scam post with a lookalike PureWire login is rejected",
       blockRes.ok === false && /phish|scam|steal/i.test(blockRes.error),
@@ -294,13 +295,13 @@ async function main() {
     const bPostRes = await client.action(api.posts.createPost, {
       content: `A post from the QA viewer to comment on — ${stamp}`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     const bPostId = bPostRes.ok === true ? bPostRes.postId : null;
     client.setAuth(C2.token);
     const cBlock = await client.mutation(api.posts.addComment, {
       postId: bPostId,
       content: "get free followers now!!",
-    });
+      ...(await powProof(client))});
     check(
       "a scam comment is rejected",
       cBlock !== null && cBlock.ok === false && /phish|scam|link/i.test(cBlock.error),
@@ -308,7 +309,7 @@ async function main() {
     const cShort = await client.mutation(api.posts.addComment, {
       postId: bPostId,
       content: "check this out https://tinyurl.com/xyz",
-    });
+      ...(await powProof(client))});
     check(
       "a shortened-link comment is rejected with direct-link guidance",
       cShort !== null && cShort.ok === false,

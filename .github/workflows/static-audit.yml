@@ -298,3 +298,22 @@ jobs:
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
         run: npm run qa:cleanup-test-users
+
+  cleanup-test-domains:
+    name: Sweep leftover QA blocklist domains
+    runs-on: ubuntu-latest
+    needs:
+      - blocklist-qa
+      - phishing-qa
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Erase leftover QA domains/patterns/sources from production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: npm run qa:cleanup-test-domains

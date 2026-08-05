@@ -55,6 +55,7 @@ import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
 import { passwordHint, resolveAdminPassword } from "./lib/qa-secrets.mjs";
+import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -183,7 +184,7 @@ async function removeAccountChecks() {
       content: `Remove-account QA post ${stamp} — original text written by a human.`,
       ...(mediaItem ? { media: mediaItem } : {}),
       aiMediaStatus: "clean",
-    });
+      ...(await powProof(client))});
     check(
       "throwaway posted with media",
       postRes.ok === true,

@@ -34,6 +34,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -111,7 +112,7 @@ async function main() {
     client.setAuth(A.token);
     const postRes = await client.action(api.posts.createPost, {
       content: `A public note from the reinstate QA run — ${stamp}.`,
-    });
+      ...(await powProof(client))});
     const postId = postRes.ok === true ? postRes.postId : null;
     check("throwaway posted a public note", postRes.ok === true);
 
@@ -127,7 +128,7 @@ async function main() {
       "significantly this matters overall.";
     const aiRes = await client.action(api.posts.createPost, {
       content: aiText,
-    });
+      ...(await powProof(client))});
     check("AI-suspicious post accepted into review", aiRes.ok === true);
     let s = await state();
     check(
@@ -255,7 +256,7 @@ async function main() {
     );
     const postAgain = await client.action(api.posts.createPost, {
       content: `Posting again after reinstatement — ${stamp}.`,
-    });
+      ...(await powProof(client))});
     check("reinstated account can post again", postAgain.ok === true);
 
     // ── 9. Cleanup: the real erasure path removes the throwaways ───────────

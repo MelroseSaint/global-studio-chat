@@ -25,6 +25,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -101,10 +102,9 @@ async function main() {
     const postUser = await mkUser("p");
     client.setAuth(postUser.token);
     const postRes = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `Check my page — https://${testDomain}/hello ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check("a post linking the added domain is rejected", postRes?.ok === false);
     check(
       "the rejection names the adult-platform rule",
@@ -112,23 +112,21 @@ async function main() {
         postRes.error.includes("Adult platforms aren't allowed"),
     );
     const subPost = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `Live at https://${subDomain}/now ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check("a subdomain of the added domain is rejected too", subPost?.ok === false);
 
     const commentUser = await mkUser("c");
     client.setAuth(commentUser.token);
     const host = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `host post ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     const commentRes = await client.mutation(api.posts.addComment, {
       postId: host.postId,
       content: `see https://${testDomain} ${stamp}`,
-    });
+      ...(await powProof(client))});
     check("a comment linking the domain is rejected", commentRes?.ok === false);
 
     const bioUser = await mkUser("b");
@@ -170,10 +168,9 @@ async function main() {
     const patUser = await mkUser("pat");
     client.setAuth(patUser.token);
     const patternPost = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `Claim it at https://example.com/${patternText} ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check("a post matching a blocked URL pattern is rejected", patternPost?.ok === false);
 
     // ── 3. The active list is served for the client DM gate ──────────────
@@ -222,15 +219,23 @@ async function main() {
     );
 
     // ── 4b. A feed with a `# Category:` header syncs into that bucket ────
-    // Points at a PureWire-served feed (public/data/adult/qa-routing.txt)
-    // carrying a FRESH domain — one not in the core list — so the sync
+    // Carries a FRESH domain — one not in the core list — so the sync
     // actually inserts a row and the header routing is genuinely exercised:
     // the parser must read `# Category: adult_fetish` and land the new
-    // domain there, not in the adult_other default.
+    // domain there, not in the adult_other default. The feed is served by
+    // httpbin.org/base64 (a deterministic echo of our own bytes) instead of
+    // a committed file on the platform — PureWire's static data/ dir must
+    // never carry test content. The stamp rides in a comment line so every
+    // run's URL is unique (no HTTP caching) while the parsed domain stays
+    // exactly `qa-routing-feed.test`.
     const routingDomain = "qa-routing-feed.test";
+    const routingFeed = Buffer.from(
+      `# Category: adult_fetish\n# pwqa-${stamp}\n${routingDomain}\n`,
+      "utf8",
+    ).toString("base64");
     const feedSrc = await client.mutation(api.blocklist.upsertDomainSource, {
       name: `qa-feed-${stamp}`,
-      url: `https://purewire.vercel.app/data/adult/qa-routing.txt`,
+      url: `https://httpbin.org/base64/${routingFeed}`,
       format: "domain",
       enabled: true,
     });
@@ -304,10 +309,9 @@ async function main() {
     // well under the shadowban threshold.
     client.setAuth(postUser.token);
     const afterPause = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `Check https://${testDomain}/again ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check("pausing the entry lets the domain post again", afterPause?.ok === true);
 
     // ── 7. IDN → ASCII (punycode): Unicode and xn-- forms meet ───────────
@@ -336,28 +340,25 @@ async function main() {
     const idnUserA = await mkUser("idn-u");
     client.setAuth(idnUserA.token);
     const idnUnicodePost = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `visit https://${idnDomain}/x ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check("a Unicode host is caught against its xn-- block", idnUnicodePost?.ok === false);
 
     const idnUserB = await mkUser("idn-p");
     client.setAuth(idnUserB.token);
     const idnPunyPost = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `visit https://${storedIdn.domain}/y ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check("the xn-- form is caught identically", idnPunyPost?.ok === false);
 
     const idnUserC = await mkUser("idn-s");
     client.setAuth(idnUserC.token);
     const idnSubPost = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `visit https://m.${idnDomain}/z ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check("a subdomain of the IDN host is caught too", idnSubPost?.ok === false);
 
     // ── 8. Redirect inspection: final-domain lookup + chain recording ────
@@ -439,28 +440,25 @@ async function main() {
     const negUser = await mkUser("neg");
     client.setAuth(negUser.token);
     const lookalike = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `https://notonlyfans.com/post ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check(
       "notonlyfans.com is NOT matched (lookalike stays clean)",
       lookalike?.ok === true,
     );
     const embedded = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `https://onlyfans.com.example.com/post ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check(
       "onlyfans.com.example.com is NOT matched (embedded stays clean)",
       embedded?.ok === true,
     );
     const cleanDom = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `https://sub.onlyfans.com.example.org/post ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check(
       "a subdomain of the embedded host stays clean too",
       cleanDom?.ok === true,
@@ -482,10 +480,9 @@ async function main() {
       obfUsers.push(u);
       client.setAuth(u.token);
       const res = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
         content: `check out ${text} ${stamp}`,
-      creatorDisclosure: 'human-made'
-      });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
       check(`obfuscated form “${text}” is blocked`, res?.ok === false);
     }
     // The negative control: a lookalike written textually must stay clean —
@@ -493,10 +490,9 @@ async function main() {
     const obfNeg = await mkUser("obf-neg");
     client.setAuth(obfNeg.token);
     const obfClean = await client.action(api.posts.createPost, {
-      creatorDisclosure: 'human-made',
       content: `notonlyfans dot com is nothing ${stamp}`,
-      creatorDisclosure: 'human-made'
-    });
+      creatorDisclosure: 'human-made',
+      ...(await powProof(client))});
     check("a textual lookalike stays clean (no false positive)", obfClean?.ok === true);
 
     // ── Cleanup (guaranteed by finally) ───────────────────────────────
@@ -514,13 +510,17 @@ async function main() {
         client.mutation(api.blocklist.setBlockedDomainActive, { domain: testDomain, active: false }).catch(() => {}),
         client.mutation(api.blocklist.deleteBlockedDomain, { domain: routingDomain }).catch(() => {}),
       ]);
-      // Sweep ALL qa- owned rows from any interrupted run (not just this stamp).
+      // Sweep ALL leaked rows from ANY interrupted run (not just this stamp):
+      // domains owned by a qa- source OR carrying a reserved .test TLD (the
+      // IDN test domains täst-*.test are admin-added, so their source is
+      // "manual" — only the .test suffix identifies them), qa- patterns,
+      // and qa- sources.
       let cursor = null;
       let swept = 0;
       for (let i = 0; i < 20; i++) {
         const page = await client.query(api.blocklist.listBlockedDomains, { paginationOpts: { numItems: 200, cursor } });
         for (const row of page.page) {
-          if (row.source.startsWith("qa-")) {
+          if (row.source.startsWith("qa-") || row.domain.endsWith(".test")) {
             await client.mutation(api.blocklist.deleteBlockedDomain, { domain: row.domain }).catch(() => {});
             swept++;
           }
@@ -528,7 +528,13 @@ async function main() {
         if (page.isDone) break;
         cursor = page.continueCursor;
       }
-      // Sweep QA sources.
+      // Sweep QA patterns and sources.
+      const patternList = await client.query(api.blocklist.listBlockedPatterns);
+      for (const p of (patternList ?? [])) {
+        if (p.pattern.includes("qa-")) {
+          await client.mutation(api.blocklist.deleteBlockedPattern, { pattern: p.pattern }).catch(() => {});
+        }
+      }
       const sourceList = await client.query(api.blocklist.listDomainSources);
       for (const s of (sourceList ?? [])) {
         if (s.name.startsWith("qa-")) {

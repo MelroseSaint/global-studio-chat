@@ -25,6 +25,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -100,7 +101,7 @@ async function main() {
     const bRes = await client.action(api.posts.createPost, {
       content: original,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     const bPostId = bRes.ok === true ? bRes.postId : null;
     client.setAuth(A.token);
     // createPost rejects duplicates with a structured result (not a thrown
@@ -108,7 +109,7 @@ async function main() {
     const dupRes = await client.action(api.posts.createPost, {
       content: original,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     const duplicateRejected =
       dupRes.ok === false && /already exists/i.test(dupRes.error);
     check("duplicate post rejected as stolen content", duplicateRejected);
@@ -122,7 +123,7 @@ async function main() {
     const aiRes = await client.action(api.posts.createPost, {
       content: aiText,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     const aiPostId = aiRes.ok === true ? aiRes.postId : null;
     check("AI-suspicious post accepted into review", aiRes.ok === true);
     check(
@@ -163,7 +164,7 @@ async function main() {
       await client.action(api.posts.createPost, {
         content: `QA filler ${i} — a plain human note ${stamp}.`,
         creatorDisclosure: "human-made",
-      });
+        ...(await powProof(client))});
     }
 
     // The duplicate +3 and rate-limit +1 commit with their own mutations —
@@ -190,12 +191,12 @@ async function main() {
     const phantomRes = await client.action(api.posts.createPost, {
       content: `A quiet post after the silence — ${stamp}.`,
       creatorDisclosure: "human-made",
-    });
+      ...(await powProof(client))});
     const phantomPostId = phantomRes.ok === true ? phantomRes.postId : null;
     await client.mutation(api.posts.addComment, {
       postId: bPostId,
       content: `A quiet comment from the silenced account — ${stamp}.`,
-    });
+      ...(await powProof(client))});
     await client.mutation(api.users.follow, { username: bUser });
 
     // ── 5. Invisible to the second account ─────────────────────────────────
