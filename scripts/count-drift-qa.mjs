@@ -58,7 +58,9 @@ async function main() {
     );
     process.exit(2);
   }
-  console.log(`\nPureWire counter-drift QA (posts + follows + engagement) (${CONVEX_URL})\n`);
+  console.log(
+    `\nPureWire counter-drift QA (posts + follows + engagement + test traces) (${CONVEX_URL})\n`,
+  );
   const client = new ConvexHttpClient(CONVEX_URL);
   const { enabled } = await client.query(api.testHarness.isEnabled);
   check("harness enabled", enabled === true);
@@ -166,6 +168,25 @@ async function main() {
           )
           .join(" | ")}`
       : `all ${postsSeen} posts consistent`,
+  );
+
+  // Never keep test stuff on the site: reserved-prefix (qa_/pwtest) users
+  // and removal-log entries must both be zero. A leftover test account or a
+  // test erasure polluting the one-way audit log fails the gate.
+  const traces = await client.query(api.testHarness.getTestTraceCounts, {
+    secret: SECRET,
+  });
+  check(
+    "no test users on the deployment",
+    traces.testUsers.length === 0,
+    traces.testUsers.length > 0 ? `found: ${traces.testUsers.join(", ")}` : "",
+  );
+  check(
+    "no test entries in the removal log",
+    traces.testRemovalEntries.length === 0,
+    traces.testRemovalEntries.length > 0
+      ? `found: ${traces.testRemovalEntries.join(", ")}`
+      : "",
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

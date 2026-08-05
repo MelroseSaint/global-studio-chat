@@ -441,7 +441,7 @@ function AdminDashboard({ meId }: { meId: string }) {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
+        <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-4 md:grid-cols-4 lg:grid-cols-7">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="tickets">Tickets</TabsTrigger>
           <TabsTrigger value="posts">Content</TabsTrigger>

@@ -740,3 +740,104 @@ jobs:
               });
               console.log(`Closed blocklist QA alert issue #${issue.number}.`);
             }
+
+  sweep-traces:
+    # Always the LAST job. Every QA job above creates reserved-prefix
+    # (qa_*) throwaway accounts, and admin erasures write one-way
+    # removalLog rows — so a QA run can otherwise leave test data on the
+    # live deployment. This sweep erases any straggler accounts and purges
+    # the test entries from the audit log, enforcing "never keep test stuff
+    # on the site" after every nightly/manual run.
+    name: Sweep test traces (accounts + removal log)
+    needs:
+      - auth-loop
+      - cloudinary-upload
+      - phishing-scan
+      - blocklist-sync
+      - moderation-reinstate
+      - blocklist-qa
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sweep test users + purge test removal-log entries
+        if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:cleanup-test-users 2>&1 | tee sweep-traces.log
+
+      - name: Upload the sweep log
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweep-traces-log
+          path: sweep-traces.log
+
+      - name: Alert on failure
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-sweep-traces";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Test-trace sweep failed (${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The nightly test-trace sweep (cleanup-test-users + removal-log purge) failed.",
+                "QA test accounts or test removal-log entries may still be on the production deployment.",
+                "Run `TEST_HARNESS_SECRET=<secret> npm run qa:cleanup-test-users` locally to inspect and clean.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: ${{ success() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-sweep-traces";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open sweep alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed sweep alert issue #${issue.number}.`);
+            }

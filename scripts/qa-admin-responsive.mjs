@@ -69,7 +69,7 @@ const WIDTHS = [
  * swipeable stats, sm 3-across, md 4-across, lg the full 7-across row.
  */
 const tabColsAt = (width) =>
-  width >= 1024 ? 7 : width >= 768 ? 4 : width >= 640 ? 3 : 2;
+  width >= 1024 ? 7 : width >= 640 ? 4 : 2;
 const isPhoneWidth = (width) => width < 640;
 
 /** Every admin tab, in the order it appears in the UI. */
@@ -194,6 +194,35 @@ async function inspectAdmin(page, widthLabel, width) {
     `${widthLabel}: tabs grid-cols-${expectedCols} (not cramped 7-across)`,
     cols === expectedCols,
     `cols=${cols}`,
+  );
+  // The last three tabs — Security, Silenced, Blocklist — must be clearly
+  // visible: every label inside the viewport and none truncated (the
+  // Silk-inflated Fire pass especially). An off-screen or clipped tab is
+  // the exact "can't even be seen" regression this gate exists to catch.
+  const tabVisibility = await page
+    .locator('[data-slot="tabs-list"] [data-slot="tabs-trigger"]')
+    .evaluateAll((els) =>
+      els.map((t) => {
+        const b = t.getBoundingClientRect();
+        const label = t.querySelector("span") ?? t;
+        return {
+          text: t.textContent.trim(),
+          inViewport: b.left >= 0 && b.right <= window.innerWidth + 1,
+          notClipped: label.scrollWidth <= label.clientWidth + 1,
+        };
+      }),
+    );
+  const offScreen = tabVisibility.filter((t) => !t.inViewport).map((t) => t.text);
+  const clipped = tabVisibility.filter((t) => !t.notClipped).map((t) => t.text);
+  check(
+    `${widthLabel}: all 7 tab labels visible in viewport`,
+    offScreen.length === 0,
+    offScreen.length ? `off-screen: ${offScreen.join(", ")}` : "",
+  );
+  check(
+    `${widthLabel}: no tab label clipped/truncated`,
+    clipped.length === 0,
+    clipped.length ? `clipped: ${clipped.join(", ")}` : "",
   );
 
   // Walk every tab: click, WAIT for its panel, then measure + structural

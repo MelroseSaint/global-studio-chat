@@ -72,34 +72,45 @@ async function main() {
     cursor = res.continueCursor;
   }
 
-  if (targets.length === 0) {
-    console.log("No leftover QA test users found — the deployment is clean.");
-    return;
-  }
-
-  console.log(`Found ${targets.length} QA test user(s) to erase:`);
-  for (const u of targets) {
-    console.log(`  - @${u.username} (${u.name ?? "no name"}, joined ${new Date(u._creationTime).toISOString()})`);
-  }
-
-  // Erase each with the full removeAccount sweep, citing a Standard principle.
-  let removed = 0;
-  for (const u of targets) {
-    try {
-      await adminClient.mutation(api.admin.removeAccount, {
-        userId: u._id,
-        standardId: "no-spam",
-        note: "Automated cleanup of leftover QA test account.",
-      });
-      removed++;
-      console.log(`  ✅ @${u.username} erased`);
-    } catch (err) {
-      console.error(
-        `  ❌ @${u.username} failed: ${err instanceof Error ? err.message : err}`,
-      );
+  if (targets.length > 0) {
+    console.log(`Found ${targets.length} QA test user(s) to erase:`);
+    for (const u of targets) {
+      console.log(`  - @${u.username} (${u.name ?? "no name"}, joined ${new Date(u._creationTime).toISOString()})`);
     }
+
+    // Erase each with the full removeAccount sweep, citing a Standard principle.
+    let removed = 0;
+    for (const u of targets) {
+      try {
+        await adminClient.mutation(api.admin.removeAccount, {
+          userId: u._id,
+          standardId: "no-spam",
+          note: "Automated cleanup of leftover QA test account.",
+        });
+        removed++;
+        console.log(`  ✅ @${u.username} erased`);
+      } catch (err) {
+        console.error(
+          `  ❌ @${u.username} failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+    console.log(`\nDone: ${removed}/${targets.length} QA test users erased.`);
+  } else {
+    console.log("No leftover QA test users found.");
   }
-  console.log(`\nDone: ${removed}/${targets.length} QA test users erased.`);
+
+  // Every erasure — including test sweeps — writes a one-way removalLog
+  // row. Purge the reserved-prefix entries so QA activity never pollutes
+  // the audit log a real admin reads. Harness-gated, removalLog-only.
+  const { purgedCount } = await client.mutation(api.testHarness.purgeTestTraces, {
+    secret: HARNESS_SECRET,
+  });
+  console.log(
+    purgedCount > 0
+      ? `Removal-log test entries purged: ${purgedCount}.`
+      : "Removal log already free of test entries.",
+  );
 }
 
 main().catch((err) => {

@@ -754,6 +754,62 @@ export const reconcileFollowCounts = mutation({
 });
 
 /**
+ * Purge QA traces so no test data ever lingers on a real deployment.
+ *
+ * The QA suite creates reserved-prefix accounts (`qa_*`, `pwtest*`) and
+ * normally erases them with the full admin sweep, but the one-way removal
+ * log keeps an audit row for every erasure — including test sweeps — so
+ * the log fills up with test-user entries the moment any QA runs.
+ *
+ * This harness-gated mutation deletes removalLog rows whose username
+ * carries the reserved test prefix, and reports what it swept so a QA gate
+ * can assert the site is test-free. Only the removal log is touched: real
+ * moderation entries (real usernames) are one-way and never deleted.
+ * Gated by the same two env gates as the rest of the module.
+ */
+export const purgeTestTraces = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const entries = await ctx.db.query("removalLog").collect();
+    const testUsername = /^(qa_|pwtest)/i;
+    const purged: Array<{ username: string | null; createdAt: number }> = [];
+    for (const entry of entries) {
+      if (entry.username && testUsername.test(entry.username)) {
+        await ctx.db.delete(entry._id);
+        purged.push({ username: entry.username, createdAt: entry._creationTime });
+      }
+    }
+    return { purgedCount: purged.length, purged };
+  },
+});
+
+/**
+ * Count reserved-prefix test traces across the tables QA touches: users
+ * and one-way removal-log entries. The "never keep test stuff on the site"
+ * gate — CI asserts every count is zero, so a leftover qa_ account or a
+ * test erasure polluting the audit log fails the build instead of shipping.
+ * Gated by the same two env gates as the rest of the module.
+ */
+export const getTestTraceCounts = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const testUsername = /^(qa_|pwtest)/i;
+    const [users, removals] = await Promise.all([
+      ctx.db.query("users").collect(),
+      ctx.db.query("removalLog").collect(),
+    ]);
+    const testUsers = users.filter((u) => u.username && testUsername.test(u.username));
+    const testRemovals = removals.filter((e) => e.username && testUsername.test(e.username));
+    return {
+      testUsers: testUsers.map((u) => u.username),
+      testRemovalEntries: testRemovals.map((e) => e.username ?? "?"),
+    };
+  },
+});
+
+/**
  * Read the calling session's expiry horizon: the authSessions row's
  * expirationTime and how far out it is from now. Lets the session-lifetime
  * QA assert both paths of the "Keep me signed in" toggle against the real
