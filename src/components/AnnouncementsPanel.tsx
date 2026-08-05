@@ -169,6 +169,42 @@ export function AnnouncementsPanel() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Live preview — exactly what members will see on the home page */}
+            {(title || body) && (
+              <div className="space-y-1.5">
+                <Label className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  Preview — home page
+                </Label>
+                <div
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-lg border border-l-[3px] bg-muted/40 px-3 py-2.5 text-sm",
+                    CATEGORY_COLORS[category] ?? "border-l-muted-foreground",
+                  )}
+                >
+                  <Bell className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {CATEGORIES.find((c) => c.value === category)?.label ?? category}
+                      </span>
+                      {title ? (
+                        <span className="truncate font-semibold">{title || "(no title yet)"}</span>
+                      ) : null}
+                    </div>
+                    {body ? (
+                      <p className="mt-0.5 leading-snug text-muted-foreground line-clamp-2">
+                        {body}
+                      </p>
+                    ) : null}
+                  </div>
+                  <span className="-mr-1 -mt-1 shrink-0 rounded-full p-1 text-muted-foreground/40">
+                    <X className="size-3.5" />
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-2">
               <Button size="sm" onClick={() => void handleSave()} disabled={saving}>
                 {saving ? (
