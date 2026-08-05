@@ -102,6 +102,7 @@ async function main() {
     client.setAuth(postUser.token);
     const postRes = await client.action(api.posts.createPost, {
       content: `Check my page — https://${testDomain}/hello ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check("a post linking the added domain is rejected", postRes?.ok === false);
     check(
@@ -111,6 +112,7 @@ async function main() {
     );
     const subPost = await client.action(api.posts.createPost, {
       content: `Live at https://${subDomain}/now ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check("a subdomain of the added domain is rejected too", subPost?.ok === false);
 
@@ -118,6 +120,7 @@ async function main() {
     client.setAuth(commentUser.token);
     const host = await client.action(api.posts.createPost, {
       content: `host post ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     const commentRes = await client.mutation(api.posts.addComment, {
       postId: host.postId,
@@ -165,6 +168,7 @@ async function main() {
     client.setAuth(patUser.token);
     const patternPost = await client.action(api.posts.createPost, {
       content: `Claim it at https://example.com/${patternText} ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check("a post matching a blocked URL pattern is rejected", patternPost?.ok === false);
 
@@ -297,6 +301,7 @@ async function main() {
     client.setAuth(postUser.token);
     const afterPause = await client.action(api.posts.createPost, {
       content: `Check https://${testDomain}/again ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check("pausing the entry lets the domain post again", afterPause?.ok === true);
 
@@ -327,6 +332,7 @@ async function main() {
     client.setAuth(idnUserA.token);
     const idnUnicodePost = await client.action(api.posts.createPost, {
       content: `visit https://${idnDomain}/x ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check("a Unicode host is caught against its xn-- block", idnUnicodePost?.ok === false);
 
@@ -334,6 +340,7 @@ async function main() {
     client.setAuth(idnUserB.token);
     const idnPunyPost = await client.action(api.posts.createPost, {
       content: `visit https://${storedIdn.domain}/y ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check("the xn-- form is caught identically", idnPunyPost?.ok === false);
 
@@ -341,6 +348,7 @@ async function main() {
     client.setAuth(idnUserC.token);
     const idnSubPost = await client.action(api.posts.createPost, {
       content: `visit https://m.${idnDomain}/z ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check("a subdomain of the IDN host is caught too", idnSubPost?.ok === false);
 
@@ -424,6 +432,7 @@ async function main() {
     client.setAuth(negUser.token);
     const lookalike = await client.action(api.posts.createPost, {
       content: `https://notonlyfans.com/post ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check(
       "notonlyfans.com is NOT matched (lookalike stays clean)",
@@ -431,6 +440,7 @@ async function main() {
     );
     const embedded = await client.action(api.posts.createPost, {
       content: `https://onlyfans.com.example.com/post ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check(
       "onlyfans.com.example.com is NOT matched (embedded stays clean)",
@@ -438,6 +448,7 @@ async function main() {
     );
     const cleanDom = await client.action(api.posts.createPost, {
       content: `https://sub.onlyfans.com.example.org/post ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check(
       "a subdomain of the embedded host stays clean too",
@@ -461,6 +472,7 @@ async function main() {
       client.setAuth(u.token);
       const res = await client.action(api.posts.createPost, {
         content: `check out ${text} ${stamp}`,
+      creatorDisclosure: 'human-made'
       });
       check(`obfuscated form “${text}” is blocked`, res?.ok === false);
     }
@@ -470,6 +482,7 @@ async function main() {
     client.setAuth(obfNeg.token);
     const obfClean = await client.action(api.posts.createPost, {
       content: `notonlyfans dot com is nothing ${stamp}`,
+      creatorDisclosure: 'human-made'
     });
     check("a textual lookalike stays clean (no false positive)", obfClean?.ok === true);
 
