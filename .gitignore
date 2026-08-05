@@ -38,3 +38,4 @@ data/
 # and the generated README stay out of git.
 .vercel/*
 !.vercel/project.json
+skills-lock.json

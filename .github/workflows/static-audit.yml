@@ -228,3 +228,27 @@ jobs:
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
         run: npm run qa:session-audit
+
+  cleanup-test-users:
+    name: Sweep leftover QA users
+    runs-on: ubuntu-latest
+    needs:
+      - dqs-audit
+      - phishing-qa
+      - blocklist-qa
+      - shadowban-qa
+      - reinstate-qa
+      - cloudinary-health
+      - session-audit
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Erase leftover QA test users from production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: npm run qa:cleanup-test-users
