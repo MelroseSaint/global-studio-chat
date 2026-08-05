@@ -14,6 +14,13 @@
  *     inventory, stripped Chrome APIs, no permissions, outer===inner
  *     viewport — must score high with the right signals, so a driven
  *     browser is caught before its account ever reaches real users.
+ *   - A headed Selenium profile: webdriver=true with chrome/plugins intact
+ *     — caught by webdriver + the runtime-hint signal compounding, yet
+ *     below the auto bar.
+ *   - An anti-detection stealth profile: webdriver patched false, UA,
+ *     plugins, and chrome API all restored — still caught by the residual
+ *     CDP-injected cdc_ global and the headless outer===inner viewport,
+ *     both compounding and below the auto bar.
  *   - Partial profiles: a single weak signal (e.g. only a bare UA) must
  *     NOT trip the ≥70 + 2-signal escalation bar alone.
  *
@@ -131,6 +138,71 @@ const playwrightProfile = () => ({
     outerHeight: 720,
     innerWidth: 1280,
     innerHeight: 720,
+  },
+});
+
+/**
+ * Headed Selenium (chromedriver): navigator.webdriver is true — the single
+ * most reliable automation flag — but chrome.csi/loadTimes are intact and
+ * plugins/permissions exist, because chromedriver doesn't strip the
+ * browser like a CDP-injected run does. Webdriver always pairs with the
+ * runtime-hint signal, so this is two compounding signals even though the
+ * score stays below the automatic shadowban bar (proportional, never
+ * auto-conviction from one marker family).
+ */
+const seleniumProfile = () => ({
+  navigator: {
+    webdriver: true,
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    plugins: { length: 5 },
+    mimeTypes: { length: 10 },
+    permissions: {},
+    maxTouchPoints: 0,
+  },
+  window: {
+    getOwnPropertyNames: () => ["window", "document", "location", "chrome", "onload"],
+    chrome: { csi: () => {}, loadTimes: () => {} },
+    outerWidth: 1920,
+    outerHeight: 1040,
+    innerWidth: 1920,
+    innerHeight: 960,
+  },
+});
+
+/**
+ * Anti-detection stealth (e.g. puppeteer-extra-plugin-stealth): the easy
+ * tells are patched — webdriver forced false, a normal Chrome UA, plugins
+ * and chrome.csi/loadTimes restored, permissions present. But the hard
+ * tells remain: the CDP-injected cdc_-prefixed global that stealth cannot
+ * scrub (it doesn't know about it), and the outer===inner viewport of a
+ * headless run (no chrome frame). So a patched bot is still detected by
+ * compounding residual signals, and still stays below the auto-escalation
+ * bar — exactly the proportional philosophy.
+ */
+const stealthProfile = () => ({
+  navigator: {
+    webdriver: false, // patched
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", // patched
+    plugins: { length: 5 }, // patched present
+    mimeTypes: { length: 10 },
+    permissions: {}, // patched present
+    maxTouchPoints: 0,
+  },
+  window: {
+    getOwnPropertyNames: () => [
+      "window",
+      "document",
+      "cdc_adoQpoasnfa76pfcZLmcfl_Page", // CDP remnant — not scrubbed
+      "location",
+      "chrome",
+    ],
+    chrome: { csi: () => {}, loadTimes: () => {} }, // patched present
+    outerWidth: 1280,
+    outerHeight: 720,
+    innerWidth: 1280,
+    innerHeight: 720, // headless: no chrome frame
   },
 });
 
@@ -253,6 +325,73 @@ check(
   "webdriver=true alone is not maxed (no compound)",
   webdriverOnly.score < 100,
   `score ${webdriverOnly.score}`,
+);
+
+// 6. Headed Selenium: webdriver=true with everything else intact. Must be
+//    flagged, and must compound (webdriver + the runtime hint) without
+//    blowing past the proportional bar — chromedriver is the classic
+//    automated setup, but it's not the compounding marker storm of a
+//    full CDP-injected run.
+const selenium = detectAutomation(seleniumProfile());
+check(
+  "Selenium profile is flagged (webdriver)",
+  selenium.signals.includes("webdriver"),
+  JSON.stringify(selenium.signals),
+);
+check(
+  "Selenium profile compounds to 2+ signals",
+  selenium.signals.length >= 2,
+  `signals: ${selenium.signals.join(", ")}`,
+);
+check(
+  "Selenium profile compounds webdriver + controlledByRuntime",
+  selenium.signals.includes("controlledByRuntime"),
+  JSON.stringify(selenium.signals),
+);
+check(
+  "Selenium profile scores 50-69 (below auto bar)",
+  selenium.score >= 50 && selenium.score < 70,
+  `score ${selenium.score}`,
+);
+check(
+  "Selenium profile keeps chrome API intact (no noChromeApi false positive)",
+  !selenium.signals.includes("noChromeApi"),
+  JSON.stringify(selenium.signals),
+);
+
+// 7. Anti-detection stealth: webdriver patched false, UA/plugins/chrome
+//    all restored. The residual tells (CDP-injected cdc_ global, headless
+//    outer===inner viewport) must still catch it — compounding, but below
+//    the automatic shadowban bar so a patched-but-real-looking setup gets
+//    proportional treatment, not instant conviction.
+const stealth = detectAutomation(stealthProfile());
+check(
+  "stealth profile is still caught (cdpInjected)",
+  stealth.signals.includes("cdpInjected"),
+  JSON.stringify(stealth.signals),
+);
+check(
+  "stealth profile compounds to 2+ signals",
+  stealth.signals.length >= 2,
+  `signals: ${stealth.signals.join(", ")}`,
+);
+check(
+  "stealth profile keeps dimension clue (headless frame)",
+  stealth.signals.includes("dimensionClue"),
+  JSON.stringify(stealth.signals),
+);
+check(
+  "stealth profile scores 20-69 (below auto bar)",
+  stealth.score >= 20 && stealth.score < 70,
+  `score ${stealth.score}`,
+);
+check(
+  "stealth profile's patched surfaces do not false-positive",
+  !stealth.signals.includes("webdriver") &&
+    !stealth.signals.includes("noPlugins") &&
+    !stealth.signals.includes("headlessChrome") &&
+    !stealth.signals.includes("noChromeApi"),
+  JSON.stringify(stealth.signals),
 );
 
 // ────────────────────────────────────────────────────────────
