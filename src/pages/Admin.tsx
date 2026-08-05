@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AdminOfflineBanner } from "@/components/AdminOfflineBanner";
+import { AiEvidencePanel } from "@/components/AiEvidencePanel";
 import { BlocklistPanel } from "@/components/BlocklistPanel";
 import { StandardViolationDialog } from "@/components/StandardViolationDialog";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -2021,6 +2022,14 @@ function AiReviewPanel() {
     _creationTime: number;
     content: string;
     aiStatusReason?: string | null;
+    // Structured evidence from the multi-signal media assessment (see
+    // AiMediaEvidence in aiContent.ts). Stored when media was attached.
+    aiEvidence?: {
+      byteScan?: { status: string; reason?: string };
+      resemble?: { isAi: boolean; confidence: number } | null;
+      c2pa?: { humanCapture: boolean; claimGenerator?: string } | null;
+      ocrRacism?: { status: string; reason: string } | null;
+    } | null;
     c2paVerifiedHuman?: boolean | null;
     c2paClaimGenerator?: string | null;
     creatorDisclosure?: string | null;
@@ -2209,67 +2218,7 @@ function AiReviewPanel() {
             Evidence
           </button>
           {evidenceIds.has(p._id) ? (
-            <div className="mt-2 rounded-lg border bg-muted/30 p-3 text-xs">
-              <div className="grid grid-cols-1 gap-y-1.5 sm:grid-cols-2 sm:gap-x-4">
-                <span className="font-medium text-muted-foreground">
-                  AI detector
-                </span>
-                <span>
-                  {p.aiStatusReason ? (
-                    <span className="text-oxide">{p.aiStatusReason}</span>
-                  ) : (
-                    <span className="text-muted-foreground">
-                      Statistical scan — no specific signal
-                    </span>
-                  )}
-                </span>
-                <span className="font-medium text-muted-foreground">
-                  C2PA provenance
-                </span>
-                <span>
-                  {p.c2paVerifiedHuman ? (
-                    <span className="text-copper">
-                      Present — camera capture
-                      {p.c2paClaimGenerator
-                        ? ` · Signed by ${p.c2paClaimGenerator}`
-                        : ""}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">
-                      Not present
-                    </span>
-                  )}
-                </span>
-                <span className="font-medium text-muted-foreground">
-                  Creator disclosure
-                </span>
-                <span>
-                  {p.creatorDisclosure === "ai-assisted" ? (
-                    <span className="text-amber-600 dark:text-amber-400">
-                      AI-assisted
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">
-                      Human-made
-                    </span>
-                  )}
-                </span>
-                <span className="font-medium text-muted-foreground">
-                  User reports
-                </span>
-                <span>
-                  {(p.reportCount ?? 0) > 0 ? (
-                    <span className="font-medium">
-                      {p.reportCount} open
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">
-                      None
-                    </span>
-                  )}
-                </span>
-              </div>
-            </div>
+            <AiEvidencePanel post={p} />
           ) : null}
         </motion.div>
       ))}
