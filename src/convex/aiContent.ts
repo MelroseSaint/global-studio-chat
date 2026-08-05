@@ -6,6 +6,7 @@ import {
   type AiScanResult,
   type C2paInfo,
 } from "@/lib/ai-media-scan";
+import { scanForRacism } from "@/lib/racism-guard";
 
 import { action } from "./_generated/server";
 
@@ -421,6 +422,19 @@ export const scanMediaForAi = action({
           : scanMediaBytes(bytes);
       if (result.status !== "clean") {
         return result;
+      }
+      // OCR-based racism check: when the image carries embedded text
+      // (phone-OCR'd screenshot descriptions, EXIF captions, PNG text
+      // chunks), scan it for racial hate — the same guard that covers
+      // every other text surface on the platform.
+      if (result.ocrText !== undefined && result.ocrText.length > 0) {
+        const racism = scanForRacism(result.ocrText);
+        if (racism.status === "blocked") {
+          return { status: "blocked", reason: `Racism detected in media text — ${racism.reason}` };
+        }
+        if (racism.status === "review") {
+          return { status: "review", reason: `Media text flagged: ${racism.reason}` };
+        }
       }
       if ((result as { c2pa?: C2paInfo }).c2pa?.humanCapture === true) {
         anyHumanCapture = true;

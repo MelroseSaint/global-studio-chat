@@ -29,9 +29,9 @@
  */
 
 export type AiScanResult =
-  | { status: "clean"; c2pa?: C2paInfo }
-  | { status: "review"; reason: string }
-  | { status: "blocked"; reason: string };
+  | { status: "clean"; c2pa?: C2paInfo; ocrText?: string }
+  | { status: "review"; reason: string; ocrText?: string }
+  | { status: "blocked"; reason: string; ocrText?: string };
 
 /**
  * Content Credentials (C2PA) provenance found in a file.
@@ -659,6 +659,27 @@ function extractMeta(container: Container, bytes: ArrayBuffer): ExtractedMeta {
   }
 }
 
+
+/** Extract human-readable text from image metadata for OCR-based racism
+ *  scanning. Modern phones embed screen-recognized text in EXIF/XMP/PNG
+ *  metadata — this pulls it out so scanForRacism can check it without a
+ *  full OCR engine. The raw head/tail sweep is deliberately excluded:
+ *  binary noise is not OCR, and false-positive "text" from random bytes
+ *  would pollute the racism scan with garbage. */
+function extractImageText(_container: Container, _bytes: ArrayBuffer, meta: ExtractedMeta): string {
+  const parts: string[] = [];
+  // EXIF ImageDescription (tag 0x010E) and UserComment (tag 0x9286):
+  // phone-OCR'd screenshot text and captions are routinely stored here.
+  // Skip the raw head/tail sweep — binary noise is not OCR text.
+  for (const f of meta.fields) {
+    parts.push(f);
+  }
+  for (const s of meta.free) {
+    if (s.length > 2) parts.push(s);
+  }
+  return parts.filter(p => p.trim().length > 0).join(' | ');
+}
+
 /**
  * Match marker lists against every extracted field/value and the raw sweep.
  * Returns the first hard block, else the first review signal, else null.
@@ -848,6 +869,7 @@ export function scanImageBytes(bytes: ArrayBuffer): AiScanResult {
     return { status: "blocked", reason: C2PA_AI_REASON };
   }
   const meta = extractMeta(container, bytes);
+  const ocrText = extractImageText(container, bytes, meta);
   const raw = bytesToLatin1(bytes);
   const hit = matchMarkers(
     meta.fields,
@@ -858,12 +880,13 @@ export function scanImageBytes(bytes: ArrayBuffer): AiScanResult {
     BLOCK_REASON,
     REVIEW_REASON,
   );
-  if (hit !== null) return hit;
+  if (hit !== null) return { ...hit, ocrText };
   return {
     status: "clean",
     // Carry positive provenance forward so the post can be marked
     // "Content Credentials verified" (see createPostInternal).
     c2pa: c2pa !== null && c2pa.humanCapture ? c2pa : undefined,
+    ocrText,
   };
 }
 
