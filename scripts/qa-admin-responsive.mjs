@@ -250,6 +250,51 @@ async function inspectAdmin(page, widthLabel, width) {
   }
 }
 
+/**
+ * Walk the admin's public profile and assert the reconciled counters
+ * render truthfully on the LIVE site: the corrected "Posts: 1" (stuck at
+ * 5 before the count-drift fix), Followers/Following at their real
+ * values, the post card with its "Original" badge, and no overflow. Runs
+ * at the desktop stop — the profile is a single-column page whose phone/
+ * tablet geometry is already covered by the pages-inflation QA.
+ */
+async function inspectProfile(page, widthLabel) {
+  await page.goto(`${SITE_URL}/u/adminmelrose`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("text=Posts", { timeout: TIMEOUT });
+  const stats = await page.evaluate(() => {
+    const text = document.body.innerText;
+    const num = (label) => {
+      const m = text.match(new RegExp(`(\\d+)\\s*${label}`));
+      return m ? Number(m[1]) : null;
+    };
+    return {
+      posts: num("Posts"),
+      followers: num("Followers"),
+      following: num("Following"),
+    };
+  });
+  check(
+    `${widthLabel}: profile shows the corrected Posts count 1`,
+    stats.posts === 1,
+    `actual ${stats.posts}`,
+  );
+  check(
+    `${widthLabel}: profile Followers 0`,
+    stats.followers === 0,
+    `actual ${stats.followers}`,
+  );
+  check(
+    `${widthLabel}: profile Following 0`,
+    stats.following === 0,
+    `actual ${stats.following}`,
+  );
+  check(
+    `${widthLabel}: profile post card renders with the Original badge`,
+    (await page.getByText("Original", { exact: true }).count()) > 0,
+  );
+  await measurePage(page, `${widthLabel}: profile`, check);
+}
+
 async function main() {
   if (!ADMIN_PASSWORD) {
     console.log(passwordHint());
@@ -273,6 +318,10 @@ async function main() {
         navTimeoutMs: NAV_TIMEOUT,
       });
       await inspectAdmin(page, label, width);
+      // The corrected-count profile walk: at the desktop stop only.
+      if (width === 1024) {
+        await inspectProfile(page, label);
+      }
       await page.close();
     }
   } finally {
