@@ -2026,7 +2026,7 @@ function AiReviewPanel() {
     // AiMediaEvidence in aiContent.ts). Stored when media was attached.
     aiEvidence?: {
       byteScan?: { status: string; reason?: string };
-      resemble?: { isAi: boolean; confidence: number } | null;
+      resemble?: { isAi: boolean; confidence: number; metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number }; sourceLabel?: string | null } | null;
       c2pa?: { humanCapture: boolean; claimGenerator?: string } | null;
       ocrRacism?: { status: string; reason: string } | null;
     } | null;

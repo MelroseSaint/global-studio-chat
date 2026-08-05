@@ -7,7 +7,7 @@ import {
   type C2paInfo,
 } from "@/lib/ai-media-scan";
 import { scanForRacism } from "@/lib/racism-guard";
-import { detectAiVoice, resembleConfigured, resembleApiKey } from "@/lib/resemble";
+import { detectMedia, resembleConfigured, resembleApiKey } from "@/lib/resemble";
 
 import { action } from "./_generated/server";
 
@@ -367,9 +367,16 @@ export interface AiMediaEvidence {
   /** The byte-level scan verdict: which generator marker was found (if any),
    * or "clean" when no known AI tool metadata was present. */
   byteScan: { status: "clean" | "review" | "blocked"; reason?: string };
-  /** Resemble AI voice-detection result, when the item was audio and the
-   * API was configured. Null when not applicable or skipped. */
-  resemble: { isAi: boolean; confidence: number } | null;
+  /** Resemble AI deepfake-detection result (v2 API). Runs on audio, image,
+   * and video when the API key is configured. Null when skipped or failed. */
+  resemble: {
+    isAi: boolean;
+    confidence: number;
+    /** Per-media-type label ("fake"/"real", "Fake"/"Real") and scores. */
+    metrics?: { label: string; score?: number; aggregatedScore?: number; consistency?: number; certainty?: number };
+    /** When audio was synthetic, the likely source platform (e.g. "elevenlabs"). */
+    sourceLabel?: string | null;
+  } | null;
   /** Content Credentials (C2PA) provenance from the file's manifest, when
    * present. Null when C2PA was absent or unreadable. */
   c2pa: { humanCapture: boolean; claimGenerator?: string } | null;
@@ -446,19 +453,31 @@ export const scanMediaForAi = action({
         evidence.byteScan = { status: result.status, reason: result.reason };
         return { status: result.status, reason: result.reason ?? "Media flagged by the AI scan.", evidence };
       }
-      // Resemble AI voice detection
-      const isAudio =
-        item.kind === "audio" ||
-        bytes.byteLength > 0;
-      if (isAudio && resembleConfigured()) {
+      // Resemble AI deepfake detection (v2): run on ALL media types — audio,
+      // image, and video — for an authoritative second opinion alongside the
+      // byte-level metadata scan. Only fires when the API key is set — graceful
+      // degradation (detection is skipped, never fails an upload).
+      if (resembleConfigured()) {
         try {
-          const voice = await detectAiVoice(bytes, resembleApiKey());
+          const mime =
+            item.kind === "image" ? "image/jpeg"
+            : item.kind === "video" ? "video/mp4"
+            : item.kind === "audio" ? "audio/wav"
+            : "application/octet-stream";
+          const voice = await detectMedia(bytes, mime, `upload.${item.kind === "image" ? "jpg" : item.kind === "video" ? "mp4" : "wav"}`, resembleApiKey());
           if (voice !== null) {
-            evidence.resemble = { isAi: voice.isAi, confidence: voice.confidence };
+            evidence.resemble = {
+              isAi: voice.isAi,
+              confidence: voice.confidence,
+              metrics: voice.metrics,
+              sourceLabel: voice.sourceLabel,
+            };
             if (voice.isAi) {
+              const pct = Math.round(voice.confidence * 100);
+              const src = voice.sourceLabel ? ` · source: ${voice.sourceLabel}` : "";
               return {
                 status: "blocked",
-                reason: `This audio was identified as AI-generated speech (confidence: ${Math.round(voice.confidence * 100)}%). AI-generated audio is not allowed on PureWire.`,
+                reason: `This ${item.kind} was identified as AI-generated (confidence: ${pct}%${src}). AI-generated media is not allowed on PureWire.`,
                 evidence,
               };
             }
@@ -479,7 +498,7 @@ export const scanMediaForAi = action({
           return { status: "review", reason: `Media text flagged: ${racism.reason}`, evidence };
         }
       }
-      // C2PA provenance � capture the first item that carries it (don't
+      // C2PA provenance � capture the first item that carries it (don't
       // overwrite, or the admin evidence panel only sees the last item).
       const c2pa = (result as { c2pa?: C2paInfo }).c2pa;
       if (c2pa !== undefined && evidence.c2pa === null) {
