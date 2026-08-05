@@ -123,6 +123,23 @@ jobs:
       - run: npm ci
       - run: npm run qa:ai-scan
 
+  ai-scan-integration:
+    name: AI scan integration QA (harness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Run upload→scan→evidence pipeline test
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: npm run qa:ai-scan-integration
+
   salt-qa:
     name: Salt rotation QA
     runs-on: ubuntu-latest
@@ -252,6 +269,7 @@ jobs:
       - dqs-audit
       - phishing-qa
       - blocklist-qa
+      - ai-scan-integration
       - shadowban-qa
       - reinstate-qa
       - cloudinary-health
