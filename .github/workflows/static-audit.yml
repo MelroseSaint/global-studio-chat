@@ -213,6 +213,22 @@ jobs:
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         run: npm run qa:cloudinary-health
 
+  resemble-health:
+    name: Resemble v2 health probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Probe Resemble v2 API
+        env:
+          RESEMBLE_API_KEY: ${{ secrets.RESEMBLE_API_KEY }}
+        run: npm run qa:resemble-health
+
   session-audit:
     name: Session lifetime audit
     runs-on: ubuntu-latest
