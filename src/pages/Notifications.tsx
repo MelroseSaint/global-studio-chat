@@ -4,6 +4,8 @@ import {
   AtSign,
   Bell,
   CheckCheck,
+  ChevronDown,
+  ChevronUp,
   Flag,
   Heart,
   Mail,
@@ -24,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 const ICONS = {
   follow: UserPlus,
@@ -59,6 +62,10 @@ export function Notifications() {
     username: string;
     tab: FollowsTab;
   } | null>(null);
+  // Per-notification expand state for the ticket/system message-body clamp
+  // — a long support response or platform announcement should never inflate
+  // a single row beyond a couple of lines.
+  const [expandedNotifs, setExpandedNotifs] = useState<Set<string>>(new Set());
 
   const notifications = results as unknown as {
     _id: string;
@@ -190,10 +197,42 @@ export function Notifications() {
             </span>
             <div className="min-w-0 flex-1">
               <p
-                className={`text-sm leading-snug ${n.read ? "text-muted-foreground" : "text-foreground"}`}
+                className={cn(
+                  "text-sm leading-snug",
+                  n.read ? "text-muted-foreground" : "text-foreground",
+                  (n.type === "ticket" || n.type === "system") &&
+                    !expandedNotifs.has(n._id) &&
+                    "line-clamp-2",
+                )}
               >
                 {label(n)}
               </p>
+              {(n.type === "ticket" || n.type === "system") && (n.message ?? "").length > 100 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedNotifs((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(n._id)) next.delete(n._id);
+                      else next.add(n._id);
+                      return next;
+                    });
+                  }}
+                  className="mt-0.5 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {expandedNotifs.has(n._id) ? (
+                    <>
+                      <ChevronUp className="size-3.5" />
+                      Show less
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="size-3.5" />
+                      Show more
+                    </>
+                  )}
+                </button>
+              ) : null}
               {n.post && n.post.content ? (
                 <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
                   “{n.post.content.slice(0, 100)}”

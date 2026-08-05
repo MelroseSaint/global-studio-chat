@@ -1,5 +1,7 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import {
+  ChevronDown,
+  ChevronUp,
   Loader2,
   MessageCircle,
   MoreHorizontal,
@@ -17,6 +19,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -132,6 +135,9 @@ export function PostDetail() {
   const { ref, inView } = useInView();
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Per-comment expand state for the Show more/less clamp so a single
+  // long comment never inflates the list on a tablet.
+  const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (inView && status === "CanLoadMore") {
@@ -244,20 +250,55 @@ export function PostDetail() {
         </p>
       )}
 
-      {comments.map((c) => (
-        <div key={c._id} className="group flex gap-3 px-4 py-3 sm:px-5">
-          <UserAvatar user={c.author} className="size-9" />
-          <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-2.5">
-            <p className="text-sm font-semibold">
-              {c.author?.name || c.author?.username || "Unknown"}
-            </p>
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-              {c.content}
-            </p>
+      {comments.map((c) => {
+        const isExpanded = expandedComments.has(c._id);
+        const isLong = (c.content ?? "").length > 200;
+        return (
+          <div key={c._id} className="group flex gap-3 px-4 py-3 sm:px-5">
+            <UserAvatar user={c.author} className="size-9" />
+            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-2.5">
+              <p className="text-sm font-semibold">
+                {c.author?.name || c.author?.username || "Unknown"}
+              </p>
+              <p
+                className={cn(
+                  "whitespace-pre-wrap break-words text-sm leading-relaxed",
+                  !isExpanded && "line-clamp-3",
+                )}
+              >
+                {c.content}
+              </p>
+              {isLong ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedComments((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(c._id)) next.delete(c._id);
+                      else next.add(c._id);
+                      return next;
+                    });
+                  }}
+                  className="mt-0.5 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {isExpanded ? (
+                    <>
+                      <ChevronUp className="size-3.5" />
+                      Show less
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="size-3.5" />
+                      Show more
+                    </>
+                  )}
+                </button>
+              ) : null}
+            </div>
+            <CommentMenu postId={postIdTyped} comment={c} />
           </div>
-          <CommentMenu postId={postIdTyped} comment={c} />
-        </div>
-      ))}
+        );
+      })}
 
       <div ref={ref} className="flex justify-center py-4">
         {status === "LoadingMore" && (
