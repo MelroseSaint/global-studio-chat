@@ -286,6 +286,10 @@ export const createPost = action({
     // post so viewers see the "Content Credentials verified" label.
     let c2paVerifiedHuman: boolean | undefined;
     let c2paClaimGenerator: string | undefined;
+    // Structured evidence from the multi-signal media assessment — byte
+    // scan verdict, Resemble voice score, C2PA provenance, OCR racism —
+    // stored on the post so the admin review queue has the full picture.
+    let aiEvidence: Record<string, unknown> | undefined;
     if (media !== undefined && media.length > 0) {
       const scan = await ctx.runAction(api.aiContent.scanMediaForAi, {
         media: media.map((m) => ({
@@ -295,6 +299,9 @@ export const createPost = action({
         })),
       });
       verifiedStatus = scan.status;
+      // evidence is always present in the new return shape (v.any() in the
+      // validator — cast to access it).
+      aiEvidence = (scan as unknown as { evidence?: Record<string, unknown> }).evidence;
       if (scan.status === "clean") {
         c2paVerifiedHuman = scan.c2paVerifiedHuman;
         c2paClaimGenerator = (scan as { c2paClaimGenerator?: string }).c2paClaimGenerator;
@@ -310,6 +317,7 @@ export const createPost = action({
         aiMediaStatus: verifiedStatus,
         c2paVerifiedHuman,
         c2paClaimGenerator,
+        aiEvidence,
         location,
       },
     )) as CreatePostResult;
@@ -362,12 +370,17 @@ export const createPostInternal = internalMutation({
     // The claim_generator from the C2PA manifest — which tool created the
     // credentials. Shown in the admin evidence panel.
     c2paClaimGenerator: v.optional(v.string()),
+    // Structured evidence from the multi-signal media assessment — byte
+    // scan, Resemble voice detection, C2PA provenance, OCR racism. Stored
+    // on the post so the admin review queue's evidence panel shows exactly
+    // which signal triggered the flag (and with what confidence).
+    aiEvidence: v.optional(v.any()),
     // Optional place the post was shared from (see the Local feed).
     location: v.optional(locationValidator),
   },
   handler: async (
     ctx,
-    { content, creatorDisclosure, media, mediaHashes, aiMediaStatus, c2paVerifiedHuman, c2paClaimGenerator, location },
+    { content, creatorDisclosure, media, mediaHashes, aiMediaStatus, c2paVerifiedHuman, c2paClaimGenerator, aiEvidence, location },
   ) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
@@ -484,6 +497,7 @@ export const createPostInternal = internalMutation({
         content: text,
         media,
         aiStatus: "clean",
+        aiEvidence,
         c2paVerifiedHuman,
         c2paClaimGenerator,
         creatorDisclosure,
@@ -697,6 +711,8 @@ export const createPostInternal = internalMutation({
       // bytes — the "Content Credentials verified" label on the post.
       c2paVerifiedHuman,
       c2paClaimGenerator,
+      // Structured evidence from the multi-signal media assessment.
+      aiEvidence,
       creatorDisclosure,
       likeCount: 0,
       commentCount: 0,

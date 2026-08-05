@@ -357,6 +357,34 @@ export type AiMediaStatus =
   | "blocked";
 
 /**
+ * Structured evidence from the multi-signal media assessment. Every signal
+ * the scanner examined — byte-level metadata, external voice detection,
+ * Content Credentials provenance, and OCR-racism — is recorded here so the
+ * admin review queue can show exactly what was found and why the post was
+ * flagged, blocked, or cleared.
+ */
+export interface AiMediaEvidence {
+  /** The byte-level scan verdict: which generator marker was found (if any),
+   * or "clean" when no known AI tool metadata was present. */
+  byteScan: { status: "clean" | "review" | "blocked"; reason?: string };
+  /** Resemble AI voice-detection result, when the item was audio and the
+   * API was configured. Null when not applicable or skipped. */
+  resemble: { isAi: boolean; confidence: number } | null;
+  /** Content Credentials (C2PA) provenance from the file's manifest, when
+   * present. Null when C2PA was absent or unreadable. */
+  c2pa: { humanCapture: boolean; claimGenerator?: string } | null;
+  /** Racism check on OCR-extracted text from image metadata (phone-OCR'd
+   * screenshot descriptions, EXIF captions, PNG text chunks). Null when
+   * no text was extracted or the text was clean. */
+  ocrRacism: { status: "review" | "blocked"; reason: string } | null;
+}
+
+export type ScanMediaForAiResult =
+  | { status: "clean"; c2paVerifiedHuman?: boolean; c2paClaimGenerator?: string; evidence: AiMediaEvidence }
+  | { status: "review"; reason: string; evidence: AiMediaEvidence }
+  | { status: "blocked"; reason: string; evidence: AiMediaEvidence };
+
+/**
  * Scan every image in a media list by reading its bytes from storage.
  * Runs as an action because `storage.get` is only available in actions.
  * Mutations call this via `ctx.runAction`.
@@ -376,34 +404,27 @@ export const scanMediaForAi = action({
   returns: v.union(
     v.object({
       status: v.literal("clean"),
-      // Positive provenance: true when any scanned item's Content
-      // Credentials declared a camera capture. The caller stores it on the
-      // post so viewers see "Content Credentials verified" — the label the
-      // file itself asserted.
       c2paVerifiedHuman: v.optional(v.boolean()),
-      // The claim_generator from the first C2PA-positive item — which tool
-      // created the credentials (e.g. "Adobe Photoshop 26.0").
       c2paClaimGenerator: v.optional(v.string()),
+      evidence: v.any(),
     }),
-    v.object({ status: v.literal("review"), reason: v.string() }),
-    v.object({ status: v.literal("blocked"), reason: v.string() }),
+    v.object({ status: v.literal("review"), reason: v.string(), evidence: v.any() }),
+    v.object({ status: v.literal("blocked"), reason: v.string(), evidence: v.any() }),
   ),
-  handler: async (ctx, { media }): Promise<
-    | { status: "clean"; c2paVerifiedHuman?: boolean; c2paClaimGenerator?: string }
-    | { status: "review"; reason: string }
-    | { status: "blocked"; reason: string }
-  > => {
-    // Positive provenance carried from every scanned item: when ANY item's
-    // Content Credentials declare camera capture, the post can be marked
-    // "Content Credentials verified" — the label the file itself asserted.
+  handler: async (ctx, { media }): Promise<ScanMediaForAiResult> => {
     let anyHumanCapture = false;
     let c2paClaimGenerator: string | undefined;
+    // Build the evidence object across all items, capturing the first
+    // non-clean signal that decided the verdict.
+    const evidence: AiMediaEvidence = {
+      byteScan: { status: "clean" },
+      resemble: null,
+      c2pa: null,
+      ocrRacism: null,
+    };
     for (const item of media) {
       let bytes: ArrayBuffer | null = null;
       if (item.url !== undefined) {
-        // Cloudinary-backed media: fetch the stored object (actions can fetch;
-        // this is the same scan the browser ran pre-upload, re-checked
-        // against the exact stored bytes).
         const res = await fetch(item.url);
         if (res.ok) {
           bytes = await res.arrayBuffer();
@@ -422,52 +443,58 @@ export const scanMediaForAi = action({
           ? scanImageBytes(bytes)
           : scanMediaBytes(bytes);
       if (result.status !== "clean") {
-        return result;
+        evidence.byteScan = { status: result.status, reason: result.reason };
+        return { status: result.status, reason: result.reason ?? "Media flagged by the AI scan.", evidence };
       }
-      // Resemble AI voice detection: when the uploaded media is audio, run
-      // the byte-level scan AND an external Resemble detect call for an
-      // authoritative second opinion. Only fires when the API key is set —
-      // graceful degradation (detection is skipped, never fails an upload).
+      // Resemble AI voice detection
       const isAudio =
         item.kind === "audio" ||
-        bytes.byteLength > 0; // any non-empty bytes could be audio
+        bytes.byteLength > 0;
       if (isAudio && resembleConfigured()) {
         try {
           const voice = await detectAiVoice(bytes, resembleApiKey());
-          if (voice !== null && voice.isAi) {
-            return {
-              status: "blocked",
-              reason: `This audio was identified as AI-generated speech (confidence: ${Math.round(voice.confidence * 100)}%). AI-generated audio is not allowed on PureWire.`,
-            };
+          if (voice !== null) {
+            evidence.resemble = { isAi: voice.isAi, confidence: voice.confidence };
+            if (voice.isAi) {
+              return {
+                status: "blocked",
+                reason: `This audio was identified as AI-generated speech (confidence: ${Math.round(voice.confidence * 100)}%). AI-generated audio is not allowed on PureWire.`,
+                evidence,
+              };
+            }
           }
         } catch (err) {
-          // Third-party outage — log and continue, never block an upload on a
-          // network hiccup. The byte-level scan already ran; this is extra.
           console.warn("Resemble detection failed:", err);
         }
       }
-      // OCR-based racism check: when the image carries embedded text
-      // (phone-OCR'd screenshot descriptions, EXIF captions, PNG text
-      // chunks), scan it for racial hate — the same guard that covers
-      // every other text surface on the platform.
+      // OCR-based racism check
       if (result.ocrText !== undefined && result.ocrText.length > 0) {
         const racism = scanForRacism(result.ocrText);
         if (racism.status === "blocked") {
-          return { status: "blocked", reason: `Racism detected in media text — ${racism.reason}` };
+          evidence.ocrRacism = { status: "blocked", reason: racism.reason };
+          return { status: "blocked", reason: `Racism detected in media text — ${racism.reason}`, evidence };
         }
         if (racism.status === "review") {
-          return { status: "review", reason: `Media text flagged: ${racism.reason}` };
+          evidence.ocrRacism = { status: "review", reason: racism.reason };
+          return { status: "review", reason: `Media text flagged: ${racism.reason}`, evidence };
         }
       }
-      if ((result as { c2pa?: C2paInfo }).c2pa?.humanCapture === true) {
-        anyHumanCapture = true;
-      }
-      // Capture the credential issuer from the first item that has one — the
-      // admin evidence panel shows which tool signed the content.
-      if (c2paClaimGenerator === undefined) {
-        c2paClaimGenerator = (result as { c2pa?: C2paInfo }).c2pa?.claimGenerator;
+      // C2PA provenance � capture the first item that carries it (don't
+      // overwrite, or the admin evidence panel only sees the last item).
+      const c2pa = (result as { c2pa?: C2paInfo }).c2pa;
+      if (c2pa !== undefined && evidence.c2pa === null) {
+        evidence.c2pa = {
+          humanCapture: c2pa.humanCapture === true,
+          claimGenerator: c2pa.claimGenerator,
+        };
+        if (c2pa.humanCapture === true) {
+          anyHumanCapture = true;
+        }
+        if (c2paClaimGenerator === undefined) {
+          c2paClaimGenerator = c2pa.claimGenerator;
+        }
       }
     }
-    return { status: "clean", c2paVerifiedHuman: anyHumanCapture, c2paClaimGenerator };
+    return { status: "clean", c2paVerifiedHuman: anyHumanCapture, c2paClaimGenerator, evidence };
   },
 });

@@ -151,6 +151,11 @@ const schema = defineSchema({
     // metadata, a missing scan verdict, …). Shown in the admin AI-review
     // queue so a human can judge the flag without re-reading everything.
     aiStatusReason: v.optional(v.string()),
+    // Structured evidence from the multi-signal media assessment — byte
+    // scan verdict, Resemble voice detection score, C2PA provenance, and
+    // OCR racism result. Shown in the admin review queue's evidence panel
+    // so a moderator sees exactly which signal triggered the flag.
+    aiEvidence: v.optional(v.any()),
     // Content Credentials (C2PA) provenance, verified server-side from the
     // stored media bytes: true when any attached item's manifest declared a
     // camera capture (digitalCapture/compositeCapture). Positive provenance
