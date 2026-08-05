@@ -1,4 +1,6 @@
 import { v } from "convex/values";
+
+import type { Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireAdmin } from "./admin";
 
@@ -130,7 +132,7 @@ export const activeForUser = query({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
-    const userId = identity.subject as unknown as string;
+    const userId = identity.subject as Id<"users">;
     const now = Date.now();
 
     // Get active announcements.
@@ -156,7 +158,7 @@ export const activeForUser = query({
       const dismissed = await ctx.db
         .query("announcementDismissals")
         .withIndex("by_pair", (q) =>
-          q.eq("userId", userId as any).eq("announcementId", a._id),
+          q.eq("userId", userId).eq("announcementId", a._id),
         )
         .first();
       if (dismissed === null) {
@@ -177,19 +179,19 @@ export const dismiss = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
-    const userId = identity.subject;
+    const userId = identity.subject as Id<"users">;
 
     const existing = await ctx.db
       .query("announcementDismissals")
       .withIndex("by_pair", (q) =>
-        q.eq("userId", userId as any).eq("announcementId", args.announcementId),
+        q.eq("userId", userId).eq("announcementId", args.announcementId),
       )
       .first();
     if (existing !== null) return;
 
     await ctx.db.insert("announcementDismissals", {
       announcementId: args.announcementId,
-      userId: userId as any,
+      userId,
     });
   },
 });

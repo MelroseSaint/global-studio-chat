@@ -12,6 +12,7 @@ import {
 import { useState } from "react";
 
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -38,6 +39,8 @@ const CATEGORIES = [
   { value: "event", label: "Event" },
   { value: "community", label: "Community" },
 ] as const;
+
+type AnnouncementCategory = (typeof CATEGORIES)[number]["value"];
 
 const CATEGORY_COLORS: Record<string, string> = {
   platform: "border-l-blue-500",
@@ -76,7 +79,7 @@ export function AnnouncementsPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [category, setCategory] = useState<string>("platform");
+  const [category, setCategory] = useState<AnnouncementCategory>("platform");
   const [scheduleMode, setScheduleMode] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
   const [saving, setSaving] = useState(false);
@@ -101,10 +104,10 @@ export function AnnouncementsPanel() {
 
       if (editingId) {
         await update({
-          announcementId: editingId as any,
+          announcementId: editingId as Id<"announcements">,
           title: title.trim(),
           body: body.trim(),
-          category: category as any,
+          category,
           ...(scheduledMs !== undefined
             ? { scheduledAt: scheduledMs, status: "scheduled" as const }
             : scheduleMode
@@ -115,7 +118,7 @@ export function AnnouncementsPanel() {
         await create({
           title: title.trim(),
           body: body.trim(),
-          category: category as any,
+          category,
           ...(scheduledMs !== undefined ? { scheduledAt: scheduledMs } : {}),
         });
       }
@@ -125,7 +128,13 @@ export function AnnouncementsPanel() {
     }
   };
 
-  const startEdit = (a: any) => {
+  const startEdit = (a: {
+    _id: Id<"announcements">;
+    title: string;
+    body: string;
+    category: AnnouncementCategory;
+    scheduledAt?: number | null;
+  }) => {
     setEditingId(a._id);
     setTitle(a.title);
     setBody(a.body);
@@ -220,7 +229,12 @@ export function AnnouncementsPanel() {
             </div>
             <div className="space-y-1.5">
               <Label>Category</Label>
-              <Select value={category} onValueChange={setCategory}>
+              <Select
+                value={category}
+                onValueChange={(value) =>
+                  setCategory(value as AnnouncementCategory)
+                }
+              >
                 <SelectTrigger className="w-[180px]">
                   <SelectValue />
                 </SelectTrigger>

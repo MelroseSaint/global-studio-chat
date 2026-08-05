@@ -170,6 +170,10 @@ jobs:
     name: Admin responsive QA
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The browser QAs sign in on production with the admin password. When
+    # the secret isn't configured the job SKIPS cleanly (green) instead of
+    # failing every push — same gate the original single-job design used.
+    if: ${{ secrets.ADMIN_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -177,12 +181,18 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run qa:admin-responsive
+      - run: npx playwright install --with-deps chromium
+      - name: Run the admin dashboard responsive QA
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: npm run qa:admin-responsive
 
   pages-inflation-qa:
     name: Page inflation QA
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    if: ${{ secrets.ADMIN_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -190,7 +200,12 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run qa:pages-inflation
+      - run: npx playwright install --with-deps chromium
+      - name: Run the dense-page inflation QA
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: npm run qa:pages-inflation
 
   shadowban-qa:
     name: Silent moderation QA

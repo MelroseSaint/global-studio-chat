@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import type { Id } from "./_generated/dataModel";
+
 import { isStandardId } from "@/lib/standard";
 
 import { eraseAccount } from "./account";
@@ -679,7 +681,7 @@ export const previewMediaEvidence = action({
 
         // 2. Run the full scan pipeline.
         const scan = await ctx.runAction(api.aiContent.scanMediaForAi, {
-          media: [{ storageId: storageId as any, kind: "image" }],
+          media: [{ storageId: storageId as Id<"_storage">, kind: "image" }],
         });
 
         const s = scan as unknown as {
