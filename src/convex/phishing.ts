@@ -457,8 +457,12 @@ export function scanWithBlocklist(
     return parsed?.host ?? null;
   }).filter(Boolean) as string[]);
   for (const candidate of extractObfuscatedDomains(text)) {
-    // Skip if candidate equals or is a suffix of any already-parsed host.
-    if ([...parsedHosts].some((h) => h.endsWith(candidate) && (h === candidate || h.endsWith("." + candidate)))) {
+    // Skip when the candidate appears inside a URL that was already parsed
+    // by extractUrls — e.g. "onlyfans.com" embedded in
+    // "onlyfans.com.example.com" was already checked (and correctly did NOT
+    // match). Without this guard the obfuscation scanner re-checks the
+    // embedded substring and produces a false positive.
+    if ([...parsedHosts].some((h) => h.endsWith(candidate))) {
       continue;
     }
     const hit = matchBlockedHost(candidate, entries);
@@ -1013,7 +1017,18 @@ export function scanForPhishing(content: string): PhishingVerdict {
   }
   // Textual obfuscation against the static adult list — a banned host
   // written as "onlyfans dot com" is caught even with no URL in the text.
+  // Filter: skip candidates that appear inside already-parsed URLs.
+  const parsedHosts = new Set(
+    extractUrls(text)
+      .map((raw) => {
+        const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+        const parsed = parseUrl(withScheme);
+        return parsed?.host ?? null;
+      })
+      .filter(Boolean) as string[],
+  );
   for (const candidate of extractObfuscatedDomains(text)) {
+    if ([...parsedHosts].some((h) => h.endsWith(candidate))) continue;
     const adult = bannedAdultCategory(candidate);
     if (adult !== null) {
       return {
