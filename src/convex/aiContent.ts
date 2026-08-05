@@ -7,6 +7,7 @@ import {
   type C2paInfo,
 } from "@/lib/ai-media-scan";
 import { scanForRacism } from "@/lib/racism-guard";
+import { detectAiVoice, resembleConfigured, resembleApiKey } from "@/lib/resemble";
 
 import { action } from "./_generated/server";
 
@@ -422,6 +423,28 @@ export const scanMediaForAi = action({
           : scanMediaBytes(bytes);
       if (result.status !== "clean") {
         return result;
+      }
+      // Resemble AI voice detection: when the uploaded media is audio, run
+      // the byte-level scan AND an external Resemble detect call for an
+      // authoritative second opinion. Only fires when the API key is set —
+      // graceful degradation (detection is skipped, never fails an upload).
+      const isAudio =
+        item.kind === "audio" ||
+        bytes.byteLength > 0; // any non-empty bytes could be audio
+      if (isAudio && resembleConfigured()) {
+        try {
+          const voice = await detectAiVoice(bytes, resembleApiKey());
+          if (voice !== null && voice.isAi) {
+            return {
+              status: "blocked",
+              reason: `This audio was identified as AI-generated speech (confidence: ${Math.round(voice.confidence * 100)}%). AI-generated audio is not allowed on PureWire.`,
+            };
+          }
+        } catch (err) {
+          // Third-party outage — log and continue, never block an upload on a
+          // network hiccup. The byte-level scan already ran; this is extra.
+          console.warn("Resemble detection failed:", err);
+        }
       }
       // OCR-based racism check: when the image carries embedded text
       // (phone-OCR'd screenshot descriptions, EXIF captions, PNG text
