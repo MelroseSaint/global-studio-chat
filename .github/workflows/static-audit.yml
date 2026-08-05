@@ -136,6 +136,32 @@ jobs:
       - run: npm ci
       - run: npm run qa:salt
 
+  admin-responsive-qa:
+    name: Admin responsive QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:admin-responsive
+
+  pages-inflation-qa:
+    name: Page inflation QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:pages-inflation
+
   shadowban-qa:
     name: Silent moderation QA
     runs-on: ubuntu-latest
