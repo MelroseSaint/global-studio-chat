@@ -228,6 +228,10 @@ const schema = defineSchema({
     // Why the story was flagged (AI signals, suspected phishing) — shown in
     // the admin review queue so a human can judge without re-reading it.
     aiStatusReason: v.optional(v.string()),
+    // Structured evidence from the multi-signal media assessment — byte
+    // scan verdict, Resemble voice detection score, C2PA provenance, and
+    // OCR racism result. Same shape as posts.aiEvidence.
+    aiEvidence: v.optional(v.any()),
   })
     .index("by_author", ["authorId"])
     .index("by_expiration", ["expiresAt"])

@@ -61,16 +61,19 @@ export const createStory = action({
       throw new Error("Not authenticated");
     }
     let verifiedStatus: "clean" | "review" | "blocked" = "clean";
+    let aiEvidence: Record<string, unknown> | undefined;
     if (media.url !== undefined || media.storageId !== undefined) {
       const scan = await ctx.runAction(api.aiContent.scanMediaForAi, {
         media: [{ storageId: media.storageId, url: media.url, kind: media.kind }],
       });
       verifiedStatus = scan.status;
+      aiEvidence = (scan as unknown as { evidence?: Record<string, unknown> }).evidence;
     }
     return (await ctx.runMutation(internal.stories.createStoryInternal, {
       media,
       caption,
       aiMediaStatus: verifiedStatus,
+      aiEvidence,
     })) as CreateStoryResult;
   },
 });
@@ -94,8 +97,11 @@ export const createStoryInternal = internalMutation({
     // Verdict from the server-side scan (the createStory action reads the
     // actual bytes via scanMediaForAi before delegating here).
     aiMediaStatus: v.optional(AI_MEDIA_STATUS),
+    // Structured evidence from the multi-signal media assessment — byte
+    // scan, Resemble voice detection, C2PA provenance, OCR racism.
+    aiEvidence: v.optional(v.any()),
   },
-  handler: async (ctx, { media, caption, aiMediaStatus }) => {
+  handler: async (ctx, { media, caption, aiMediaStatus, aiEvidence }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       // ConvexError so the message survives the action → client boundary
@@ -154,6 +160,7 @@ export const createStoryInternal = internalMutation({
         caption,
         expiresAt: Date.now() + 24 * 3600_000,
         aiStatus: "clean",
+        aiEvidence,
       });
       if (media.kind === "video") {
         await ctx.scheduler.runAfter(
@@ -234,6 +241,7 @@ export const createStoryInternal = internalMutation({
       caption,
       expiresAt,
       aiStatus: needsReview ? "review" : "clean",
+      aiEvidence,
       // The review reason already carries the "Suspected phishing —"
       // prefix from scanForPhishing — used as-is, no double prefix.
       aiStatusReason:
