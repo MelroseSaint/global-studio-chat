@@ -403,12 +403,12 @@ function AdminDashboard({ meId }: { meId: string }) {
           >
             {STAT_CARDS.map(({ key, label, icon: Icon }) => (
               <Card key={key} className="min-w-[9rem] snap-start sm:min-w-0">
-                <CardContent className="p-3 sm:p-4">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Icon className="size-4" />
+                <CardContent className="p-3">
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <Icon className="size-4 shrink-0" />
                     <span className="text-xs font-medium">{label}</span>
                   </div>
-                  <p className="mt-1 text-2xl font-bold">
+                  <p className="mt-1 text-xl font-bold sm:text-2xl">
                     {stats === undefined ? "…" : String(stats[key])}
                   </p>
                 </CardContent>
@@ -648,6 +648,11 @@ function RecentRemovals() {
     {},
     { initialNumItems: 10 },
   );
+  // Collapsed by default: the log is a one-way audit record, not a working
+  // surface, and on tablets (where every vertical line costs a scroll) a
+  // wall of old removals buried the actual user list. One tap reveals the
+  // entries; the count stays visible so the workload is never hidden.
+  const [open, setOpen] = useState(false);
   const removals = results as unknown as {
     username: string | null;
     name: string | null;
@@ -664,50 +669,72 @@ function RecentRemovals() {
     return null;
   }
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-dashed p-3">
-      <p className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-        <Lock className="size-3.5" />
-        Removal log — who was removed, when, by whom. One-way: it can never
-        restore the account.
-      </p>
-      <div className="flex flex-col gap-1.5">
-        {removals.map((r, i) => (
-          <div
-            key={`${r.username}-${r.createdAt}-${i}`}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5 text-xs"
-          >
-            <span className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 font-medium text-destructive">
-                @{r.username ?? "removed account"}
-              </span>
-              {r.name ? (
-                <span className="truncate font-medium">{r.name}</span>
-              ) : null}
-              {r.emailHash ? (
-                <span
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
-                  title="Salted one-way hash of their email — stored instead of the address, never reversible"
-                >
-                  <Lock className="size-2.5" />
-                  {r.emailHash.slice(0, 10)}…
+    <div className="rounded-xl border border-dashed">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title="Who was removed, when, and by whom. One-way: it can never restore the account."
+        className="flex w-full items-center justify-between gap-2 rounded-xl p-3 text-left text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <Lock className="size-3.5 shrink-0" />
+          <span className="truncate">
+            Removal log — {status === "CanLoadMore" ? `${removals.length}+` : removals.length}{" "}
+            removed {removals.length === 1 ? "account" : "accounts"}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="hidden font-normal text-muted-foreground/70 sm:inline">
+            one-way, never restores
+          </span>
+          {open ? (
+            <ChevronUp className="size-4" />
+          ) : (
+            <ChevronDown className="size-4" />
+          )}
+        </span>
+      </button>
+      {open ? (
+        <div className="flex flex-col gap-1.5 border-t border-dashed p-3">
+          {removals.map((r, i) => (
+            <div
+              key={`${r.username}-${r.createdAt}-${i}`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5 text-xs"
+            >
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 font-medium text-destructive">
+                  @{r.username ?? "removed account"}
                 </span>
-              ) : null}
-              <span className="truncate text-muted-foreground">
-                {r.actorUsername
-                  ? `removed by @${r.actorUsername}`
-                  : "removed by an admin"}
-                {r.note ? ` — ${r.note}` : ""}
+                {r.name ? (
+                  <span className="truncate font-medium">{r.name}</span>
+                ) : null}
+                {r.emailHash ? (
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+                    title="Salted one-way hash of their email — stored instead of the address, never reversible"
+                  >
+                    <Lock className="size-2.5" />
+                    {r.emailHash.slice(0, 10)}…
+                  </span>
+                ) : null}
+                <span className="truncate text-muted-foreground">
+                  {r.actorUsername
+                    ? `removed by @${r.actorUsername}`
+                    : "removed by an admin"}
+                  {r.note ? ` — ${r.note}` : ""}
+                </span>
               </span>
-            </span>
-            <span className="flex shrink-0 items-center gap-2">
-              {r.standardId ? <StandardChip standardId={r.standardId} /> : null}
-              <span className="shrink-0 text-muted-foreground">
-                {timeAgo(r.createdAt)}
+              <span className="flex shrink-0 items-center gap-2">
+                {r.standardId ? <StandardChip standardId={r.standardId} /> : null}
+                <span className="shrink-0 text-muted-foreground">
+                  {timeAgo(r.createdAt)}
+                </span>
               </span>
-            </span>
-          </div>
-        ))}
-      </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

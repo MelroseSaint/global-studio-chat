@@ -247,6 +247,28 @@ async function inspectAdmin(page, widthLabel, width) {
         );
       }
     }
+    if (tab === "Users") {
+      // The removal log is collapsed by default so a wall of old removals
+      // never buries the user list (the tablet declutter). Data-aware: when
+      // the deployment has no removals the component renders nothing.
+      const logToggle = page.locator('button:has-text("Removal log")');
+      if ((await logToggle.count()) > 0) {
+        const entries = page.locator('text=/removed by /');
+        check(
+          `${widthLabel}: removal log collapsed by default`,
+          (await entries.count()) === 0,
+          `${await entries.count()} entries visible before expanding`,
+        );
+        await logToggle.click();
+        await page.waitForTimeout(400);
+        check(
+          `${widthLabel}: removal log expands to show entries`,
+          (await entries.count()) > 0,
+        );
+        await logToggle.click();
+        await page.waitForTimeout(200);
+      }
+    }
   }
 }
 
