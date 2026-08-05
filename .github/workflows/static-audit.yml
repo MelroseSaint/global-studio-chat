@@ -123,6 +123,51 @@ jobs:
       - run: npm ci
       - run: npm run qa:ai-scan
 
+  salt-qa:
+    name: Salt rotation QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:salt
+
+  shadowban-qa:
+    name: Silent moderation QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Test shadowban lifecycle against production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: npm run qa:shadowban
+
+  reinstate-qa:
+    name: Admin reinstatement QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Test admin reinstatement workflow against production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: npm run qa:reinstate
+
   cloudinary-health:
     name: Cloudinary health probe
     runs-on: ubuntu-latest
