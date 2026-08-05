@@ -1,11 +1,19 @@
 import { useMutation, usePaginatedQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
+  Database,
+  Eye,
+  Globe,
   LifeBuoy,
   Loader2,
   MessageSquarePlus,
+  Microscope,
+  ScanSearch,
   Send,
+  Shield,
+  ShieldAlert,
   ShieldCheck,
+  ShieldOff,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
@@ -40,81 +48,6 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { timeAgo } from "@/lib/format";
 import { standardById, STANDARD_PRINCIPLES } from "@/lib/standard";
-
-const FAQS = [
-  {
-    q: "What is the PureWire Standard?",
-    a: "PureWire isn't 'no rules' — it's freedom with a reason. The Standard is the short list of lines we draw so everyone's freedom can exist: say what you mean, create what you want, find your people, disagree without destroying each other, don't impersonate people, don't steal people's work, don't spam the platform, and never use freedom as an excuse to take someone else's freedom away. That last one is the most important — PureWire is freedom with a reason, not an unmoderated free-for-all.",
-  },
-  {
-    q: "How does PureWire verify content is original?",
-    a: "Every post is fingerprinted and checked against the platform before it goes live. If the same content already exists — from anyone, anywhere on PureWire — the duplicate is blocked and you'll be told why. Posts that pass get the green “Original” badge.",
-  },
-  {
-    q: "What does “pure freedom” mean on PureWire?",
-    a: "PureWire is built around expression, connection, and freedom — not advertising, corporate sponsorships, or telling people how they're supposed to participate. You're free to post whatever you create — text, photos, video, audio — with no ads, no algorithms, and no copycats. The one requirement: the content must be yours and original.",
-  },
-  {
-    q: "How do I report a post or a user?",
-    a: "Open any post, tap the ⋯ menu and choose “Report post”. Choose what was violated and add details — the post and its author are included automatically so the team can review it quickly.",
-  },
-  {
-    q: "Is AI-generated content allowed on PureWire?",
-    a: "No. PureWire is for human expression — 'say it anyway' means your voice, not a machine's. Text, images, audio, and video must be made by you. Every post is scanned for AI-generated text and AI-generator image metadata before it goes live, and anything suspicious is reviewed by the team. Report AI content anytime with the ⋯ menu → “Report post” → “AI-generated content”.",
-  },
-  {
-    q: "How does PureWire protect against bots, farms, and deepfakes?",
-    a: "Three layers. Signup screening: every new account is checked against bot and farm signals — disposable email domains, machine-like usernames, placeholder names — and suspicious accounts are held for a human review, with their content kept off the public feed until they're approved. Activity budgets: posts, comments, likes, shares, and follows run against per-account rate limits so automated floods can't take over. Media checks: images and video are scanned for AI-generator and deepfake metadata before they go live, and every video is remuxed on PureWire's servers so GPS and device metadata are stripped before it's ever served. Scans read what's baked into the file, so nothing is treated as final on its own — anything ambiguous goes to a human review queue, and you can report a bot, farm, or deepfake at any time. Accounts confirmed as bots, farms, or manipulators are restricted or banned, and their content is hidden platform-wide.",
-  },
-  {
-    q: "Does PureWire quietly limit accounts?",
-    a: "Sometimes, and always for a reason. Accounts that repeatedly trip our safeguards — posting the same content, flooding the platform, or pushing manipulated media — may have their reach quietly limited instead of being confronted. Nothing is deleted without review, the account itself stays open, and a human in our team makes the final call. If you believe your account was limited, open a support ticket and we'll take a look right away.",
-  },
-  {
-    q: "How do I block someone?",
-    a: "Open their profile and tap Block. Blocking hides their profile, posts, and notifications from you in both directions, and unfollows them automatically. You can unblock them anytime from their profile.",
-  },
-  {
-    q: "What content is not allowed on PureWire?",
-    a: "PureWire protects your freedom to express yourself — but freedom with a reason means harassment, doxxing, intimidation, impersonation, stolen work, spam, AI-generated content, and illegal content are against the Standard. You can report anything you see; the lines exist so one person's freedom never costs another's.",
-  },
-  {
-    q: "How do I get a verified badge?",
-    a: "The moment you verify your email with the one-time code, the verified badge is attached to your account — it proves you're a real person, not a fake. For special cases the team can add or remove badges manually; open a support ticket if you have questions.",
-  },
-  {
-    q: "How do I reset my password?",
-    a: "On the sign-in page, tap “Forgot password”. We'll email you a code — enter it along with a new password and you're back in.",
-  },
-  {
-    q: "Why do I need to verify my email?",
-    a: "Email verification keeps fake accounts off the platform and makes sure every profile belongs to a real person. When your one-time code is redeemed, your account is verified and the badge is attached automatically. And for your privacy, PureWire never stores or shows your plain-text address — only a salted one-way hash and a masked form.",
-  },
-  {
-    q: "What data does PureWire store about me?",
-    a: "Very little, and only what you create: your username, display name, bio, links, photo and banner, a salted one-way SHA-256 hash of your email (never the plain-text address), your posts and stories, your comments, likes, shares and follows, notifications, support tickets, and your direct messages — stored only as unreadable ciphertext, with the keys living on your devices, so even PureWire can't read them. Stories are deleted automatically after 24 hours. Photos and videos are stored with GPS and device metadata stripped — images in your browser, videos on PureWire's servers too. If you add a home location, only a coarsened ~1 km area is stored — never your exact coordinates — and only its label is public. There is no tracking, no analytics, no cookies, and no advertising profile of any kind.",
-  },
-  {
-    q: "Can the police or government see my private data?",
-    a: "No — because there is nothing readable to see. Direct messages are end-to-end encrypted: the keys exist only on the devices of the two people talking, PureWire stores only ciphertext, and there is no master key and no backdoor, so no server, administrator, subpoena, or government can decrypt them. Plain-text email addresses, precise locations, and tracking logs are never stored or exposed — the raw address exists only inside the sign-in service, required to deliver your one-time code, and it never appears on any page, query, or export. A request for user data produces what's already public: a profile and the posts on it. Nothing more exists to hand over.",
-  },
-  {
-    q: "What can admins actually see when they moderate?",
-    a: "Only what's public, and only after something is reported or flagged. Admins act when another member reports a post, profile, or ticket — or when the platform's automated safeguards (bots, farms, duplicates, AI-generated content) flag something for review. They never see private data: no plain-text emails, no locations, no message contents, because those never exist in readable form. Every action cites a principle of the PureWire Standard and is written to the audit trail. Nobody on PureWire watches you; moderation only begins when someone says something needs looking at.",
-  },
-  {
-    q: "How do I delete my account and all my data?",
-    a: "Settings → Your data & privacy → Delete account and all data. One confirmation permanently removes your profile, posts, comments, likes, shares, stories, follows, notifications, tickets, blocks, and every file you uploaded. No soft-delete, no copy kept anywhere. The full plain-language inventory is on the Privacy page.",
-  },
-  {
-    q: "How does the Local feed know where I am?",
-    a: "The Local tab uses your live browser position — read only while you're browsing and never stored — to find posts shared near you. If you add a home location in Settings (search a place or use your current location), it's kept only as a coarsened ~1 km area, so the Local feed still works when you haven't granted live location. Place search runs on PureWire's own servers, and other members only ever see the label you choose.",
-  },
-  {
-    q: "Where can I read PureWire's full transparency statement?",
-    a: "On the Privacy page — it lists exactly what we store and why, what we never store (tracking, analytics, cookies, exact location, plain-text email), how long data lives, and the one-action right to erasure.",
-  },
-]
 
 const STATUS_VARIANTS: Record<string, string> = {
   open: "default",
@@ -190,7 +123,7 @@ export function Support() {
         </p>
       </div>
 
-      {/* The PureWire Standard — freedom with a reason */}
+      {/* ── The PureWire Standard ────────────────────────────────────── */}
       <Card className="border-oxide/25">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -198,9 +131,9 @@ export function Support() {
             The PureWire Standard
           </CardTitle>
           <CardDescription>
-            PureWire isn&apos;t &ldquo;no rules.&rdquo; It&apos;s freedom with a
+            PureWire isn't &ldquo;no rules.&rdquo; It's freedom with a
             reason. Say what you mean — and never use your freedom to take
-            someone else&apos;s away.
+            someone else's away.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -215,6 +148,7 @@ export function Support() {
               "Don't spam the platform.",
               "Don't use freedom as an excuse to take someone else's freedom away.",
               "No AI-generated content — say it yourself.",
+              "No adult platforms — don't share, post, or link to adult subscription, cam, video, clip, or chat sites.",
             ].map((rule, i) => (
               <li key={rule} className="flex items-start gap-2.5">
                 <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-oxide/15 text-[11px] font-bold text-oxide dark:text-oxide-light">
@@ -227,6 +161,169 @@ export function Support() {
         </CardContent>
       </Card>
 
+      {/* ── Content policies at a glance ─────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Microscope className="size-4 text-copper" />
+              AI & deepfake detection
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            <p>
+              PureWire scans every post and story for AI-generated content.
+              Text is checked for machine patterns. Images, audio, and video
+              are checked for AI-generator metadata (Midjourney, Stable
+              Diffusion, DALL·E, etc.), C2PA Content Credentials, and
+              deepfake markers via Resemble v2. Self-identified AI and
+              C2PA manifests asserting AI creation are blocked. Suspicious
+              content enters human review — and the author is told honestly
+              why.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Globe className="size-4 text-destructive" />
+              Prohibited domains
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            <p>
+              Adult subscription, cam, video, clip, chat, and redirect
+              platforms are blocked site-wide. Every URL in posts,
+              comments, stories, bios, profile links, and direct messages
+              is scanned — including redirect chains (up to 5 hops),
+              punycode/IDN domains, and obfuscation attempts like
+              &ldquo;domain dot com&rdquo;. URL shorteners are resolved to
+              their destination before a decision is made.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Shield className="size-4 text-oxide" />
+              Racism & hate prevention
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            <p>
+              Racial slurs, ethnic slurs, dehumanization, supremacy claims,
+              segregation advocacy, calls for violence, and coded hate
+              language are blocked. The system detects Unicode confusables,
+              leetspeak, spacing attacks, and other evasion techniques.
+              Ambiguous content enters human review. Discussion, reporting,
+              and educational context are distinguished from attacks —
+              context matters.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <ScanSearch className="size-4 text-moss" />
+              Phishing & scams
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            <p>
+              Links and phrasing that try to harvest accounts, passwords,
+              money, or personal information are blocked across all surfaces
+              — posts, comments, stories, profile links, and before direct
+              messages are encrypted. Members can report suspected phishing
+              with one tap from any post or comment menu.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <ShieldAlert className="size-4 text-amber-600 dark:text-amber-400" />
+              Silent moderation
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            <p>
+              Accounts that repeatedly trip safeguards — posting duplicates,
+              flooding the platform, pushing AI-generated or manipulated
+              media — may have their reach quietly limited instead of
+              being confronted. Nothing is deleted without review; a human
+              makes the final call. If you believe your account was limited,
+              open a support ticket.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Eye className="size-4 text-primary" />
+              What admins can see
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            <p>
+              Only what's public, and only after something is reported or
+              flagged. Admins act when a member reports a post, profile, or
+              ticket — or when automated safeguards flag content for review.
+              They never see private data: no plain-text emails, no locations,
+              no message contents. Every action cites a Standard principle
+              and is written to the audit trail. Nobody watches you;
+              moderation begins when someone says something needs looking at.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <ShieldOff className="size-4 text-destructive" />
+              Law enforcement & government
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            <p>
+              Direct messages are end-to-end encrypted — keys exist only on
+              the devices of the people talking. PureWire stores only
+              ciphertext. No master key, no backdoor. Plain-text emails,
+              precise locations, and tracking logs are never stored. A
+              request for user data produces only what's already public:
+              a profile and the posts on it. Nothing more exists to hand
+              over to any law enforcement, government, or third party.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Database className="size-4 text-muted-foreground" />
+              Data we store
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            <p>
+              Very little, and only what you create: username, display name,
+              bio, links, photo and banner, a salted SHA-256 hash of your
+              email (never plain-text), posts, stories, comments, likes,
+              shares, follows, notifications, tickets, and DMs stored as
+              unreadable ciphertext. No tracking, no analytics, no cookies,
+              no advertising profile. GPS stripped before upload. Stories
+              auto-deleted after 24 hours. Full inventory on the{" "}
+              <Link to="/privacy" className="text-primary hover:underline">Privacy page</Link>.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Ticket form ──────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -291,6 +388,7 @@ export function Support() {
         </CardContent>
       </Card>
 
+      {/* ── Your tickets ─────────────────────────────────────────────── */}
       <div className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">Your tickets</h2>
         {tickets.length === 0 && status !== "LoadingFirstPage" ? (
@@ -327,10 +425,44 @@ export function Support() {
         <div ref={ref} />
       </div>
 
+      {/* ── FAQ ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">Frequently asked questions</h2>
         <Accordion type="single" collapsible className="w-full">
-          {FAQS.map((f, i) => (
+          {[
+            {
+              q: "How does PureWire verify content is original?",
+              a: "Every post is fingerprinted and checked against the platform before it goes live. If the same content already exists — from anyone, anywhere on PureWire — the duplicate is blocked and you'll be told why. Posts that pass get the green \"Original\" badge.",
+            },
+            {
+              q: "How do I report a post or a user?",
+              a: "Open any post, tap the ⋯ menu and choose \"Report post\". Choose what was violated and add details — the post and its author are included automatically so the team can review it quickly.",
+            },
+            {
+              q: "How do I block someone?",
+              a: "Open their profile and tap Block. Blocking hides their profile, posts, and notifications from you in both directions, and unfollows them automatically. You can unblock them anytime from their profile.",
+            },
+            {
+              q: "How do I get a verified badge?",
+              a: "The moment you verify your email with the one-time code, the verified badge is attached to your account — it proves you're a real person, not a fake. For special cases the team can add or remove badges manually.",
+            },
+            {
+              q: "How do I reset my password?",
+              a: "On the sign-in page, tap \"Forgot password\". We'll email you a code — enter it along with a new password and you're back in.",
+            },
+            {
+              q: "Why do I need to verify my email?",
+              a: "Email verification keeps fake accounts off the platform and makes sure every profile belongs to a real person. PureWire never stores or shows your plain-text address — only a salted one-way hash and a masked form.",
+            },
+            {
+              q: "How does the Local feed know where I am?",
+              a: "The Local tab uses your live browser position — read only while you're browsing and never stored — to find posts shared near you. If you add a home location in Settings, it's kept only as a coarsened ~1 km area. Place search runs on PureWire's own servers, and other members only ever see the label you choose.",
+            },
+            {
+              q: "How do I delete my account and all my data?",
+              a: "Settings → Your data & privacy → Delete account and all data. One confirmation permanently removes your profile, posts, comments, likes, shares, stories, follows, notifications, tickets, blocks, and every file you uploaded. No soft-delete, no copy kept anywhere.",
+            },
+          ].map((f, i) => (
             <AccordionItem key={i} value={`faq-${i}`}>
               <AccordionTrigger className="text-left text-sm font-medium">
                 {f.q}
