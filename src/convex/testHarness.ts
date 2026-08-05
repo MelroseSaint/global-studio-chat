@@ -1174,3 +1174,461 @@ export const getTestUserTraces = query({
     };
   },
 });
+
+// ────────────────────────────────────────────────────────
+//  Data Integrity: orphan detection across all FK tables
+// ────────────────────────────────────────────────────────
+
+/**
+ * Full-spectrum orphan audit: walks every table that references users or
+ * posts by foreign key and reports rows whose target no longer exists.
+ *
+ * Tables audited:
+ *   notifications     — userId / actorId / postId
+ *   supportTickets    — userId / offenderId / postId
+ *   blocks            — blockerId / blockedId
+ *   dmConversations   — participantA / participantB
+ *   dmMessages        — conversationId / senderId
+ *   silentFlagEvents  — userId
+ *   moderationLog     — targetUserId / actorId
+ *
+ * Gated by the same two env gates as the rest of the harness.
+ * Reads up to 1000 rows per table; returns counts plus the first few
+ * orphan ids for the QA script to assert against.
+ */
+export const auditDataOrphans = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+
+    // ── notifications ────────────────────────────────
+    const notifs = await ctx.db.query("notifications").take(1000);
+    const notificationOrphans: Array<{
+      id: string;
+      reason: "userId" | "actorId" | "postId";
+      missingId: string;
+    }> = [];
+    for (const n of notifs) {
+      if ((await ctx.db.get(n.userId)) === null) {
+        notificationOrphans.push({ id: n._id, reason: "userId", missingId: n.userId });
+      }
+      if (n.actorId !== undefined && (await ctx.db.get(n.actorId)) === null) {
+        notificationOrphans.push({ id: n._id, reason: "actorId", missingId: n.actorId });
+      }
+      if (n.postId !== undefined && (await ctx.db.get(n.postId)) === null) {
+        notificationOrphans.push({ id: n._id, reason: "postId", missingId: n.postId });
+      }
+    }
+
+    // ── support tickets ─────────────────────────────
+    const tickets = await ctx.db.query("supportTickets").take(1000);
+    const ticketOrphans: Array<{
+      id: string;
+      reason: "userId" | "offenderId" | "postId";
+      missingId: string;
+    }> = [];
+    for (const t of tickets) {
+      if ((await ctx.db.get(t.userId)) === null) {
+        ticketOrphans.push({ id: t._id, reason: "userId", missingId: t.userId });
+      }
+      if (t.offenderId !== undefined && (await ctx.db.get(t.offenderId)) === null) {
+        ticketOrphans.push({ id: t._id, reason: "offenderId", missingId: t.offenderId });
+      }
+      if (t.postId !== undefined && (await ctx.db.get(t.postId)) === null) {
+        ticketOrphans.push({ id: t._id, reason: "postId", missingId: t.postId });
+      }
+    }
+
+    // ── blocks ─────────────────────────────────────
+    const blockRows = await ctx.db.query("blocks").take(1000);
+    const blockOrphans: Array<{
+      id: string;
+      reason: "blockerId" | "blockedId";
+      missingId: string;
+    }> = [];
+    for (const b of blockRows) {
+      if ((await ctx.db.get(b.blockerId)) === null) {
+        blockOrphans.push({ id: b._id, reason: "blockerId", missingId: b.blockerId });
+      }
+      if ((await ctx.db.get(b.blockedId)) === null) {
+        blockOrphans.push({ id: b._id, reason: "blockedId", missingId: b.blockedId });
+      }
+    }
+
+    // ── DM conversations ──────────────────────────
+    const convos = await ctx.db.query("dmConversations").take(1000);
+    const dmConversationOrphans: Array<{
+      id: string;
+      reason: "participantA" | "participantB";
+      missingId: string;
+    }> = [];
+    for (const c of convos) {
+      if ((await ctx.db.get(c.participantA)) === null) {
+        dmConversationOrphans.push({ id: c._id, reason: "participantA", missingId: c.participantA });
+      }
+      if ((await ctx.db.get(c.participantB)) === null) {
+        dmConversationOrphans.push({ id: c._id, reason: "participantB", missingId: c.participantB });
+      }
+    }
+
+    // ── DM messages ───────────────────────────────
+    const dms = await ctx.db.query("dmMessages").take(1000);
+    const dmMessageOrphans: Array<{
+      id: string;
+      reason: "conversationId" | "senderId";
+      missingId: string;
+    }> = [];
+    for (const m of dms) {
+      if ((await ctx.db.get(m.conversationId)) === null) {
+        dmMessageOrphans.push({ id: m._id, reason: "conversationId", missingId: m.conversationId });
+      }
+      if ((await ctx.db.get(m.senderId)) === null) {
+        dmMessageOrphans.push({ id: m._id, reason: "senderId", missingId: m.senderId });
+      }
+    }
+
+    // ── silentFlagEvents ──────────────────────────
+    const flags = await ctx.db.query("silentFlagEvents").take(1000);
+    const silentFlagOrphans: Array<{ id: string; missingId: string }> = [];
+    for (const f of flags) {
+      if ((await ctx.db.get(f.userId)) === null) {
+        silentFlagOrphans.push({ id: f._id, missingId: f.userId });
+      }
+    }
+
+    // ── moderationLog ─────────────────────────────
+    const modLog = await ctx.db.query("moderationLog").take(1000);
+    const moderationLogOrphans: Array<{
+      id: string;
+      reason: "targetUserId" | "actorId";
+      missingId: string;
+    }> = [];
+    for (const m of modLog) {
+      if ((await ctx.db.get(m.targetUserId)) === null) {
+        moderationLogOrphans.push({ id: m._id, reason: "targetUserId", missingId: m.targetUserId });
+      }
+      if (m.actorId !== undefined && (await ctx.db.get(m.actorId)) === null) {
+        moderationLogOrphans.push({ id: m._id, reason: "actorId", missingId: m.actorId });
+      }
+    }
+
+    const totalOrphans =
+      notificationOrphans.length +
+      ticketOrphans.length +
+      blockOrphans.length +
+      dmConversationOrphans.length +
+      dmMessageOrphans.length +
+      silentFlagOrphans.length +
+      moderationLogOrphans.length;
+
+    return {
+      tablesScanned: {
+        notifications: notifs.length,
+        supportTickets: tickets.length,
+        blocks: blockRows.length,
+        dmConversations: convos.length,
+        dmMessages: dms.length,
+        silentFlagEvents: flags.length,
+        moderationLog: modLog.length,
+      },
+      notificationOrphans,
+      ticketOrphans,
+      blockOrphans,
+      dmConversationOrphans,
+      dmMessageOrphans,
+      silentFlagOrphans,
+      moderationLogOrphans,
+      totalOrphans,
+    };
+  },
+});
+
+/**
+ * Sweep discovered orphans across all FK tables. Calls the same
+ * audit logic and deletes every orphan row found, then reports what
+ * was removed. Idempotent — a clean run deletes nothing.
+ *
+ * Gated by the same two env gates as the rest of the harness.
+ */
+export const sweepDataOrphans = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+
+    const swept: Array<{ table: string; id: string; reason: string }> = [];
+
+    // ── notifications ────────────────────────────────
+    const notifs = await ctx.db.query("notifications").take(1000);
+    for (const n of notifs) {
+      const userGone = (await ctx.db.get(n.userId)) === null;
+      const actorGone = n.actorId !== undefined && (await ctx.db.get(n.actorId)) === null;
+      const postGone = n.postId !== undefined && (await ctx.db.get(n.postId)) === null;
+      if (userGone || actorGone || postGone) {
+        await ctx.db.delete(n._id);
+        swept.push({
+          table: "notifications",
+          id: n._id,
+          reason: userGone
+            ? `userId ${n.userId} deleted`
+            : actorGone
+              ? `actorId ${n.actorId} deleted`
+              : `postId ${n.postId} deleted`,
+        });
+      }
+    }
+
+    // ── supportTickets ─────────────────────────────
+    const tickets = await ctx.db.query("supportTickets").take(1000);
+    for (const t of tickets) {
+      const userGone = (await ctx.db.get(t.userId)) === null;
+      const offenderGone = t.offenderId !== undefined && (await ctx.db.get(t.offenderId)) === null;
+      const postGone = t.postId !== undefined && (await ctx.db.get(t.postId)) === null;
+      if (userGone || offenderGone || postGone) {
+        await ctx.db.delete(t._id);
+        swept.push({
+          table: "supportTickets",
+          id: t._id,
+          reason: userGone
+            ? `userId ${t.userId} deleted`
+            : offenderGone
+              ? `offenderId ${t.offenderId} deleted`
+              : `postId ${t.postId} deleted`,
+        });
+      }
+    }
+
+    // ── blocks ─────────────────────────────────────
+    const blockRows = await ctx.db.query("blocks").take(1000);
+    for (const b of blockRows) {
+      const blockerGone = (await ctx.db.get(b.blockerId)) === null;
+      const blockedGone = (await ctx.db.get(b.blockedId)) === null;
+      if (blockerGone || blockedGone) {
+        await ctx.db.delete(b._id);
+        swept.push({
+          table: "blocks",
+          id: b._id,
+          reason: blockerGone
+            ? `blockerId ${b.blockerId} deleted`
+            : `blockedId ${b.blockedId} deleted`,
+        });
+      }
+    }
+
+    // ── dmConversations ──────────────────────────
+    const convos = await ctx.db.query("dmConversations").take(1000);
+    for (const c of convos) {
+      const aGone = (await ctx.db.get(c.participantA)) === null;
+      const bGone = (await ctx.db.get(c.participantB)) === null;
+      if (aGone || bGone) {
+        await ctx.db.delete(c._id);
+        swept.push({
+          table: "dmConversations",
+          id: c._id,
+          reason: aGone
+            ? `participantA ${c.participantA} deleted`
+            : `participantB ${c.participantB} deleted`,
+        });
+      }
+    }
+
+    // ── dmMessages ───────────────────────────────
+    const dms = await ctx.db.query("dmMessages").take(1000);
+    for (const m of dms) {
+      const convoGone = (await ctx.db.get(m.conversationId)) === null;
+      const senderGone = (await ctx.db.get(m.senderId)) === null;
+      if (convoGone || senderGone) {
+        await ctx.db.delete(m._id);
+        swept.push({
+          table: "dmMessages",
+          id: m._id,
+          reason: convoGone
+            ? `conversationId ${m.conversationId} deleted`
+            : `senderId ${m.senderId} deleted`,
+        });
+      }
+    }
+
+    // ── silentFlagEvents ──────────────────────────
+    const flags = await ctx.db.query("silentFlagEvents").take(1000);
+    for (const f of flags) {
+      if ((await ctx.db.get(f.userId)) === null) {
+        await ctx.db.delete(f._id);
+        swept.push({
+          table: "silentFlagEvents",
+          id: f._id,
+          reason: `userId ${f.userId} deleted`,
+        });
+      }
+    }
+
+    // ── moderationLog ─────────────────────────────
+    const modLog = await ctx.db.query("moderationLog").take(1000);
+    for (const m of modLog) {
+      const targetGone = (await ctx.db.get(m.targetUserId)) === null;
+      const actorGone =
+        m.actorId !== undefined && (await ctx.db.get(m.actorId)) === null;
+      if (targetGone || actorGone) {
+        await ctx.db.delete(m._id);
+        swept.push({
+          table: "moderationLog",
+          id: m._id,
+          reason: targetGone
+            ? `targetUserId ${m.targetUserId} deleted`
+            : `actorId ${m.actorId} deleted`,
+        });
+      }
+    }
+
+    return {
+      sweptCount: swept.length,
+      swept,
+    };
+  },
+});
+
+// ────────────────────────────────────────────────────────
+//  Data Integrity: duplicate detection
+// ────────────────────────────────────────────────────────
+
+/**
+ * Detect duplicate rows where uniqueness is enforced by index but
+ * not guaranteed by the schema. Reports duplicate (followerId,
+ * followingId), (userId, postId) likes, and (blockerId, blockedId)
+ * pairs. Does NOT mutate — the QA script asserts zero duplicates.
+ *
+ * Gated by the same two env gates as the rest of the harness.
+ */
+export const auditDuplicates = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+
+    // ── follows duplicates ───────────────────────────
+    const follows = await ctx.db.query("follows").take(1000);
+    const followSeen = new Map<string, string>();
+    const followDuplicates: Array<{
+      id: string;
+      pair: string;
+      firstSeenId: string;
+    }> = [];
+    for (const f of follows) {
+      const key = `${f.followerId}|${f.followingId}`;
+      const prev = followSeen.get(key);
+      if (prev !== undefined) {
+        followDuplicates.push({ id: f._id, pair: key, firstSeenId: prev });
+      } else {
+        followSeen.set(key, f._id);
+      }
+    }
+
+    // ── likes duplicates ─────────────────────────────
+    const likes = await ctx.db.query("likes").take(1000);
+    const likeSeen = new Map<string, string>();
+    const likeDuplicates: Array<{
+      id: string;
+      pair: string;
+      firstSeenId: string;
+    }> = [];
+    for (const l of likes) {
+      const key = `${l.userId}|${l.postId}`;
+      const prev = likeSeen.get(key);
+      if (prev !== undefined) {
+        likeDuplicates.push({ id: l._id, pair: key, firstSeenId: prev });
+      } else {
+        likeSeen.set(key, l._id);
+      }
+    }
+
+    // ── blocks duplicates ───────────────────────────
+    const blockRows = await ctx.db.query("blocks").take(1000);
+    const blockSeen = new Map<string, string>();
+    const blockDuplicates: Array<{
+      id: string;
+      pair: string;
+      firstSeenId: string;
+    }> = [];
+    for (const b of blockRows) {
+      const key = `${b.blockerId}|${b.blockedId}`;
+      const prev = blockSeen.get(key);
+      if (prev !== undefined) {
+        blockDuplicates.push({ id: b._id, pair: key, firstSeenId: prev });
+      } else {
+        blockSeen.set(key, b._id);
+      }
+    }
+
+    return {
+      tablesScanned: {
+        follows: follows.length,
+        likes: likes.length,
+        blocks: blockRows.length,
+      },
+      followDuplicates,
+      likeDuplicates,
+      blockDuplicates,
+      totalDuplicates:
+        followDuplicates.length + likeDuplicates.length + blockDuplicates.length,
+    };
+  },
+});
+
+// ────────────────────────────────────────────────────────
+//  Data Integrity: expired story detection
+// ────────────────────────────────────────────────────────
+
+/**
+ * Report every story whose expiresAt is in the past. The production
+ * `pruneExpiredStories` mutation runs nightly via a scheduled job, and
+ * `getFeed` / `getUserStories` already filter out expired stories at
+ * query time — so a non-zero count here means the scheduled sweep is
+ * failing or the story-delete path didn't clean up a row after removal
+ * of the author. Either way the data integrity gate catches it.
+ *
+ * Gated by the same two env gates as the rest of the harness.
+ */
+export const auditExpiredStories = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const now = Date.now();
+    const expired = await ctx.db
+      .query("stories")
+      .withIndex("by_expiration", (q) => q.lt("expiresAt", now))
+      .take(1000);
+    return {
+      now,
+      expiredCount: expired.length,
+      expired: expired.map((s) => ({
+        id: s._id,
+        authorId: s.authorId,
+        expiresAt: s.expiresAt,
+        expiredMsAgo: now - s.expiresAt,
+      })),
+    };
+  },
+});
+
+/**
+ * Delete every story whose expiresAt is in the past. Idempotent —
+ * a clean run deletes nothing. Mirrors the production cron mutation
+ * in account.ts, but gated on the harness so the QA script can call
+ * it immediately after the audit.
+ *
+ * Gated by the same two env gates as the rest of the harness.
+ */
+export const sweepExpiredStories = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const now = Date.now();
+    const expired = await ctx.db
+      .query("stories")
+      .withIndex("by_expiration", (q) => q.lt("expiresAt", now))
+      .take(1000);
+    for (const story of expired) {
+      await ctx.db.delete(story._id);
+    }
+    return { deleted: expired.length };
+  },
+});
+

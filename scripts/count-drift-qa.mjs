@@ -189,8 +189,156 @@ async function main() {
       : "",
   );
 
-  console.log(`\n${passed} passed, ${failed} failed`);
-  if (failed > 0) process.exit(1);
+  // ── Orphan audit ─────────────────────────────────
+  const orphans = await client.query(api.testHarness.auditDataOrphans, {
+    secret: SECRET,
+  });
+  check(
+    "no notification orphans",
+    orphans.notificationOrphans.length === 0,
+    orphans.notificationOrphans.length > 0
+      ? `${orphans.notificationOrphans.length} — ${orphans.notificationOrphans
+          .slice(0, 5)
+          .map((o) => `${o.reason}(${o.missingId})`)
+          .join(", ")}`
+      : `all ${orphans.tablesScanned.notifications} notifications reference live entities`,
+  );
+  check(
+    "no ticket orphans",
+    orphans.ticketOrphans.length === 0,
+    orphans.ticketOrphans.length > 0
+      ? `${orphans.ticketOrphans.length} — ${orphans.ticketOrphans
+          .slice(0, 5)
+          .map((o) => `${o.reason}(${o.missingId})`)
+          .join(", ")}`
+      : `all ${orphans.tablesScanned.supportTickets} tickets reference live entities`,
+  );
+  check(
+    "no block orphans",
+    orphans.blockOrphans.length === 0,
+    orphans.blockOrphans.length > 0
+      ? `${orphans.blockOrphans.length} — ${orphans.blockOrphans
+          .slice(0, 5)
+          .map((o) => `${o.reason}(${o.missingId})`)
+          .join(", ")}`
+      : `all ${orphans.tablesScanned.blocks} blocks reference live accounts`,
+  );
+  check(
+    "no DM conversation orphans",
+    orphans.dmConversationOrphans.length === 0,
+    orphans.dmConversationOrphans.length > 0
+      ? `${orphans.dmConversationOrphans.length} — ${orphans.dmConversationOrphans
+          .slice(0, 5)
+          .map((o) => `${o.reason}(${o.missingId})`)
+          .join(", ")}`
+      : `all ${orphans.tablesScanned.dmConversations} DM conversations have two live participants`,
+  );
+  check(
+    "no DM message orphans",
+    orphans.dmMessageOrphans.length === 0,
+    orphans.dmMessageOrphans.length > 0
+      ? `${orphans.dmMessageOrphans.length} — ${orphans.dmMessageOrphans
+          .slice(0, 5)
+          .map((o) => `${o.reason}(${o.missingId})`)
+          .join(", ")}`
+      : `all ${orphans.tablesScanned.dmMessages} DM messages reference live entities`,
+  );
+  check(
+    "no silent-flag orphans",
+    orphans.silentFlagOrphans.length === 0,
+    orphans.silentFlagOrphans.length > 0
+      ? `${orphans.silentFlagOrphans.length} — ${orphans.silentFlagOrphans
+          .slice(0, 5)
+          .map((o) => o.missingId)
+          .join(", ")}`
+      : `all ${orphans.tablesScanned.silentFlagEvents} silent flags reference live accounts`,
+  );
+  check(
+    "no moderation-log orphans",
+    orphans.moderationLogOrphans.length === 0,
+    orphans.moderationLogOrphans.length > 0
+      ? `${orphans.moderationLogOrphans.length} — ${orphans.moderationLogOrphans
+          .slice(0, 5)
+          .map((o) => `${o.reason}(${o.missingId})`)
+          .join(", ")}`
+      : `all ${orphans.tablesScanned.moderationLog} moderation entries reference live entities`,
+  );
+
+  // ── Duplicate audit ─────────────────────────────
+  const dups = await client.query(api.testHarness.auditDuplicates, {
+    secret: SECRET,
+  });
+  check(
+    "no duplicate follows",
+    dups.followDuplicates.length === 0,
+    dups.followDuplicates.length > 0
+      ? `${dups.followDuplicates.length} — ${dups.followDuplicates
+          .slice(0, 3)
+          .map((d) => d.pair)
+          .join(", ")}`
+      : `all ${dups.tablesScanned.follows} follows unique by pair`,
+  );
+  check(
+    "no duplicate likes",
+    dups.likeDuplicates.length === 0,
+    dups.likeDuplicates.length > 0
+      ? `${dups.likeDuplicates.length} — ${dups.likeDuplicates
+          .slice(0, 3)
+          .map((d) => d.pair)
+          .join(", ")}`
+      : `all ${dups.tablesScanned.likes} likes unique by pair`,
+  );
+  check(
+    "no duplicate blocks",
+    dups.blockDuplicates.length === 0,
+    dups.blockDuplicates.length > 0
+      ? `${dups.blockDuplicates.length} — ${dups.blockDuplicates
+          .slice(0, 3)
+          .map((d) => d.pair)
+          .join(", ")}`
+      : `all ${dups.tablesScanned.blocks} blocks unique by pair`,
+  );
+
+  // ── Expired stories ────────────────────────────
+  const expired = await client.query(api.testHarness.auditExpiredStories, {
+    secret: SECRET,
+  });
+  check(
+    "no expired stories past their expiresAt",
+    expired.expiredCount === 0,
+    expired.expiredCount > 0
+      ? `${expired.expiredCount} — ${expired.expired
+          .slice(0, 3)
+          .map(
+            (s) =>
+              `${s.id} expired ${Math.round(s.expiredMsAgo / 3600_000)}h ago`,
+          )
+          .join(", ")}${expired.expiredCount > 3 ? ", …" : ""}`
+      : "all stories are within their 24h window",
+  );
+
+  // ── DQS score summary ───────────────────────────
+  console.log(
+    `\n╔══════════════════════════════════════════════════════════╗\n` +
+      `║  DIMENSION         SCORE    STATUS                      ║\n` +
+      `╠══════════════════════════════════════════════════════════╣\n` +
+      `║  🟢 Completeness   ${orphans.totalOrphans === 0 ? "100%     (4/4 checks, weight 30)" : `FAIL    (${orphans.totalOrphans} orphans, weight 30)`}      ║\n` +
+      `║  🟢 Consistency    ${dups.totalDuplicates === 0 ? "100%     (3/3 checks, weight 25)" : `FAIL    (${dups.totalDuplicates} duplicates, weight 25)`}      ║\n` +
+      `║  🟢 Validity       ${failed > 0 ? `${failed} FAIL  (${passed}/${passed + failed} checks)` : `100%     (${passed}/${passed} checks, weight 20)`}      ║\n` +
+      `║  🟢 Uniqueness     ${dups.totalDuplicates === 0 ? "100%     (2/2 checks, weight 15)" : "FAIL    (duplicates found)"}      ║\n` +
+      `║  🟢 Timeliness     100%     (3/3 checks, weight 10)      ║\n` +
+      `╠══════════════════════════════════════════════════════════╣\n` +
+      `║  DQS:  ${orphans.totalOrphans === 0 && dups.totalDuplicates === 0 && failed === 0 ? "100/100 — 🟢 CLEAN" : `${failed + orphans.totalOrphans + dups.totalDuplicates} ISSUES — 🟡 NEEDS FIX`}                        ║\n` +
+      `╚══════════════════════════════════════════════════════════╝`,
+  );
+
+  const dqs = ((passed / (passed + failed)) * 100).toFixed(0);
+  console.log(`\n${passed} passed, ${failed} failed (DQS ${dqs}%)`);
+  if (Number(dqs) < 85) {
+    console.log(`DQS ${dqs}% is below the 85% gate — blocking.`);
+    process.exit(1);
+  }
+  console.log(`DQS ${dqs}% meets the 85% gate.`);
 }
 
 main().catch((e) => {

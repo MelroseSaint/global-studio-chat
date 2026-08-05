@@ -19,9 +19,7 @@ export type RacismVerdict =
   | {
       status: "review";
       reason: string;
-      /** The matched category for the review-queue label. */
       category?: RacismCategory;
-      /** How many evasion techniques were detected. */
       evasionScore: number;
     }
   | {
@@ -31,7 +29,7 @@ export type RacismVerdict =
       evasionScore: number;
     };
 
-// ── Categories (the taxonomy the engine reports) ──────────────────────────
+// ── Categories ────────────────────────────────────────────────────────────
 
 export type RacismCategory =
   | "racial_slur"
@@ -46,7 +44,6 @@ export type RacismCategory =
   | "racial_stereotype_attack"
   | "coded_hate";
 
-/** Human label per category, shown in the admin review queue. */
 export const RACISM_CATEGORY_LABEL: Record<RacismCategory, string> = {
   racial_slur: "Racial slur",
   ethnic_slur: "Ethnic slur",
@@ -61,37 +58,21 @@ export const RACISM_CATEGORY_LABEL: Record<RacismCategory, string> = {
   coded_hate: "Coded racial language",
 };
 
-// ── Token entry: every lexical item in the engine ─────────────────────────
+// ── Token entry ───────────────────────────────────────────────────────────
 
 interface RacismToken {
-  /** The canonical form of the term (lowercased, ASCII). */
   term: string;
   category: RacismCategory;
-  /** 1 = lower-tier (possible discussion/reporting context) to 5 = unambiguous attack. */
   severity: 1 | 2 | 3 | 4 | 5;
-  /** ISO 639-1 codes — null means the term spans languages. */
   language: "en" | "es" | "fr" | "de" | "ar" | "ru" | "zh" | null;
-  /** Common variant spellings of the canonical term. */
   aliases?: readonly string[];
-  /** Leetspeak / character-substitution variants. */
   variants?: readonly string[];
-  /** When true, context analysis is REQUIRED — never auto-block. */
   contextRequired: boolean;
 }
 
-// ── The categorized lexicon ───────────────────────────────────────────────
-//
-// Every entry carries a category, severity, language, and contextRequired
-// flag. High-severity slurs (4-5) in a clearly-attack context → BLOCK.
-// Lower-severity terms or quotes/discussion → REVIEW. Terms marked
-// contextRequired are ALWAYS REVIEW — a single match cannot auto-block.
-//
-// This list is deliberately sparse: it is the first line, not a complete
-// dictionary. The platform adds and refines through the admin blocklist.
-// ───────────────────────────────────────────────────────────────────────────
+// ── Lexicon ───────────────────────────────────────────────────────────────
 
 const TOKENS: readonly RacismToken[] = [
-  // ── Racial slurs (severity 5) ──────────────────────────────────────────
   {
     term: "nigger",
     category: "racial_slur",
@@ -157,7 +138,6 @@ const TOKENS: readonly RacismToken[] = [
     variants: ["p4ki", "p@ki"],
     contextRequired: false,
   },
-  // ── Dehumanization (severity 4) ────────────────────────────────────────
   {
     term: "subhuman",
     category: "racial_dehumanization",
@@ -187,7 +167,6 @@ const TOKENS: readonly RacismToken[] = [
     language: "en",
     contextRequired: true,
   },
-  // ── Supremacy (severity 4) ─────────────────────────────────────────────
   {
     term: "white power",
     category: "racial_supremacy",
@@ -210,7 +189,6 @@ const TOKENS: readonly RacismToken[] = [
     language: "en",
     contextRequired: false,
   },
-  // ── Inferiority claims (severity 4) ─────────────────────────────────────
   {
     term: "mongrel",
     category: "racial_inferiority",
@@ -232,7 +210,6 @@ const TOKENS: readonly RacismToken[] = [
     language: "en",
     contextRequired: false,
   },
-  // ── Segregation advocacy (severity 3) ───────────────────────────────────
   {
     term: "racial purity",
     category: "racial_segregation",
@@ -247,7 +224,6 @@ const TOKENS: readonly RacismToken[] = [
     language: "en",
     contextRequired: true,
   },
-  // ── Calls for violence (severity 5) ────────────────────────────────────
   {
     term: "kill all",
     category: "racial_violence",
@@ -256,7 +232,6 @@ const TOKENS: readonly RacismToken[] = [
     variants: ["k1ll all"],
     contextRequired: true,
   },
-  // ── Coded hate language (severity 3, always context-required) ───────────
   {
     term: "swarm",
     category: "coded_hate",
@@ -273,10 +248,8 @@ const TOKENS: readonly RacismToken[] = [
   },
 ];
 
-// ── Context markers (discussion/quote/report detection) ───────────────────
+// ── Context markers ───────────────────────────────────────────────────────
 
-/** Phrases that indicate the speaker is discussing/reporting/quotation, not
- *  personally attacking. Matched against the text AROUND a flagged term. */
 const CONTEXT_DISCUSSION_PREFIXES = [
   "i reported",
   "i'm reporting",
@@ -302,7 +275,6 @@ const CONTEXT_DISCUSSION_PREFIXES = [
   "i want to report",
 ];
 
-/** Sentences that frame the content as reporting/educational. */
 const CONTEXT_DISCUSSION_SENTENCES = [
   /(?:i'?m?\s+)?report(?:ing)?\s+(?:this|that|someone|a\s+user)/i,
   /(?:i\s+)?want\s+to\s+report/i,
@@ -318,58 +290,66 @@ const CONTEXT_DISCUSSION_SENTENCES = [
 
 // ── Normalization pipeline ────────────────────────────────────────────────
 
-/** Strip zero-width and invisible Unicode characters. */
-/* eslint-disable no-misleading-character-class */
 function stripZeroWidth(text: string): string {
-  // Split into multiple passes so the regex engine doesn't trip over
-  // Unicode combining characters inside a single character class.
-  let out = text.replace(/[\u200B\u200C\u200D\uFEFF]/g, "");
+  let out = text.replace(/[\u200B-\u200D\uFEFF]/g, "");
   out = out.replace(/[\u200E\u200F\u2060-\u2064]/g, "");
-  out = out.replace(/[\u00AD\u034F\u061C\u115F\u1160]/g, "");
-  out = out.replace(/[\u17B4\u17B5\u180B-\u180F]/g, "");
-  out = out.replace(/[\u2028-\u202F\u205F-\u206F\uFE00-\uFE0F]/g, "");
+  out = out.replace(/\u00AD/g, "").replace(/\u034F/g, "").replace(/\u061C/g, "");
+  out = out.replace(/\u115F/g, "").replace(/\u1160/g, "");
+  out = out.replace(/\u17B4/g, "").replace(/\u17B5/g, "");
+  out = out.replace(/[\u180B-\u180F]/g, "");
+  out = out.replace(/[\u2028-\u202F]/g, "").replace(/[\u205F-\u206F]/g, "").replace(/[\uFE00-\uFE0F]/g, "");
   return out;
 }
-/* eslint-enable no-misleading-character-class */
 
-/** Normalize whitespace: collapse runs, trim. */
 function normalizeWhitespace(text: string): string {
   return text.replace(/[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+/g, " ").trim();
 }
 
-/** Normalize punctuation/spacing separators that attackers use to fragment
- *  a prohibited term character by character: s-l-u-r, s.l.u.r, s_l_u_r,
- *  s/l/u/r, s l u r. Collapses repeated separators between single letters. */
+/**
+ * Collapse separator characters between letters into nothing.
+ * Dots, dashes, underscores, slashes, pipes, commas, semicolons.
+ * "n-i-g-g-e-r" → "nigger". "n . ì . g _ g _ e . r" → "nìgger".
+ *
+ * Now covers Latin-accented letters (U+00C0–U+024F) so diacritics
+ * like ì/í/é used in obfuscation don't break the collapse.
+ */
 function normalizeFragmentation(text: string): string {
-  // Collapse letter-separator-letter runs: s-l-u-r → slur
-  let out = text;
-  // Pass 1: single separators between word characters
-  out = out.replace(/(\w)[-._/\\|,;](?=\w)/g, "$1");
-  // Pass 2: space-separated single letters
-  out = out.replace(/\b([a-zA-Z])\s+([a-zA-Z])\s+([a-zA-Z])(\s+[a-zA-Z]){0,}/g, (m) =>
-    m.replace(/\s+/g, ""),
-  );
+  // Letter class: ASCII + Latin-1 Supplement + Extended-A/B
+  const L = "[a-zA-Z\u00C0-\u024F]";
+  // Single separator chars (optional whitespace around them) between letters
+  const sepRe = new RegExp("(" + L + ")\\s*[-._/\\\\|,;]\\s*(?=" + L + ")", "g");
+  // Space-separated single letters: "n i g g e r" → "nigger" (3+ letters)
+  const spaceRe = new RegExp("\\b(" + L + ")\\s+(" + L + ")\\s+(" + L + ")(\\s+" + L + "){0,}", "g");
+  let out = text.replace(sepRe, "$1");
+  out = out.replace(spaceRe, (m) => m.replace(/\s+/g, ""));
   return out;
 }
 
-/** Collapse suspicious repeated characters: sluuuuur → slur.
- *  Only collapses letters repeated 3+ times within a word, and only when
- *  the collapsed word is short — long genuine words with repeats are
- *  untouched. No word-boundary constraint so mid-word stuffing is caught. */
+/**
+ * Collapse word-initial doubled letters: "nnigga" → "nigga".
+ * Normalized form is only matched against the lexicon, then discarded — so legitimate words like "bookkeeper" shrinking to "bokeeper" in the search form is harmless. Only collapses exactly 2 repeated letters at word start — 3+ reps
+ * are handled by collapseRepeated, and mid-word doubles stay intact.
+ */
+function collapseDoubledStart(text: string): string {
+  return text.replace(/\b([a-zA-Z])\1+/g, (m, ch) => {
+    if (m.length === 2) return ch;
+    return m;
+  });
+}
+
+/**
+ * Collapse suspicious repeated characters: "sluuuuur" → "slur".
+ * Only collapses letters repeated 3+ times, and only when the
+ * collapsed word is short — long genuine words with repeats untouched.
+ */
 function collapseRepeated(text: string): string {
-  // Collapse any letter repeated 3+ times within a word — sluuuuur→slur.
   return text.replace(/([a-zA-Z])\1{2,}/g, (m) => {
     const collapsed = m.replace(/(.)\1+/g, "$1");
-    // Only collapse short runs of repeats; a paragraph of repeated
-    // identical chars isn't a slur evasion, it's gibberish.
     if (collapsed.length <= 10) return collapsed;
     return m;
   });
 }
 
-/** Leetspeak substitutions targeted at slur evasion: a→4/@, e→3, i→1/!,
- *  o→0, s→5/$, t→7. Applied only within word boundaries so "@someone"
- *  stays intact and "p@ss" → "pass" doesn't trigger. */
 const LEET_MAP: Record<string, string> = {
   "4": "a", "@": "a",
   "3": "e",
@@ -385,21 +365,22 @@ function normalizeLeet(text: string): string {
   );
 }
 
-/** Targeted homoglyph/confusable normalization for common attack classes:
- *  Cyrillic, Greek, math, and fullwidth forms that visually resemble ASCII.
- *  Does NOT blindly convert every Unicode char to ASCII — that destroys
- *  legitimate multi-language text. Only the deliberate lookalikes are mapped. */
 const HOMOGLYPH_MAP: Record<string, string> = {
-  // Cyrillic lookalikes
   "а": "a", "е": "e", "і": "i", "о": "o", "р": "p", "с": "c",
   "х": "x", "у": "y", "ѕ": "s",
-  // Greek lookalikes
   "α": "a", "ε": "e", "ο": "o", "ρ": "p", "τ": "t", "ν": "v",
-  // Math / IPA
   "ɑ": "a", "ɛ": "e", "ι": "i",
-  // Fullwidth
   "０": "0", "１": "1", "２": "2", "３": "3", "４": "4",
   "５": "5", "６": "6", "７": "7", "８": "8", "９": "9",
+  // Latin diacritics — attackers put accents on letters to defeat
+  // exact matching. Normalized to base ASCII.
+  "à": "a", "á": "a", "â": "a", "ã": "a", "ä": "a", "å": "a",
+  "è": "e", "é": "e", "ê": "e", "ë": "e",
+  "ì": "i", "í": "i", "î": "i", "ï": "i",
+  "ò": "o", "ó": "o", "ô": "o", "õ": "o", "ö": "o",
+  "ù": "u", "ú": "u", "û": "u", "ü": "u",
+  "ñ": "n",
+  "ç": "c",
 };
 
 function normalizeHomoglyphs(text: string): string {
@@ -410,7 +391,7 @@ function normalizeHomoglyphs(text: string): string {
   return out;
 }
 
-// ── Evasion detection ─────────────────────────────────────────────────────
+// ── Evasion score ─────────────────────────────────────────────────────────
 
 function computeEvasionScore(
   raw: string,
@@ -418,73 +399,66 @@ function computeEvasionScore(
   leetNormalized: string,
 ): number {
   let score = 0;
-  // Zero-width characters: always evasion.
   if (raw.length !== stripZeroWidth(raw).length) score += 3;
-  // Leetspeak characters detected.
   if (raw !== leetNormalized) {
     const leetChars = raw.match(/[@34!10$57]/g);
     if (leetChars && leetChars.length >= 2) score += 2;
     if (leetChars && leetChars.length >= 1) score += 1;
   }
-  // Suspicious character variation within a single word.
   if (/[a-zA-Z]+[^a-zA-Z\s]+[a-zA-Z]+/.test(normalized)) score += 1;
-  // Repeated character manipulation detected.
   if (collapseRepeated(normalized) !== normalized) score += 2;
-  return Math.min(score, 10); // cap
+  return Math.min(score, 10);
 }
 
-// ── Context / intent analysis ────────────────────────────────────────────
+// ── Context analysis ──────────────────────────────────────────────────────
 
 /** True when the text around a flagged term reads like reporting/discussion,
- *  not an attack. Checks sentences surrounding the match position. */
+ *  not an attack. Checks sentences surrounding the match within an 80-char
+ *  window. A sentence boundary (period, !, ?, newline) between the context
+ *  marker and the match disqualifies the context — "I reported X. Also, nigger."
+ *  correctly blocks the second sentence. */
 function isDiscussionContext(text: string, matchIndex: number): boolean {
   const window = 80;
   const start = Math.max(0, matchIndex - window);
   const end = Math.min(text.length, matchIndex + window);
   const context = text.slice(start, end).toLowerCase();
+  const matchPos = matchIndex - start;
   for (const prefix of CONTEXT_DISCUSSION_PREFIXES) {
-    if (context.includes(prefix)) return true;
+    const idx = context.indexOf(prefix);
+    if (idx === -1) continue;
+    // Must be no sentence boundary between marker and match
+    const [lo, hi] = idx < matchPos ? [idx, matchPos] : [matchPos, idx];
+    if (/[.!?\n]/.test(context.slice(lo, hi))) continue;
+    return true;
   }
   for (const re of CONTEXT_DISCUSSION_SENTENCES) {
-    if (re.test(context)) return true;
+    const m = re.exec(context);
+    if (m === null) continue;
+    const [lo, hi] = m.index < matchPos ? [m.index, matchPos] : [matchPos, m.index];
+    if (/[.!?\n]/.test(context.slice(lo, hi))) continue;
+    return true;
   }
   return false;
 }
 
-// ── The scan function ─────────────────────────────────────────────────────
+// ── Main scan ─────────────────────────────────────────────────────────────
 
-/**
- * Scan text for racial and ethnic hate content, applying the full
- * normalization pipeline and context analysis. Returns a three-tier
- * verdict:
- *
- * - BLOCKED: unambiguous slurs and hate speech with high severity and no
- *   discussion/reporting context.
- * - REVIEW: ambiguous, context-required, or lower-severity matches that a
- *   human moderator should judge.
- * - CLEAN: no prohibited content detected, or the match is clearly in a
- *   reporting/educational context.
- */
 export function scanForRacism(content: string): RacismVerdict {
   const raw = content.trim();
   if (raw.length === 0) return { status: "clean" };
 
-  // ── Normalize ───────────────────────────────────────────────────────────
   const step1 = stripZeroWidth(raw);
   const step2 = normalizeWhitespace(step1);
   const step3 = normalizeFragmentation(step2);
-  const step4 = collapseRepeated(step3);
-  const step5 = normalizeLeet(step4);
-  const normalized = normalizeHomoglyphs(step5.toLowerCase());
+  const step4 = collapseDoubledStart(step3);
+  const step5 = collapseRepeated(step4);
+  const step6 = normalizeLeet(step5);
+  const normalized = normalizeHomoglyphs(step6.toLowerCase());
   const leetNormalized = normalizeHomoglyphs(normalizeLeet(step2).toLowerCase());
 
-  // ── Evasion score ───────────────────────────────────────────────────────
   const evasionScore = computeEvasionScore(raw, normalized, leetNormalized);
 
-  // ── Match against lexicon ───────────────────────────────────────────────
   let bestMatch: { token: RacismToken; index: number } | null = null;
-
-  // Try the fully normalized form first, then the leet-normalized-only form.
   const candidates = [normalized, leetNormalized];
   for (const candidate of candidates) {
     for (const token of TOKENS) {
@@ -492,16 +466,11 @@ export function scanForRacism(content: string): RacismVerdict {
       for (const term of terms) {
         const idx = candidate.indexOf(term);
         if (idx === -1) continue;
-        // Word-boundary check: the matched term must be a whole token,
-        // not a substring of a larger word. "snigger" must NOT match
-        // "nigger", and "trigger" must NOT match a slur substring.
         const before = idx > 0 ? candidate.charAt(idx - 1) : " ";
         const after = idx + term.length < candidate.length
           ? candidate.charAt(idx + term.length)
           : " ";
         if (/[a-z]/.test(before) || /[a-z]/.test(after)) continue;
-        // Track the best (highest severity) match, breaking ties by
-        // preferring contextRequired=false (more definitive).
         if (bestMatch === null) {
           bestMatch = { token, index: idx };
         } else if (
@@ -517,14 +486,8 @@ export function scanForRacism(content: string): RacismVerdict {
   if (bestMatch === null) return { status: "clean" };
 
   const { token, index } = bestMatch;
-
-  // ── Context check ───────────────────────────────────────────────────────
   const discussion = isDiscussionContext(raw, index);
 
-  // High-severity unambiguous attack in a direct context → BLOCK.
-  // Severity 4-5 terms that are contextFree (not contextRequired)
-  // auto-block when there's no discussion/reporting context and evasion
-  // is low — the writer clearly meant the attack.
   if (
     token.severity >= 4 &&
     !token.contextRequired &&
@@ -539,14 +502,10 @@ export function scanForRacism(content: string): RacismVerdict {
     };
   }
 
-  // Discussion/reporting/educational context → ALL content is clean.
-  // A slur quoted in a report or a term discussed in class is not hate
-  // speech — the distinction the engine is built for.
   if (discussion) {
     return { status: "clean" };
   }
 
-  // Context-required term without discussion context → REVIEW.
   if (token.contextRequired) {
     return {
       status: "review",
@@ -556,7 +515,6 @@ export function scanForRacism(content: string): RacismVerdict {
     };
   }
 
-  // Low-severity unambiguous term without evasion or context → REVIEW.
   return {
     status: "review",
     reason: `Suspected ${RACISM_CATEGORY_LABEL[token.category]}`,

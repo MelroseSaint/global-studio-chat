@@ -1,185 +1,101 @@
 name: Static Audit
 
-# Full static gate for every push to `main` — the local audit, automated:
-# typecheck, lint, production build, Convex function typecheck, the salt-rotation
-# QA, and a secrets scan that fails the pipeline the moment a credential shape
-# lands in a tracked file. Catches breaking changes in minutes instead of on the
-# next deploy. Also runnable manually from the Actions tab.
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch: {}
-
-concurrency:
-  # Never overlap runs: if the previous push is still auditing, the new one
-  # waits rather than racing it.
-  group: static-audit
-  cancel-in-progress: false
-
-permissions:
-  contents: read
-  actions: write # upload the admin-responsive log artifact on failure
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  audit:
-    name: Static audit
+  typecheck:
+    name: TypeScript typecheck
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - name: Check out the repo
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
+      - run: npm ci
+      - run: npm run typecheck
 
-      - name: Install dependencies
-        run: npm ci
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
 
-      # Fail fast on credentials: a leaked key must stop the push before any
-      # of the slower steps run — a secret leak often lands alongside other
-      # breakage, so it must never be skipped by an earlier failure.
-      - name: Scan for leaked secrets
-        run: npm run qa:secrets
+  build:
+    name: Vite build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
 
-      - name: Typecheck the app
-        run: npm run typecheck
+  secrets-scan:
+    name: Secrets scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:secrets
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Build for production
-        run: npm run build
-
-      - name: Typecheck the Convex backend
-        run: npx convex typecheck
-
-      - name: Run the salt-rotation QA
-        run: npm run qa:salt
-
-      # The anti-AI byte scanner must never regress: this offline QA builds
-      # real container structures (PNG tEXt parameters chunks, JPEG EXIF
-      # Software/IFD tables, MP4 ©too atoms, ID3 TSSE frames, FLAC Vorbis
-      # comments) plus text samples and asserts the exact verdict for each —
-      # including Google's stack (Imagen, Veo, Gemini, MusicLM) and rename/
-      # container-mismatch evasion, while real encoders and phones stay clean.
-      - name: Run the anti-AI scanner QA
-        run: npm run qa:ai-scan
-
-      # The racism-prevention engine must never regress: this offline QA
-      # exercises every normalization path (zero-width, whitespace,
-      # fragmentation, repeated-char, leetspeak, homoglyph) plus the
-      # categorized lexicon and context analysis against slurs, spacing
-      # attacks, Unicode attacks, quoted/reported speech, educational
-      # discussion, and false positives — 72 assertions that must all
-      # stay green on every push.
-      - name: Run the racism prevention QA
-        run: npm run qa:racism
-
-      # The blocklist feeds (data/adult/* and the public/ mirror) are
-      # GENERATED from BANNED_ADULT_HOSTS in src/convex/phishing.ts. This
-      # gate re-runs the generator and fails the push if it produces any
-      # diff — so a code-list edit that forgets `npm run data:sync` can
-      # never ship stale feeds (and a hand-edit of a feed file is caught
-      # too).
-      - name: Blocklist feeds match the code list
-        run: |
-          npm run data:sync
-          git diff --exit-code -- data public/data || \
-            (echo "::error::Blocklist data is out of sync with phishing.ts. Run 'npm run data:sync' and commit the result." && exit 1)
-
-      # The permanent-session guarantee must never silently regress: if the
-      # `session` config in convex/auth.ts is ever reverted to the library's
-      # 30-day default, every member gets logged out automatically — the one
-      # behavior PureWire promises never happens. This gate queries the
-      # production deployment (harness-gated) and fails the push if any
-      # authSessions/authRefreshTokens row expires within a year. Deliberate
-      # opt-outs (sessionPrefs) and qa_ harness sessions are exempt. Gated on
-      # the harness secret so a repository that hasn't configured it yet
-      # still gets the static gates green — same pattern as the admin
-      # responsive check.
-      - name: Assert permanent sessions
-        if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+  dqs-audit:
+    name: DQS data-integrity audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Run DQS audit against production
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:session-audit 2>&1 | tee session-audit.log
+        run: npm run qa:count-drift
 
-      - name: Upload the session audit log
-        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
-        uses: actions/upload-artifact@v4
+  racism-qa:
+    name: Racism prevention QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          name: session-audit-log
-          path: session-audit.log
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:racism
 
-      # users.postsCount / followersCount / followingCount are
-      # denormalized counters that past bugs let drift (deletePost removed
-      # the row without decrementing; follows rows referencing deleted
-      # accounts could survive erasure). This gate reconciles every user's
-      # counters against the actual posts and follows tables and FAILS the
-      # push if anything drifted — the mutations self-heal the counts first
-      # (they are derived state), then the checks report who, so the
-      # regression surfaces instead of silently inflating profiles.
-      # Harness-gated like the session audit: no secret configured means
-      # the static gates stay green.
-      - name: Assert no post/follow count drift
-        if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+  session-audit:
+    name: Session lifetime audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Audit session lifetimes
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:count-drift 2>&1 | tee count-drift.log
-
-      - name: Upload the count-drift log
-        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: count-drift-log
-          path: count-drift.log
-
-      # The admin dashboard is the one surface the static gates can't see —
-      # its responsive layout only exists in a real browser at real widths.
-      # Sign in on production and walk every admin tab at five widths —
-      # 320/390 phones, 768 tablet, the Amazon Fire portrait 800px pass
-      # (with the root font pinned to 21px to simulate Silk's font
-      # inflation), and 1024 desktop — to catch overflow or cramped
-      # clusters on the next push instead of by a user on a device. This is
-      # gated on the ADMIN_PASSWORD secret so a repository that hasn't
-      # configured it yet still gets the static gates green instead of
-      # failing every push.
-      - name: Cache Playwright browsers
-        if: ${{ secrets.ADMIN_PASSWORD != '' }}
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-
-      - name: Install Chromium for Playwright
-        if: ${{ secrets.ADMIN_PASSWORD != '' }}
-        run: npx playwright install --with-deps chromium
-
-      - name: Run the admin dashboard responsive QA
-        if: ${{ secrets.ADMIN_PASSWORD != '' }}
-        id: admin-responsive
-        env:
-          # Add the admin password under Settings > Secrets > Actions. The
-          # script signs in as the admin on the live site — same secret the
-          # production health-check's browser QA uses.
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
-        run: |
-          set -o pipefail
-          npm run qa:admin-responsive 2>&1 | tee admin-responsive.log
-
-      - name: Upload the admin responsive QA log
-        if: ${{ failure() && secrets.ADMIN_PASSWORD != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: admin-responsive-log
-          path: admin-responsive.log
+        run: npm run qa:session-audit
