@@ -1015,6 +1015,9 @@ export const getTestUserState = query({
       silentFlags: user.silentFlags ?? 0,
       lifetimeSilentFlags: user.lifetimeSilentFlags ?? 0,
       accountStatus: user.accountStatus ?? "active",
+      // When a time-limited suspension lifts on its own — the QA asserts
+      // this is set while suspended and cleared after reinstate/expiry.
+      suspendedUntil: user.suspendedUntil ?? null,
       events: events.map((e) => ({
         reason: e.reason,
         points: e.points,
