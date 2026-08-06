@@ -62,6 +62,8 @@ const KNOWN_MODERATION_ACTIONS = new Set([
   "ban",
   "approve",
   "reinstate",
+  "suspend",
+  "unsuspend",
   "flag",
 ]);
 
@@ -492,14 +494,43 @@ export async function enforceActive(
   if (user === null) {
     return;
   }
+  // Lazy suspension expiry: a time-limited suspension ends the moment the
+  // deadline passes, so the account returns to full active status on its
+  // next activity without waiting for an admin or a background sweep. The
+  // member is told the outcome (same "system" notification channel as
+  // reinstatement). This only fires once — the deadline is cleared here.
+  const now = Date.now();
+  if (user.suspendedUntil !== undefined && user.suspendedUntil <= now) {
+    await ctx.db.patch(userId, {
+      accountStatus: "active",
+      suspendedUntil: undefined,
+      shadowban: false,
+    });
+    await ctx.db.insert("moderationLog", {
+      targetUserId: userId,
+      action: "unsuspend",
+      note: "Suspension expired automatically.",
+    });
+    await ctx.db.insert("notifications", {
+      userId,
+      type: "system",
+      message: "Your suspension has ended — your account is active again.",
+      read: false,
+    });
+  }
   if (user.accountStatus === "banned") {
     throw new Error(
       "This account has been banned for violating the PureWire Standard.",
     );
   }
   if (user.accountStatus === "restricted") {
+    const until = user.suspendedUntil;
+    const when =
+      until !== undefined && until > now
+        ? `until ${new Date(until).toUTCString()}`
+        : "pending review";
     throw new Error(
-      "This account is restricted pending review. Contact Support if this looks like a mistake.",
+      `This account is suspended ${when}. Contact Support if this looks like a mistake.`,
     );
   }
 }
@@ -760,6 +791,9 @@ export const exportFlaggedAccounts = query({
       automationReportedAt: u.automationReportedAt ?? null,
       moderationStandardId: u.moderationStandardId ?? null,
       moderationNote: u.moderationNote ?? null,
+      // When a suspension lifts on its own (if the account is suspended) —
+      // included in the export so the Security report shows deadlines.
+      suspendedUntil: u.suspendedUntil ?? null,
       createdAt: u._creationTime,
     }));
   },
@@ -973,10 +1007,12 @@ export const setAccountStatus = mutation({
     if (user.role === "admin") {
       throw new Error("Cannot change an admin account");
     }
-    // Approving an account is a full restore — clear any quiet shadowban.
+    // Approving an account is a full restore — clear any quiet shadowban
+    // and any time-limited suspension deadline.
     const patch: {
       accountStatus: typeof status;
       shadowban?: boolean;
+      suspendedUntil?: undefined;
       moderationStandardId?: string;
       moderationNote?: string;
     } = {
@@ -984,6 +1020,7 @@ export const setAccountStatus = mutation({
     };
     if (status === "active") {
       patch.shadowban = false;
+      patch.suspendedUntil = undefined;
     }
     if (standardId !== undefined) {
       patch.moderationStandardId = standardId;
@@ -1012,10 +1049,85 @@ export const setAccountStatus = mutation({
 });
 
 /**
- * Admin: quietly silence or unsilence an account. A silenced account's
- * content and engagement silently stop reaching anyone (no errors shown to
- * the owner) until this is lifted.
+ * Admin: suspend an account for a fixed duration, with the reason and the
+ * cited Standard principle both REQUIRED.
+ *
+ * A suspension is a time-limited restriction: the account can't post or
+ * engage (enforceActive rejects), and its row carries `suspendedUntil` so
+ * the Security tab shows exactly when it comes back. The moment the
+ * deadline passes, the account auto-returns to active on its next activity
+ * (see enforceActive) and the member is notified — no manual lift needed.
+ * Lifting it early is a reinstate (or setAccountStatus active), which
+ * clears the deadline.
  */
+export const suspendAccount = mutation({
+  args: {
+    userId: v.id("users"),
+    // How long the suspension lasts, in hours (1..8760 = up to one year).
+    durationHours: v.number(),
+    // The PureWire Standard principle this suspension cites (required —
+    // every action traces to a stated rule).
+    standardId: v.string(),
+    // Why this account is being suspended (required — recorded verbatim
+    // on the audit trail and shown to the member).
+    note: v.string(),
+  },
+  handler: async (ctx, { userId, durationHours, standardId, note }) => {
+    const adminId = await getAuthUserId(ctx);
+    if (adminId === null) {
+      throw new Error("Not authenticated");
+    }
+    const admin = await ctx.db.get(adminId);
+    if (admin?.role !== "admin") {
+      throw new Error("Admins only");
+    }
+    if (!Number.isFinite(durationHours) || durationHours < 1 || durationHours > 8760) {
+      throw new Error("Duration must be between 1 hour and 1 year.");
+    }
+    if (!isStandardId(standardId)) {
+      throw new Error("That isn't a principle of the PureWire Standard.");
+    }
+    const reason = note.trim();
+    if (reason.length === 0) {
+      throw new Error("A reason is required to suspend an account.");
+    }
+    const user = await ctx.db.get(userId);
+    if (user === null) {
+      throw new Error("User not found");
+    }
+    // The owner account is untouchable — checked by email, not role.
+    if (user.email === ADMIN_EMAIL) {
+      throw new Error("The owner account cannot be changed.");
+    }
+    if (user.role === "admin") {
+      throw new Error("Cannot change an admin account");
+    }
+    const until = Date.now() + Math.round(durationHours) * 3600_000;
+    await ctx.db.patch(userId, {
+      accountStatus: "restricted",
+      suspendedUntil: until,
+      shadowban: false,
+      moderationStandardId: standardId,
+      moderationNote: reason,
+    });
+    await ctx.db.insert("moderationLog", {
+      targetUserId: userId,
+      actorId: adminId,
+      action: "suspend",
+      standardId,
+      note: reason,
+    });
+    // Honest notice: a suspension is visible (the account can't post), so
+    // the member is told when it lifts and why — unlike a quiet shadowban,
+    // which stays invisible by design.
+    await ctx.db.insert("notifications", {
+      userId,
+      type: "system",
+      message: `Your account has been suspended until ${new Date(until).toUTCString()}. Reason: ${reason}`,
+      read: false,
+    });
+  },
+});
 
 export const setShadowban = mutation({
   args: {
@@ -1184,6 +1296,7 @@ export const reinstateAccount = mutation({
     await ctx.db.patch(userId, {
       accountStatus: "active",
       silentFlags: 0,
+      suspendedUntil: undefined,
     });
     await ctx.db.insert("moderationLog", {
       targetUserId: userId,

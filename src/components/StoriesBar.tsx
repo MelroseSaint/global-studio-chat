@@ -1,10 +1,19 @@
-import { useAction, useQuery } from "convex/react";
-import { AudioLines, ChevronLeft, ChevronRight, Loader2, Plus, X } from "lucide-react";
+import { useAction, useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import {
+  AudioLines,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Loader2,
+  Plus,
+  X,
+} from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { MediaUpload, type MediaItem } from "@/components/MediaUpload";
 import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -16,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { timeAgo } from "@/lib/format";
 import { useAuth } from "@/hooks/use-auth";
 
 export function StoriesBar() {
@@ -24,9 +34,11 @@ export function StoriesBar() {
   const createStory = useAction(api.stories.createStory);
   const scanMedia = useAction(api.aiContent.scanMediaForAi);
   const stripMedia = useAction(api.media.stripVideoMetadata);
+  const recordView = useMutation(api.stories.recordStoryView);
   const [addOpen, setAddOpen] = useState(false);
   const [viewing, setViewing] = useState<number>(0);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewersOpen, setViewersOpen] = useState(false);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [caption, setCaption] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -86,12 +98,30 @@ export function StoriesBar() {
     }
   };
 
+  // Opening (or paging to) a story records the view — unless it's the
+  // viewer's own story, which recordStoryView already ignores server-side.
   const openViewer = (index: number) => {
     setViewing(index);
     setViewerOpen(true);
+    const story = stories[index];
+    if (story !== undefined && story.authorId !== user?._id) {
+      void recordView({ storyId: story._id as Id<"stories"> });
+    }
+  };
+
+  // Computed outside the state updater — updaters must stay pure (React may
+  // double-invoke them in Strict Mode). The view fires exactly once.
+  const step = (dir: 1 | -1) => {
+    const next = (viewing + dir + stories.length) % stories.length;
+    setViewing(next);
+    const story = stories[next];
+    if (story !== undefined && story.authorId !== user?._id) {
+      void recordView({ storyId: story._id as Id<"stories"> });
+    }
   };
 
   const current = stories[viewing];
+  const isOwn = current !== undefined && current.authorId === user?._id;
 
   return (
     <>
@@ -192,7 +222,7 @@ export function StoriesBar() {
               </button>
               <button
                 className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
-                onClick={() => setViewing((v) => (v + 1) % stories.length)}
+                onClick={() => step(1)}
                 aria-label="Next story"
               >
                 <ChevronRight className="size-5" />
@@ -217,6 +247,16 @@ export function StoriesBar() {
                 </p>
                 <p className="text-xs text-white/60">24h story</p>
               </div>
+              {isOwn ? (
+                <button
+                  type="button"
+                  onClick={() => setViewersOpen(true)}
+                  className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
+                >
+                  <Eye className="size-3.5" />
+                  Viewers
+                </button>
+              ) : null}
             </div>
             <div className="relative overflow-hidden rounded-2xl bg-black">
               {current.media?.stripped === true ? (
@@ -252,6 +292,112 @@ export function StoriesBar() {
           </div>
         </div>
       )}
+
+      {/* Who viewed your story — author-only, paginated. */}
+      {viewersOpen && current !== undefined && isOwn && (
+        <StoryViewersDialog
+          storyId={current._id as Id<"stories">}
+          open={viewersOpen}
+          onOpenChange={setViewersOpen}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * The "who viewed this story" list. Only the story's author (or an admin)
+ * may open it — the server returns an empty page to anyone else. Newest
+ * views first, paginated so a viral story's full audience stays browsable.
+ */
+function StoryViewersDialog({
+  storyId,
+  open,
+  onOpenChange,
+}: {
+  storyId: Id<"stories">;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.stories.listStoryViewers,
+    { storyId },
+    { initialNumItems: 20 },
+  );
+  const viewers = results as unknown as {
+    _id: string;
+    name?: string | null;
+    username?: string | null;
+    avatarUrl?: string | null;
+    viewedAt: number;
+  }[];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Eye className="size-4" />
+            Who viewed your story
+          </DialogTitle>
+          <DialogDescription>
+            {viewers.length === 0
+              ? "No one has viewed it yet. Only people who open your story appear here — and only you can see this list."
+              : "Only you can see this list. Re-views count once."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex max-h-[50vh] flex-col gap-1 overflow-y-auto">
+          {status === "LoadingFirstPage" &&
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/50" />
+            ))}
+          {viewers.map((v) => (
+            <div
+              key={v._id}
+              className="flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-muted/50"
+            >
+              {v.username ? (
+                <Link
+                  to={`/u/${v.username}`}
+                  onClick={() => onOpenChange(false)}
+                  className="flex min-w-0 items-center gap-3"
+                >
+                  <UserAvatar user={v} className="size-9" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {v.name || v.username}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      @{v.username} · viewed {timeAgo(v.viewedAt)}
+                    </span>
+                  </span>
+                </Link>
+              ) : (
+                <span className="flex min-w-0 items-center gap-3">
+                  <UserAvatar user={v} className="size-9" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {v.name || "Unknown"}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      viewed {timeAgo(v.viewedAt)}
+                    </span>
+                  </span>
+                </span>
+              )}
+            </div>
+          ))}
+          {status === "CanLoadMore" ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void loadMore(20)}
+              className="mt-1"
+            >
+              Load more
+            </Button>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

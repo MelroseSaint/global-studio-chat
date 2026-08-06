@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsRight,
+  Clock,
   Download,
   Ellipsis,
   EyeOff,
@@ -344,6 +345,138 @@ function ReinstateAccountDialog({
   );
 }
 
+/**
+ * Confirm-and-suspend dialog: a time-limited restriction with a REQUIRED
+ * reason and Standard citation, plus a duration so the account
+ * auto-returns to active when it elapses (see security.suspendAccount).
+ * The member is told the suspension and its end date; every suspension
+ * lands on the audit trail like every other moderation action.
+ */
+const SUSPEND_DURATIONS = [
+  { hours: 24, label: "24 hours" },
+  { hours: 72, label: "3 days" },
+  { hours: 168, label: "7 days" },
+  { hours: 720, label: "30 days" },
+  { hours: 2160, label: "90 days" },
+  { hours: 8760, label: "1 year" },
+] as const;
+
+function SuspendAccountDialog({
+  open,
+  onOpenChange,
+  user,
+  busy = false,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  user: { _id: string; username?: string | null; name?: string | null } | null;
+  busy?: boolean;
+  onConfirm: (
+    userId: string,
+    standardId: string,
+    note: string,
+    durationHours: number,
+  ) => void;
+}) {
+  const [standardId, setStandardId] = useState("");
+  const [note, setNote] = useState("");
+  const [durationHours, setDurationHours] = useState<number>(24);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Reset the form each time the dialog is opened.
+        if (next) {
+          setStandardId("");
+          setNote("");
+          setDurationHours(24);
+        }
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+            <ShieldAlert className="size-4" />
+            Suspend account
+          </DialogTitle>
+          <DialogDescription>
+            Temporarily suspends <b>@{user?.username ?? "this user"}</b> —
+            they can&apos;t post or engage until the duration ends, then the
+            account returns to active automatically. The member is told the
+            suspension, its reason, and its end date.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label>Duration</Label>
+            <Select
+              value={String(durationHours)}
+              onValueChange={(v) => setDurationHours(Number(v))}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SUSPEND_DURATIONS.map((d) => (
+                  <SelectItem key={d.hours} value={String(d.hours)}>
+                    {d.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label>PureWire Standard principle violated</Label>
+            <Select value={standardId} onValueChange={setStandardId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a principle" />
+              </SelectTrigger>
+              <SelectContent>
+                {STANDARD_PRINCIPLES.map((p, i) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {i + 1}. {p.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label>
+              Reason <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Why is this suspension called for? Shown to the member and recorded on the audit trail."
+              rows={3}
+              maxLength={500}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={note.trim().length === 0 || standardId.length === 0 || busy}
+            onClick={() => {
+              if (user) onConfirm(user._id, standardId, note.trim(), durationHours);
+            }}
+          >
+            {busy ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              "Suspend account"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function Admin() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -577,6 +710,14 @@ function UsersPanel({ meId }: { meId: string }) {
   const setVerified = useOfflineMutation(api.admin.setVerified, "admin.setVerified");
   const setRole = useOfflineMutation(api.admin.setRole, "admin.setRole");
   const removeAccount = useOfflineMutation(api.admin.removeAccount, "admin.removeAccount");
+  const suspendAccount = useOfflineMutation(
+    api.security.suspendAccount,
+    "security.suspendAccount",
+  );
+  const reinstateAccount = useOfflineMutation(
+    api.security.reinstateAccount,
+    "security.reinstateAccount",
+  );
   const { results, status, loadMore } = usePaginatedQuery(
     api.admin.listUsers,
     {},
@@ -592,6 +733,58 @@ function UsersPanel({ meId }: { meId: string }) {
 
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [pendingSuspend, setPendingSuspend] = useState<string | null>(null);
+  const [suspendBusy, setSuspendBusy] = useState(false);
+  const [pendingReinstate, setPendingReinstate] = useState<string | null>(null);
+  const [reinstateBusy, setReinstateBusy] = useState(false);
+  // Frozen "now" for the suspension badge (Date.now() in render is impure).
+  const [now] = useState(() => Date.now());
+
+  const confirmSuspend = async (
+    userId: string,
+    standardId: string,
+    note: string,
+    durationHours: number,
+  ) => {
+    setSuspendBusy(true);
+    try {
+      const res = await suspendAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+        durationHours,
+      });
+      setPendingSuspend(null);
+      if (res) return;
+      toast.success("Account suspended — it returns to active automatically.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not suspend.");
+    } finally {
+      setSuspendBusy(false);
+    }
+  };
+
+  const confirmReinstate = async (
+    userId: string,
+    standardId: string,
+    note: string,
+  ) => {
+    setReinstateBusy(true);
+    try {
+      const res = await reinstateAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+      });
+      setPendingReinstate(null);
+      if (res) return;
+      toast.success("Account reinstated — their profile is fully active again.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not reinstate.");
+    } finally {
+      setReinstateBusy(false);
+    }
+  };
 
   const confirmRemove = async (userId: string, standardId: string, note: string) => {
     setRemoving(true);
@@ -620,6 +813,10 @@ function UsersPanel({ meId }: { meId: string }) {
     verified?: boolean | null;
     role?: string | null;
     isOwner?: boolean;
+    accountStatus?: string | null;
+    shadowban?: boolean | null;
+    suspendedUntil?: number | null;
+    moderationNote?: string | null;
     _creationTime: number;
   }[];
 
@@ -651,6 +848,26 @@ function UsersPanel({ meId }: { meId: string }) {
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
             <Badge variant="outline">{u.role ?? "user"}</Badge>
+            {u.accountStatus === "banned" ? (
+              <Badge variant="destructive">Banned</Badge>
+            ) : u.accountStatus === "restricted" ? (
+              <Badge variant="outline" className="gap-1">
+                <Clock className="size-3" />
+                {u.suspendedUntil !== undefined &&
+                u.suspendedUntil !== null &&
+                u.suspendedUntil > now
+                  ? `Suspended until ${new Date(u.suspendedUntil).toLocaleDateString()}`
+                  : "Restricted"}
+              </Badge>
+            ) : u.accountStatus === "suspicious" ? (
+              <Badge variant="outline">Suspicious</Badge>
+            ) : null}
+            {u.shadowban ? (
+              <Badge variant="destructive">
+                <EyeOff className="mr-1 size-3" />
+                Silenced
+              </Badge>
+            ) : null}
             {u.isOwner ? (
               <Badge
                 variant="outline"
@@ -711,7 +928,16 @@ function UsersPanel({ meId }: { meId: string }) {
                     <Ellipsis className="size-4" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={() => setPendingSuspend(u._id)}>
+                    <Clock className="size-4" />
+                    Suspend for a duration…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setPendingReinstate(u._id)}>
+                    <UserCheck className="size-4" />
+                    Reinstate account
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem
                     variant="destructive"
                     onClick={() => setPendingRemove(u._id)}
@@ -738,6 +964,28 @@ function UsersPanel({ meId }: { meId: string }) {
         busy={removing}
         onConfirm={(userId, standardId, note) =>
           void confirmRemove(userId, standardId, note)
+        }
+      />
+      <SuspendAccountDialog
+        open={pendingSuspend !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingSuspend(null);
+        }}
+        user={users.find((u) => u._id === pendingSuspend) ?? null}
+        busy={suspendBusy}
+        onConfirm={(userId, standardId, note, durationHours) =>
+          void confirmSuspend(userId, standardId, note, durationHours)
+        }
+      />
+      <ReinstateAccountDialog
+        open={pendingReinstate !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingReinstate(null);
+        }}
+        user={users.find((u) => u._id === pendingReinstate) ?? null}
+        busy={reinstateBusy}
+        onConfirm={(userId, standardId, note) =>
+          void confirmReinstate(userId, standardId, note)
         }
       />
     </div>
@@ -1279,6 +1527,10 @@ function SecurityPanel() {
     "security.setAccountStatus",
   );
   const setShadowban = useOfflineMutation(api.security.setShadowban, "security.setShadowban");
+  const suspendAccount = useOfflineMutation(
+    api.security.suspendAccount,
+    "security.suspendAccount",
+  );
   const reinstateAccount = useOfflineMutation(
     api.security.reinstateAccount,
     "security.reinstateAccount",
@@ -1317,6 +1569,10 @@ function SecurityPanel() {
       automationSignals: (u.automationSignals ?? []).join(" | "),
       moderationStandardId: u.moderationStandardId ?? "",
       moderationNote: u.moderationNote ?? "",
+      suspendedUntil:
+        u.suspendedUntil === null || u.suspendedUntil === undefined
+          ? ""
+          : new Date(u.suspendedUntil).toISOString(),
       joined: new Date(u.createdAt).toISOString(),
     }));
     downloadCsv(
@@ -1362,13 +1618,18 @@ function SecurityPanel() {
     automationSignals?: string[] | null;
     moderationStandardId?: string | null;
     moderationNote?: string | null;
+    suspendedUntil?: number | null;
   }[];
 
   const [pendingAction, setPendingAction] = useState<{
     userId: string;
     kind: "restrict" | "ban" | "silence";
   } | null>(null);
+  const [pendingSuspend, setPendingSuspend] = useState<string | null>(null);
+  const [suspendBusy, setSuspendBusy] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Frozen "now" for the suspension badge (Date.now() in render is impure).
+  const [now] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [pendingReinstate, setPendingReinstate] = useState<string | null>(null);
   const [reinstateBusy, setReinstateBusy] = useState(false);
@@ -1392,6 +1653,30 @@ function SecurityPanel() {
       toast.error(err instanceof Error ? err.message : "Could not reinstate.");
     } finally {
       setReinstateBusy(false);
+    }
+  };
+
+  const confirmSuspend = async (
+    userId: string,
+    standardId: string,
+    note: string,
+    durationHours: number,
+  ) => {
+    setSuspendBusy(true);
+    try {
+      const res = await suspendAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+        durationHours,
+      });
+      setPendingSuspend(null);
+      if (res) return;
+      toast.success("Account suspended — it returns to active automatically.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not suspend.");
+    } finally {
+      setSuspendBusy(false);
     }
   };
 
@@ -1559,6 +1844,18 @@ function SecurityPanel() {
             <Badge variant={STATUS_VARIANTS[u.accountStatus ?? "active"] as "default"}>
               {u.accountStatus ?? "active"}
             </Badge>
+            {u.suspendedUntil !== undefined &&
+            u.suspendedUntil !== null &&
+            u.suspendedUntil > now ? (
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                title={u.moderationNote ?? undefined}
+              >
+                <Clock className="size-3" />
+                Suspended until {new Date(u.suspendedUntil).toLocaleDateString()}
+              </Badge>
+            ) : null}
             {u.shadowban ? (
               <Badge variant="destructive">
                 <EyeOff className="mr-1 size-3" />
@@ -1590,6 +1887,12 @@ function SecurityPanel() {
                 >
                   <ShieldAlert className="size-4" />
                   Restrict
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setPendingSuspend(u._id)}
+                >
+                  <Clock className="size-4" />
+                  Suspend for a duration…
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -1663,6 +1966,17 @@ function SecurityPanel() {
           void confirmReinstate(userId, standardId, note)
         }
       />
+      <SuspendAccountDialog
+        open={pendingSuspend !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingSuspend(null);
+        }}
+        user={accounts.find((u) => u._id === pendingSuspend) ?? null}
+        busy={suspendBusy}
+        onConfirm={(userId, standardId, note, durationHours) =>
+          void confirmSuspend(userId, standardId, note, durationHours)
+        }
+      />
     </div>
   );
 }
@@ -1723,6 +2037,8 @@ const ACTION_LABELS: Record<string, string> = {
   silence: "Silenced",
   unsilence: "Unsilenced",
   restrict: "Restricted",
+  suspend: "Suspended (temporary)",
+  unsuspend: "Suspension ended",
   ban: "Banned",
   approve: "Approved",
   reinstate: "Reinstated",
@@ -1823,6 +2139,10 @@ function AuditTrail({ userId }: { userId: string }) {
  */
 function SilencedPanel() {
   const bulkUnsilence = useOfflineMutation(api.security.bulkUnsilence, "security.bulkUnsilence");
+  const suspendAccount = useOfflineMutation(
+    api.security.suspendAccount,
+    "security.suspendAccount",
+  );
   const reinstateAccount = useOfflineMutation(
     api.security.reinstateAccount,
     "security.reinstateAccount",
@@ -1841,6 +2161,38 @@ function SilencedPanel() {
   const [removing, setRemoving] = useState(false);
   const [pendingReinstate, setPendingReinstate] = useState<string | null>(null);
   const [reinstateBusy, setReinstateBusy] = useState(false);
+  const [pendingSuspend, setPendingSuspend] = useState<string | null>(null);
+  const [suspendBusy, setSuspendBusy] = useState(false);
+
+  const confirmSuspend = async (
+    userId: string,
+    standardId: string,
+    note: string,
+    durationHours: number,
+  ) => {
+    setSuspendBusy(true);
+    try {
+      const res = await suspendAccount({
+        userId: userId as Id<"users">,
+        standardId,
+        note,
+        durationHours,
+      });
+      setPendingSuspend(null);
+      if (res) return;
+      toast.success("Account suspended — it returns to active automatically.");
+      setSelected((prev) => {
+        if (prev.size === 0) return prev;
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not suspend.");
+    } finally {
+      setSuspendBusy(false);
+    }
+  };
 
   const confirmReinstate = async (
     userId: string,
@@ -2067,6 +2419,13 @@ function SilencedPanel() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
+                      onClick={() => setPendingSuspend(u._id)}
+                      disabled={busy || removing}
+                    >
+                      <Clock className="size-4" />
+                      Suspend for a duration…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       onClick={() => setPendingReinstate(u._id)}
                       disabled={busy || removing}
                     >
@@ -2170,6 +2529,17 @@ function SilencedPanel() {
         busy={reinstateBusy}
         onConfirm={(userId, standardId, note) =>
           void confirmReinstate(userId, standardId, note)
+        }
+      />
+      <SuspendAccountDialog
+        open={pendingSuspend !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingSuspend(null);
+        }}
+        user={accounts.find((u) => u._id === pendingSuspend) ?? null}
+        busy={suspendBusy}
+        onConfirm={(userId, standardId, note, durationHours) =>
+          void confirmSuspend(userId, standardId, note, durationHours)
         }
       />
     </div>

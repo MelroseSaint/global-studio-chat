@@ -38,6 +38,7 @@ export const ADMIN_ACTIONS = {
   "admin.moderateStory": api.admin.moderateStory,
   "security.setAccountStatus": api.security.setAccountStatus,
   "security.setShadowban": api.security.setShadowban,
+  "security.suspendAccount": api.security.suspendAccount,
   "security.reinstateAccount": api.security.reinstateAccount,
   "security.bulkUnsilence": api.security.bulkUnsilence,
   "support.respondToTicket": api.support.respondToTicket,

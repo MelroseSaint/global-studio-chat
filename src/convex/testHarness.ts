@@ -1312,6 +1312,22 @@ export const auditDataOrphans = query({
       }
     }
 
+    // ── storyViews ────────────────────────────────
+    const views = await ctx.db.query("storyViews").take(1000);
+    const storyViewOrphans: Array<{
+      id: string;
+      reason: "storyId" | "viewerId";
+      missingId: string;
+    }> = [];
+    for (const v of views) {
+      if ((await ctx.db.get(v.storyId)) === null) {
+        storyViewOrphans.push({ id: v._id, reason: "storyId", missingId: v.storyId });
+      }
+      if ((await ctx.db.get(v.viewerId)) === null) {
+        storyViewOrphans.push({ id: v._id, reason: "viewerId", missingId: v.viewerId });
+      }
+    }
+
     const totalOrphans =
       notificationOrphans.length +
       ticketOrphans.length +
@@ -1319,7 +1335,8 @@ export const auditDataOrphans = query({
       dmConversationOrphans.length +
       dmMessageOrphans.length +
       silentFlagOrphans.length +
-      moderationLogOrphans.length;
+      moderationLogOrphans.length +
+      storyViewOrphans.length;
 
     return {
       tablesScanned: {
@@ -1330,6 +1347,7 @@ export const auditDataOrphans = query({
         dmMessages: dms.length,
         silentFlagEvents: flags.length,
         moderationLog: modLog.length,
+        storyViews: views.length,
       },
       notificationOrphans,
       ticketOrphans,
@@ -1338,6 +1356,7 @@ export const auditDataOrphans = query({
       dmMessageOrphans,
       silentFlagOrphans,
       moderationLogOrphans,
+      storyViewOrphans,
       totalOrphans,
     };
   },
@@ -1475,6 +1494,23 @@ export const sweepDataOrphans = mutation({
           reason: targetGone
             ? `targetUserId ${m.targetUserId} deleted`
             : `actorId ${m.actorId} deleted`,
+        });
+      }
+    }
+
+    // ── storyViews ────────────────────────────────
+    const views = await ctx.db.query("storyViews").take(1000);
+    for (const v of views) {
+      const storyGone = (await ctx.db.get(v.storyId)) === null;
+      const viewerGone = (await ctx.db.get(v.viewerId)) === null;
+      if (storyGone || viewerGone) {
+        await ctx.db.delete(v._id);
+        swept.push({
+          table: "storyViews",
+          id: v._id,
+          reason: storyGone
+            ? `storyId ${v.storyId} deleted`
+            : `viewerId ${v.viewerId} deleted`,
         });
       }
     }

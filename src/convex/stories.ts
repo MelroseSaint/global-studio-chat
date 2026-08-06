@@ -15,7 +15,9 @@ import {
   silencedAuthorIds,
 } from "./security";
 
-import { action, internalMutation, query } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
+
+import { action, internalMutation, mutation, query } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { cloudinaryConfig } from "./mediaStorage";
@@ -327,5 +329,103 @@ export const listStories = query({
       }
     }
     return [...byAuthor.values()].sort((a, b) => b._creationTime - a._creationTime);
+  },
+});
+
+/**
+ * Record that the signed-in member viewed a story. One row per viewer per
+ * story — re-viewing (or paging back to it) just bumps viewedAt, so a
+ * viewer's name can't appear twice. Own views are never recorded: the
+ * author already knows they looked.
+ */
+export const recordStoryView = mutation({
+  args: { storyId: v.id("stories") },
+  handler: async (ctx, { storyId }) => {
+    const viewerId = await getAuthUserId(ctx);
+    if (viewerId === null) {
+      return;
+    }
+    const story = await ctx.db.get(storyId);
+    // Only visible stories record views: a story awaiting human AI review
+    // isn't on anyone else's ring, so a view of it is meaningless (and
+    // would let a caller pad the author's list with fake views).
+    if (
+      story === null ||
+      story.authorId === viewerId ||
+      story.aiStatus === "review"
+    ) {
+      return;
+    }
+    const existing = await ctx.db
+      .query("storyViews")
+      .withIndex("by_story_viewer", (q) =>
+        q.eq("storyId", storyId).eq("viewerId", viewerId),
+      )
+      .first();
+    if (existing !== null) {
+      await ctx.db.patch(existing._id, { viewedAt: Date.now() });
+      return;
+    }
+    await ctx.db.insert("storyViews", {
+      storyId,
+      viewerId,
+      viewedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Who viewed a story, newest first, paginated. ONLY the story's author (or
+ * an admin) may see the list — a viewer never learns who else looked, and
+ * non-authors get an empty page rather than an error (nothing to leak).
+ */
+export const listStoryViewers = query({
+  args: {
+    storyId: v.id("stories"),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, { storyId, paginationOpts }) => {
+    const viewerId = await getAuthUserId(ctx);
+    if (viewerId === null) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    const story = await ctx.db.get(storyId);
+    if (story === null) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    const me = await ctx.db.get(viewerId);
+    const isAdmin = me?.role === "admin";
+    if (story.authorId !== viewerId && !isAdmin) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    // Order by most-recent view so the list matches the "viewed X ago"
+    // labels — re-views bump viewedAt and bubble the viewer up.
+    const result = await ctx.db
+      .query("storyViews")
+      .withIndex("by_story_viewed_at", (q) => q.eq("storyId", storyId))
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map(async (row) => {
+        const viewer = await ctx.db.get(row.viewerId);
+        if (viewer === null) {
+          return null;
+        }
+        return {
+          ...publicUser(viewer),
+          avatarUrl:
+            viewer.avatarUrl ??
+            (viewer.avatarStorageId
+              ? await ctx.storage.getUrl(viewer.avatarStorageId)
+              : null),
+          viewedAt: row.viewedAt,
+        };
+      }),
+    );
+    return {
+      ...result,
+      // Viewers whose accounts were removed mid-flight drop out silently.
+      page: page.filter((v): v is NonNullable<typeof v> => v !== null),
+    };
   },
 });

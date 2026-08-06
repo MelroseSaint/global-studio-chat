@@ -263,6 +263,16 @@ async function main() {
           .join(", ")}`
       : `all ${orphans.tablesScanned.moderationLog} moderation entries reference live entities`,
   );
+  check(
+    "no story-view orphans",
+    orphans.storyViewOrphans.length === 0,
+    orphans.storyViewOrphans.length > 0
+      ? `${orphans.storyViewOrphans.length} — ${orphans.storyViewOrphans
+          .slice(0, 5)
+          .map((o) => `${o.reason}(${o.missingId})`)
+          .join(", ")}`
+      : `all ${orphans.tablesScanned.storyViews} story views reference live entities`,
+  );
 
   // ── Duplicate audit ─────────────────────────────
   const dups = await client.query(api.testHarness.auditDuplicates, {

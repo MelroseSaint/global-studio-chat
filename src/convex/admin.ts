@@ -549,6 +549,14 @@ export const moderateStory = mutation({
       standardId,
       note,
     });
+    // Sweep the viewer rows so a moderated story leaves no orphan views.
+    const views = await ctx.db
+      .query("storyViews")
+      .withIndex("by_story", (q) => q.eq("storyId", storyId))
+      .take(200);
+    for (const view of views) {
+      await ctx.db.delete(view._id);
+    }
     await ctx.db.delete(storyId);
   },
 });

@@ -49,7 +49,8 @@ type ErasableId =
   | Id<"moderationLog">
   | Id<"dmMessages">
   | Id<"dmReads">
-  | Id<"dmConversations">;
+  | Id<"dmConversations">
+  | Id<"storyViews">;
 
 interface ErasableRow {
   id: ErasableId;
@@ -207,7 +208,8 @@ export async function eraseAccount(
     },
   );
 
-  // 3. Stories — media files deleted with each row.
+  // 3. Stories — media files deleted with each row, and the story's
+  //    viewer rows swept so no orphan views survive the account.
   await sweep(
     ctx,
     async (c) => {
@@ -222,8 +224,30 @@ export async function eraseAccount(
       if (story === null) {
         return;
       }
+      const views = await c.db
+        .query("storyViews")
+        .withIndex("by_story", (q) => q.eq("storyId", story._id))
+        .take(SWEEP);
+      for (const view of views) {
+        await c.db.delete(view._id);
+      }
       await cleanupMediaItems(c, [story.media]);
       await c.db.delete(story._id);
+    },
+  );
+
+  // 3b. Story views this user left on other people's stories.
+  await sweep(
+    ctx,
+    async (c) => {
+      const rows = await c.db
+        .query("storyViews")
+        .withIndex("by_viewer", (q) => q.eq("viewerId", userId))
+        .take(SWEEP);
+      return rows.map((r) => ({ id: r._id }));
+    },
+    async (c, { id }) => {
+      await c.db.delete(id as Id<"storyViews">);
     },
   );
 
@@ -591,6 +615,15 @@ export const pruneExpiredStories = mutation({
         return;
       }
       for (const story of expired) {
+        // Sweep the viewer rows so the storyViews table never outlives a
+        // story (the nightly data-integrity audit asserts zero orphans).
+        const views = await ctx.db
+          .query("storyViews")
+          .withIndex("by_story", (q) => q.eq("storyId", story._id))
+          .take(SWEEP);
+        for (const view of views) {
+          await ctx.db.delete(view._id);
+        }
         await cleanupMediaItems(ctx, [story.media]);
         await ctx.db.delete(story._id);
       }

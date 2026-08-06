@@ -84,6 +84,12 @@ const schema = defineSchema({
     // references a stated rule.
     moderationStandardId: v.optional(v.string()),
     moderationNote: v.optional(v.string()),
+    // Temporary suspension: when set, the account is restricted until this
+    // timestamp (unix ms) elapses, then it auto-returns to active on its
+    // next activity (see enforceActive in security.ts). Carries the
+    // duration so the Security tab can show "suspended until" instead of
+    // a bare status. Cleared by reinstateAccount/setAccountStatus(active).
+    suspendedUntil: v.optional(v.number()),
     // Who may start a conversation with this user. "everyone" is the
     // default; "following" only allows accounts the user follows;
     // "nobody" blocks all inbound DM requests before any ciphertext
@@ -236,6 +242,21 @@ const schema = defineSchema({
   // Following, Latest, and Media feed queries resolves against it, so
   // timestamp pagination stays indexed at real-time load without an
   // explicit (redundant) index declaration.
+  // Who viewed a story. One row per viewer per story — re-viewing just
+  // bumps viewedAt. Only the story's author (or an admin) may read the
+  // list; a viewer never learns anyone else saw the same story. Rows are
+  // swept with their story when it expires or is moderated.
+  storyViews: defineTable({
+    storyId: v.id("stories"),
+    viewerId: v.id("users"),
+    viewedAt: v.number(),
+  })
+    .index("by_story", ["storyId"])
+    .index("by_story_viewer", ["storyId", "viewerId"])
+    // Orders the author's viewer list by most-recent view (re-views bump
+    // viewedAt), so the paginated list matches the "viewed X ago" labels.
+    .index("by_story_viewed_at", ["storyId", "viewedAt"])
+    .index("by_viewer", ["viewerId"]),
   stories: defineTable({
     authorId: v.id("users"),
     media: v.object({
@@ -401,6 +422,10 @@ const schema = defineSchema({
       v.literal("approve"),
       // Full restore of a moderated account, with the reason recorded.
       v.literal("reinstate"),
+      // Time-limited suspension (a restriction with an expiry), and the
+      // admin lifting it early.
+      v.literal("suspend"),
+      v.literal("unsuspend"),
       v.literal("flag"),
     ),
     standardId: v.optional(v.string()),
