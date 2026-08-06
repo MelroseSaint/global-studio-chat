@@ -615,6 +615,127 @@ jobs:
               console.log(`Closed moderation alert issue #${issue.number}.`);
             }
 
+  story-views-qa:
+    # Proves the story-viewer feature end-to-end against production with
+    # three throwaway accounts (one author, two viewers):
+    # scripts/story-views-qa.mjs posts a clean story, has both viewers open
+    # it, and asserts the author's list shows BOTH viewers newest-first,
+    # that a re-view dedupes to one row and bubbles that viewer to the top
+    # with a newer viewedAt, and that each viewer gets an EMPTY list as a
+    # non-author (only the author or an admin ever learns who looked).
+    # Catches a regression in ordering, dedupe, or the privacy gate the
+    # moment it lands. Runs on the same schedule as the auth loop (every
+    # push to main + nightly + manual dispatch), harness-gated
+    # (TEST_HARNESS_SECRET) like the other QA jobs; skipped on repositories
+    # that haven't configured the harness yet.
+    name: Story viewer QA (ordering, dedupe, privacy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the story-viewer QA
+        if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+        id: story-views
+        env:
+          # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
+          # with TEST_HARNESS_ENABLED=1 set on the Convex deployment.
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:story-views 2>&1 | tee story-views-qa.log
+
+      - name: Upload the story-viewer QA log
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: story-views-qa-log
+          path: story-views-qa.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a story-viewer regression doesn't piggyback on another
+      # job's alert.
+      - name: Alert on failure
+        if: ${{ failure() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-story-views";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Story viewer QA failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The story-viewer QA (ordering, dedupe, privacy) failed against production.",
+                "",
+                "This means one of the guarantees broke: the author's viewer list may",
+                "not sort newest-first, re-views may create duplicate rows, or a",
+                "non-author may be able to see who viewed a story.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the story-views-qa-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: ${{ success() && secrets.TEST_HARNESS_SECRET != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-story-views";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open story-views alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed story-views alert issue #${issue.number}.`);
+            }
+
   blocklist-qa:
     # Serialized AFTER blocklist-sync (needs:) — the QA registers its own
     # transient qa-feed-* test sources, and the sync refreshes every enabled
@@ -755,6 +876,7 @@ jobs:
       - phishing-scan
       - blocklist-sync
       - moderation-reinstate
+      - story-views-qa
       - blocklist-qa
     # Run even when a peer QA FAILED — a crashed job is exactly when a
     # straggler qa_ account is most likely left behind. (Without this,

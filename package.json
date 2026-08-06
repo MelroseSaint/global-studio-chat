@@ -19,6 +19,7 @@
     "qa:follows": "node scripts/follows-e2e.mjs",
     "qa:reinstate": "node scripts/reinstate-qa.mjs",
     "qa:suspend-story": "node scripts/suspend-story-qa.mjs",
+    "qa:story-views": "node scripts/story-views-qa.mjs",
     "qa:salt": "node scripts/salt-rotation-qa.mjs",
     "qa:ai-scan": "node scripts/ai-scan-qa.mjs",
     "qa:ai-scan-integration": "node scripts/ai-scan-integration-qa.mjs",

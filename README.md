@@ -276,6 +276,7 @@ All scripts runnable locally against the live site:
 | `npm run qa:blocklist-sync` | External source synchronization |
 | `npm run qa:shadowban` | Silent-moderation escalation paths |
 | `npm run qa:reinstate` | Admin reinstatement with audit trail |
+| `npm run qa:story-views` | Story viewer lists: newest-first ordering, re-view dedupe, non-author privacy (harness-gated) |
 | `npm run qa:salt` | Salt-rotation migration idempotency |
 | `npm run qa:video-privacy` | GPS-atom stripping on uploaded video |
 | `npm run qa:admin-auth` | Admin password sign-in round-trip |
