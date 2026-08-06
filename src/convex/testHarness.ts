@@ -210,6 +210,81 @@ export const mintSessionForEmail = mutation({
 });
 
 /**
+ * Mint a real refresh token for an existing harness session, formatted
+ * exactly like the auth library's (`${refreshTokenId}|${sessionId}`). The
+ * browser auth client requires BOTH a JWT and a refresh token in storage;
+ * a JWT-only injection makes it try to refresh, find nothing, and sign out.
+ * Gated by the same two env gates as the rest of the module.
+ */
+export const mintSessionRefreshToken = mutation({
+  args: { userId: v.id("users"), secret: v.string() },
+  handler: async (ctx, { userId, secret }) => {
+    requireHarness(secret);
+    const user = await ctx.db.get(userId);
+    if (user === null || !user.username?.startsWith("qa_")) {
+      throw new ConvexError("Only qa_ harness accounts can receive refresh tokens.");
+    }
+    const session = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q) => q.eq("userId", userId))
+      .order("desc")
+      .first();
+    if (session === null) {
+      throw new ConvexError("No auth session found for this account.");
+    }
+    const refreshId = await ctx.db.insert("authRefreshTokens", {
+      sessionId: session._id,
+      expirationTime: session.expirationTime,
+    });
+    return { refreshToken: `${refreshId}|${session._id}`, sessionId: session._id };
+  },
+});
+
+/**
+ * Mint a fresh session + refresh token for an existing qa_ harness account
+ * by username. JWT access tokens are short-lived (1h) and the QA scripts
+ * hold them across runs, so a long walk needs a way to re-mint without
+ * recreating the account (which would orphan its posts/stories). Gated by
+ * the same two env gates as everything else in this module.
+ */
+export const mintSessionForQaUsername = mutation({
+  args: { username: v.string(), secret: v.string() },
+  handler: async (ctx, { username, secret }) => {
+    requireHarness(secret);
+    const normalized = username.toLowerCase().replace(/[^a-z0-9_]/g, "");
+    if (!normalized.startsWith("qa_")) {
+      throw new ConvexError("Only qa_ harness accounts can be re-minted.");
+    }
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", normalized))
+      .first();
+    if (user === null) {
+      throw new ConvexError("No qa_ account with that username.");
+    }
+    const token = await mintSession(ctx, user._id);
+    const session = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q) => q.eq("userId", user._id))
+      .order("desc")
+      .first();
+    if (session === null) {
+      throw new ConvexError("Session mint failed.");
+    }
+    const refreshId = await ctx.db.insert("authRefreshTokens", {
+      sessionId: session._id,
+      expirationTime: session.expirationTime,
+    });
+    return {
+      userId: user._id,
+      username: normalized,
+      token,
+      refreshToken: `${refreshId}|${session._id}`,
+    };
+  },
+});
+
+/**
  * One-time migration: push every existing auth session and refresh token
  * out to the permanent 10-year horizon. Sessions created before the
  * `session` config in convex/auth.ts took effect carry the library's old
