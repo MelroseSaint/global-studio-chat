@@ -286,6 +286,51 @@ All scripts runnable locally against the live site:
 | `npm run qa:count-drift` | Data-integrity DQS audit (harness-gated) |
 | `npm run qa:cleanup-test-users` | Sweep leftover QA accounts (harness-gated) |
 
+### Browser-session QA (JWT + refresh token)
+
+A QA walk that drives the real UI — signing in as a minted throwaway and
+swapping between accounts in a browser — needs **both halves of a browser
+session in `localStorage`**: the access **JWT** (`__convexAuthJWT_<host>`) **and**
+the **refresh token** (`__convexAuthRefreshToken_<host>`, formatted
+`<refreshTokenId>|<sessionId>`). Injecting only the JWT makes the auth
+client try to refresh, find no `authRefreshTokens` row, and **sign itself
+out** — wiping the storage you just wrote. Always mint and inject both.
+
+Two harness-gated helpers exist for exactly this (both require
+`TEST_HARNESS_ENABLED=1` + `TEST_HARNESS_SECRET`):
+
+- **`testHarness.mintSessionRefreshToken`** — create a real
+  `authRefreshTokens` row for an existing qa_ account's session and return
+  the formatted refresh token, so a browser injection carries the full
+  session.
+- **`testHarness.mintSessionForQaUsername`** — re-mint a **fresh** JWT +
+  refresh-token pair for an existing qa_ account by username. Access JWTs
+  are short-lived (1 hour), so a long walk re-mints mid-run without
+  recreating the account (which would orphan its content).
+
+Example flow:
+
+```js
+// Mint the account (get JWT), then mint its refresh half:
+const acc = await client.mutation(api.testHarness.createTestUser, {
+  name, username, secret,
+});
+const { refreshToken } = await client.mutation(
+  api.testHarness.mintSessionRefreshToken,
+  { userId: acc.userId, secret },
+);
+// Later, when the JWT expires:
+const fresh = await client.mutation(
+  api.testHarness.mintSessionForQaUsername,
+  { username, secret },
+); // { token, refreshToken }
+```
+
+In the browser, write both keys under the deployment's namespace (for
+production: `__convexAuthJWT_httpsoutgoingseal727convexcloud` and
+`__convexAuthRefreshToken_httpsoutgoingseal727convexcloud`), then do a full
+reload so the auth provider reads storage on mount.
+
 ## CI/CD
 
 - **Static Audit** — typecheck, lint, build, secrets scan, and 10+ parallel
