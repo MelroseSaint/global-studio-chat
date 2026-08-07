@@ -34,6 +34,7 @@
     "qa:pages-inflation": "node scripts/qa-pages-inflation.mjs",
     "qa:count-drift": "node scripts/count-drift-qa.mjs",
     "qa:live-engage": "node scripts/live-engage-e2e.mjs",
+    "qa:top-sort": "node scripts/top-sort-qa.mjs",
     "qa:signup-e2e": "node scripts/signup-e2e-prod.mjs",
     "qa:cloudinary-health": "node scripts/cloudinary-health-probe.mjs",
     "qa:extend-sessions": "node scripts/extend-sessions.mjs",

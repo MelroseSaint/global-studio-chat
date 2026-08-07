@@ -1,0 +1,243 @@
+#!/usr/bin/env node
+/**
+ * Top-comments sort QA against the live production site.
+ *
+ * Signs in as the admin through the real Auth form, then — using the same
+ * mutations the UI calls — creates a throwaway post with four comments and
+ * likes two of them, so the thread has distinct like tiers (1, 1, 0, 0).
+ * Verifies end-to-end in a real Chromium:
+ *
+ *   1. API: listComments with sort "top" ranks the liked comments above the
+ *      unliked ones, newest-first within equal like counts; "newest" stays
+ *      strictly reverse-chronological; the two sorts differ.
+ *   2. Browser: the post page defaults to Top order (liked comments rise),
+ *      the Newest toggle flips to reverse-chronological, and the comment
+ *      popup's preview shows the best replies first.
+ *
+ * The throwaway post (and its comments/likes) is deleted at the end, so the
+ * site is left exactly as found. Run (password never in this file — see
+ * lib/qa-secrets.mjs):
+ *
+ *   ADMIN_PASSWORD=<admin password> node scripts/top-sort-qa.mjs
+ *   # or: printf '%s' '<password>' > .freebuff/.admin-password   # gitignored
+ *
+ * Overrides: SITE_URL (default https://purewire.vercel.app), CONVEX_URL,
+ * ADMIN_EMAIL (default monroedoses@gmail.com), HEADED=1 to watch the browser.
+ * Exit codes: 0 all checks passed, 1 a check failed, 2 missing password.
+ */
+import { ConvexHttpClient } from "convex/browser";
+
+import { api } from "../src/convex/_generated/api.js";
+import { launchBrowser, signIn } from "./lib/qa-browser.mjs";
+import { passwordHint, resolveAdminPassword } from "./lib/qa-secrets.mjs";
+import { powProof } from "./lib/qa-pow.mjs";
+
+const SITE_URL = process.env.SITE_URL ?? "https://purewire.vercel.app";
+const CONVEX_URL =
+  process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "monroedoses@gmail.com";
+const ADMIN_PASSWORD = resolveAdminPassword();
+const HEADED = process.env.HEADED === "1";
+const NAV_TIMEOUT = 45000;
+
+let passed = 0;
+let failed = 0;
+const failures = [];
+
+function check(name, ok, detail = "") {
+  if (ok) {
+    passed++;
+    console.log(`  ✅ ${name}`);
+  } else {
+    failed++;
+    failures.push(name);
+    console.log(`  ❌ ${name}${detail ? ` — ${detail}` : ""}`);
+  }
+}
+
+function finish() {
+  console.log(`\n${passed} passed, ${failed} failed`);
+  if (failed > 0) {
+    console.log("Failed checks:");
+    for (const f of failures) console.log(`  - ${f}`);
+    process.exit(1);
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function main() {
+  if (!ADMIN_PASSWORD) {
+    console.log(passwordHint());
+    process.exit(2);
+  }
+  console.log(`\nTop-comments sort QA (${SITE_URL})\n`);
+  const browser = await launchBrowser({ headed: HEADED });
+  let client = null;
+  let postId = null;
+  try {
+    // ── 1. Sign in through the real form and capture the session JWT ──────
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    page.setDefaultTimeout(20000);
+    await signIn(page, {
+      siteUrl: SITE_URL,
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD,
+    });
+    check("signed in through the real Auth form", true);
+    // The auth client namespaces its storage keys with the Convex URL
+    // (__convexAuthJWT_<host>), so find the JWT by prefix.
+    const token = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((k) =>
+        k.startsWith("__convexAuthJWT"),
+      );
+      return key === undefined ? null : localStorage.getItem(key);
+    });
+    check(
+      "session JWT captured for API calls",
+      !!token && token.startsWith("eyJ"),
+      token ? "" : "no JWT in localStorage",
+    );
+
+    client = new ConvexHttpClient(CONVEX_URL);
+    client.setAuth(token);
+
+    // ── 2. Seed: post + four comments, like two of them ────────────────────
+    const ts = Date.now().toString(36).slice(-6);
+    const post = await client.action(api.posts.createPost, {
+      content: `Top-sort QA post ${ts}`,
+      creatorDisclosure: "human-made",
+      ...(await powProof(client)),
+    });
+    check("throwaway post created", post.ok === true, post.error);
+    postId = post.postId;
+
+    // c1..c4 in creation order (c4 newest). "two" and "four" get one like
+    // each, so top order must be [four, two, three, one] (1-like tier first,
+    // newest within it; then the 0-like tier, newest within it).
+    const labels = ["one", "two", "three", "four"];
+    for (const label of labels) {
+      const res = await client.mutation(api.posts.addComment, {
+        postId,
+        content: `${label} ${ts}`,
+        ...(await powProof(client)),
+      });
+      check(`comment "${label}" posted`, res.ok === true, res.error);
+      await sleep(250); // stay under the comment budget
+    }
+    // addComment returns { ok } only — resolve the ids from a newest query
+    // (which lists c4, c3, c2, c1 in that order) and like "four" (c4) and
+    // "two" (c2).
+    const seeded = await client.query(api.posts.listComments, {
+      postId,
+      sort: "newest",
+      paginationOpts: { numItems: 20, cursor: null },
+    });
+    const [c4, , c2] = seeded.page;
+    check("four comments seeded (c4 newest)", seeded.page.length === 4, String(seeded.page.length));
+    await client.mutation(api.posts.likeComment, { commentId: c4._id });
+    await client.mutation(api.posts.likeComment, { commentId: c2._id });
+    check("liked 'four' and 'two' (one like each)", true);
+
+    // ── 3. API ordering assertions ─────────────────────────────────────────
+    const paginationOpts = { numItems: 20, cursor: null };
+    const top = await client.query(api.posts.listComments, {
+      postId,
+      sort: "top",
+      paginationOpts,
+    });
+    const topOrder = top.page.map((c) => c.content.split(" ")[0]);
+    check(
+      "top: liked comments rise above unliked",
+      topOrder[0] === "four" && topOrder[1] === "two",
+      JSON.stringify(topOrder),
+    );
+    check(
+      "top: unliked comments follow, newest first",
+      topOrder[2] === "three" && topOrder[3] === "one",
+      JSON.stringify(topOrder),
+    );
+    check(
+      "top: like counts descend (1,1,0,0)",
+      JSON.stringify(top.page.map((c) => c.likeCount)) === "[1,1,0,0]",
+      JSON.stringify(top.page.map((c) => c.likeCount)),
+    );
+    const newest = await client.query(api.posts.listComments, {
+      postId,
+      sort: "newest",
+      paginationOpts,
+    });
+    const newestOrder = newest.page.map((c) => c.content.split(" ")[0]);
+    check(
+      "newest: strictly reverse-chronological",
+      JSON.stringify(newestOrder) === JSON.stringify(["four", "three", "two", "one"]),
+      JSON.stringify(newestOrder),
+    );
+    check(
+      "top and newest orders genuinely differ",
+      JSON.stringify(topOrder) !== JSON.stringify(newestOrder),
+      "",
+    );
+
+    // ── 4. Browser: thread order + toggle + popup preview ──────────────────
+    await page.goto(`${SITE_URL}/post/${postId}`, { waitUntil: "domcontentloaded" });
+    await page.getByText(`four ${ts}`, { exact: false }).first().waitFor({
+      timeout: NAV_TIMEOUT,
+    });
+
+    const readOrder = async (scope) =>
+      scope.evaluate((root) =>
+        [...root.querySelectorAll("p")]
+          .map((p) => (p.textContent ?? "").trim())
+          .filter((t) => /^(one|two|three|four) /.test(t))
+          .map((t) => t.split(" ")[0]),
+      );
+
+    const defaultOrder = await readOrder(page.locator("body"));
+    check(
+      "browser: thread defaults to Top (liked first)",
+      JSON.stringify(defaultOrder) === JSON.stringify(["four", "two", "three", "one"]),
+      JSON.stringify(defaultOrder),
+    );
+
+    await page.getByRole("button", { name: "Newest" }).click();
+    await page.waitForTimeout(600); // let the query reset + refetch
+    const newestUi = await readOrder(page.locator("body"));
+    check(
+      "browser: Newest toggle flips to reverse-chronological",
+      JSON.stringify(newestUi) === JSON.stringify(["four", "three", "two", "one"]),
+      JSON.stringify(newestUi),
+    );
+
+    // Open the comment popup — its preview must surface the best replies.
+    await page.getByRole("button", { name: "Comment on this post" }).click();
+    const dialog = page.locator('[data-slot="dialog-content"]');
+    await dialog.waitFor({ timeout: NAV_TIMEOUT });
+    await dialog.getByText(`three ${ts}`, { exact: false }).first().waitFor({
+      timeout: NAV_TIMEOUT,
+    });
+    const preview = await readOrder(dialog);
+    check(
+      "browser: popup preview shows the best replies first (top 3)",
+      JSON.stringify(preview) === JSON.stringify(["four", "two", "three"]),
+      JSON.stringify(preview),
+    );
+  } finally {
+    // ── 5. Cleanup: the throwaway post dies with its comments and likes ────
+    if (client !== null && postId !== null) {
+      try {
+        await client.mutation(api.posts.deletePost, { postId });
+        console.log("  🧹 Throwaway post + comments + likes deleted");
+      } catch (e) {
+        console.log(`  ⚠ cleanup failed: ${e.message}`);
+      }
+    }
+    await browser.close();
+  }
+  finish();
+}
+
+main().catch((e) => {
+  console.error("\nTop-sort QA crashed:", e);
+  process.exit(1);
+});
