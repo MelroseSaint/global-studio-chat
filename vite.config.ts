@@ -103,6 +103,20 @@ function precacheManifest(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), siteUrl(), precacheManifest()],
+  esbuild: {
+    // esbuild's CSS minifier warns `"file" is not a known CSS property`
+    // (message id `unsupported-css-property`) whenever a dependency's CSS
+    // declares an unknown property — the app's own CSS is clean, but a
+    // transitive package (e.g. a Tailwind v4 / tw-animate-css version in a
+    // fresh install) can contain a stray `file:` declaration, which is
+    // harmless: browsers just ignore unknown properties. Vite forwards this
+    // logOverride into the `[esbuild css minify]` pass (see
+    // resolveMinifyCssEsbuildOptions in vite's config), so the build log
+    // stays 100% warning-free instead of surfacing cosmetic noise.
+    logOverride: {
+      "unsupported-css-property": "silent",
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
