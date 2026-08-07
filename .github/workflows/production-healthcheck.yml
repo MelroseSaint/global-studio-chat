@@ -102,6 +102,16 @@ jobs:
             || { echo "::error::sitemap.xml is not served"; exit 1; }
           echo "SEO basics OK: canonical + OG/twitter tags on $EXPECTED_SITE_URL"
 
+      # Sitemap URL health: the dynamic sitemap only earns its place if the
+      # URLs it submits actually render. Sample the newest posts + profiles
+      # (plus the fixed pages) and assert each returns 200 with REAL content
+      # — server-rendered Article/ProfilePage JSON-LD for posts/profiles,
+      # never a 404 or the SPA shell — so a visibility regression can never
+      # silently submit dead URLs. A failure here fails the job and opens
+      # the alert issue below.
+      - name: Sitemap URL health (sampled posts + profiles)
+        run: npm run qa:sitemap-urls
+
       # Alerting: GitHub already emails on failed runs. This also opens a
       # single persistent issue (label prod-healthcheck) so a failing nightly
       # check is visible on the repo and never silently lost — and never
