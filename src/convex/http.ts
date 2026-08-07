@@ -2,7 +2,7 @@ import { httpRouter } from "convex/server";
 import { registerStaticRoutes } from "@convex-dev/static-hosting";
 
 import { auth } from "@/convex/auth";
-import { postOg } from "./og";
+import { postOg, profileOg } from "./og";
 import { components } from "./_generated/api";
 
 const http = httpRouter();
@@ -19,6 +19,16 @@ http.route({
   pathPrefix: "/og/post/",
   method: "GET",
   handler: postOg,
+});
+
+// Server-rendered Open Graph page for a single profile. Same reasoning as
+// the post route above: registered before the static routes so
+// /og/profile/:handle serves the ProfilePage to crawlers (the Vercel
+// middleware proxies /u/:handle here) instead of the SPA catch-all.
+http.route({
+  pathPrefix: "/og/profile/",
+  method: "GET",
+  handler: profileOg,
 });
 
 // Serve the PureWire frontend (dist) from https://outgoing-seal-727.convex.site.
