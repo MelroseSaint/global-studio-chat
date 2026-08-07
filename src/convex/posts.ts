@@ -1406,17 +1406,31 @@ export const addComment = mutation({
 });
 
 export const listComments = query({
-  args: { postId: v.id("posts"), paginationOpts: paginationOptsValidator },
-  handler: async (ctx, { postId, paginationOpts }) => {
+  args: {
+    postId: v.id("posts"),
+    paginationOpts: paginationOptsValidator,
+    // "top" ranks the thread by like count (highest first); "newest" keeps
+    // the reverse-chronological order. The by_post_likes index serves the
+    // top sort; comments missing likeCount (never liked) sort last.
+    sort: v.optional(v.union(v.literal("newest"), v.literal("top"))),
+  },
+  handler: async (ctx, { postId, paginationOpts, sort }) => {
     const viewerId = await getAuthUserId(ctx);
     const hidden = await hiddenAuthorIds(ctx, viewerId);
     const silenced = await silencedAuthorIds(ctx, viewerId);
     const excluded = [...hidden, ...silenced];
-    const result = await ctx.db
-      .query("comments")
-      .withIndex("by_post", (q) => q.eq("postId", postId))
-      .order("desc")
-      .paginate(paginationOpts);
+    const result =
+      sort === "top"
+        ? await ctx.db
+            .query("comments")
+            .withIndex("by_post_likes", (q) => q.eq("postId", postId))
+            .order("desc")
+            .paginate(paginationOpts)
+        : await ctx.db
+            .query("comments")
+            .withIndex("by_post", (q) => q.eq("postId", postId))
+            .order("desc")
+            .paginate(paginationOpts);
     const visible = result.page.filter((c) => !excluded.includes(c.authorId));
     const page = await Promise.all(
       visible.map(async (c) => {

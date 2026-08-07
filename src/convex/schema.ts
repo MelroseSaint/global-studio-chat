@@ -358,7 +358,10 @@ const schema = defineSchema({
     likeCount: v.optional(v.number()),
   })
     .index("by_post", ["postId"])
-    .index("by_author", ["authorId"]),
+    .index("by_author", ["authorId"])
+    // Serves the "Top" comment sort: a thread ordered by like count
+    // (highest first) instead of newest-first.
+    .index("by_post_likes", ["postId", "likeCount"]),
   commentLikes: defineTable({
     commentId: v.id("comments"),
     userId: v.id("users"),

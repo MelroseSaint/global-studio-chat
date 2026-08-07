@@ -154,9 +154,10 @@ export function PostDetail() {
   const editComment = useMutation(api.posts.editComment);
   const deleteComment = useMutation(api.posts.deleteComment);
   const powChallenge = useQuery(api.pow.getChallenge);
+  const [commentSort, setCommentSort] = useState<"newest" | "top">("top");
   const { results, status, loadMore } = usePaginatedQuery(
     api.posts.listComments,
-    { postId: postIdTyped },
+    { postId: postIdTyped, sort: commentSort },
     { initialNumItems: 15 },
   );
   const { ref, inView } = useInView();
@@ -228,6 +229,10 @@ export function PostDetail() {
         return;
       }
       setComment("");
+      // In "Top" sort a brand-new (0-like) comment sinks to the bottom, so
+      // flip to "Newest" so the author sees their comment appear at the
+      // top instead of thinking it failed.
+      setCommentSort("newest");
       toast.success("Comment posted.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not comment.");
@@ -315,9 +320,42 @@ export function PostDetail() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 px-5 py-3 text-sm font-semibold">
-        <MessageCircle className="size-4 text-muted-foreground" />
-        Comments
+      <div className="flex items-center justify-between gap-2 px-5 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <MessageCircle className="size-4 text-muted-foreground" />
+          Comments
+        </div>
+        <div
+          aria-label="Sort comments"
+          className="flex items-center gap-0.5 rounded-full border bg-muted/40 p-0.5 text-xs"
+        >
+          <button
+            type="button"
+            aria-pressed={commentSort === "top"}
+            onClick={() => setCommentSort("top")}
+            className={cn(
+              "rounded-full px-2.5 py-1 font-medium transition-colors",
+              commentSort === "top"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Top
+          </button>
+          <button
+            type="button"
+            aria-pressed={commentSort === "newest"}
+            onClick={() => setCommentSort("newest")}
+            className={cn(
+              "rounded-full px-2.5 py-1 font-medium transition-colors",
+              commentSort === "newest"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Newest
+          </button>
+        </div>
       </div>
 
       {status === "LoadingFirstPage" && (

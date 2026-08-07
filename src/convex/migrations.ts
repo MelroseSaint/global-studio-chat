@@ -145,3 +145,43 @@ export const backfillRemovalLog = internalMutation({
     return { found, copied };
   },
 });
+
+/**
+ * One-pass backfill of comments.likeCount to 0.
+ *
+ * Comments created before the like feature keep likeCount undefined. The
+ * "Top" comment sort's by_post_likes index handles that fine (missing
+ * values sort last under order("desc")), but an explicit 0 makes ordering
+ * fully deterministic and matches the docs-recommended practice of
+ * defaulting indexed counters. Idempotent — rows that already carry a
+ * number are skipped. Run it with:
+ *
+ *   npx convex run internal.migrations.backfillCommentLikeCounts
+ *
+ * It returns how many comments were scanned and how many were patched.
+ */
+export const backfillCommentLikeCounts = internalMutation({
+  handler: async (ctx) => {
+    let scanned = 0;
+    let patched = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await ctx.db
+        .query("comments")
+        .order("asc")
+        .paginate({ numItems: 100, cursor });
+      for (const comment of page.page) {
+        scanned++;
+        if (comment.likeCount === undefined) {
+          await ctx.db.patch(comment._id, { likeCount: 0 });
+          patched++;
+        }
+      }
+      if (page.isDone) {
+        break;
+      }
+      cursor = page.continueCursor;
+    }
+    return { scanned, patched };
+  },
+});

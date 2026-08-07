@@ -79,9 +79,11 @@ function CommentPreview({
   powChallenge?: PowChallenge;
   onDeleted?: () => void;
 }) {
+  // The preview surfaces the best replies, so it always uses the "top"
+  // sort (highest like count first).
   const { results, status } = usePaginatedQuery(
     api.posts.listComments,
-    { postId },
+    { postId, sort: "top" },
     { initialNumItems: 3 },
   );
   const editComment = useMutation(api.posts.editComment);
