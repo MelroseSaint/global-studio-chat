@@ -42,6 +42,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
@@ -378,22 +385,37 @@ function SettingsForm({ user }: { user: Profile }) {
               key={i}
               className="flex flex-col gap-2 sm:flex-row sm:items-center"
             >
-              <select
+              <Select
                 value={link.platform}
-                onChange={(e) => updateLink(i, { platform: e.target.value })}
-                className="h-10 w-full rounded-md border bg-transparent px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-40 sm:shrink-0"
+                onValueChange={(v) => updateLink(i, { platform: v })}
               >
-                {PLATFORM_OPTIONS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full sm:w-40 sm:shrink-0">
+                  <SelectValue placeholder="Platform" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PLATFORM_OPTIONS.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {p}
+                    </SelectItem>
+                  ))}
+                  {/* Legacy rows may carry a platform that isn't in the
+                      options list — keep it selectable so nothing gets
+                      silently dropped on save. */}
+                  {link.platform &&
+                    !(PLATFORM_OPTIONS as readonly string[]).includes(
+                      link.platform,
+                    ) && (
+                      <SelectItem value={link.platform}>
+                        {link.platform}
+                      </SelectItem>
+                    )}
+                </SelectContent>
+              </Select>
               <Input
                 value={link.url}
                 onChange={(e) => updateLink(i, { url: e.target.value })}
                 placeholder="your.handle"
-                className="flex-1"
+                className="flex-1 placeholder:text-foreground/55"
               />
               <Button
                 variant="ghost"

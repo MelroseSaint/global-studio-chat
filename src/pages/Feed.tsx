@@ -9,6 +9,13 @@ import { Composer } from "@/components/Composer";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { StoriesBar } from "@/components/StoriesBar";
 import { Empty } from "@/components/ui/empty";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getBrowserLocation } from "@/lib/geo";
@@ -133,18 +140,25 @@ export function Feed() {
                 </>
               )}
             </p>
-            <select
-              value={radiusKm}
-              onChange={(e) => setRadiusKm(Number(e.target.value))}
-              aria-label="Search radius"
-              className="h-7 shrink-0 rounded-md border bg-transparent px-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            <Select
+              value={String(radiusKm)}
+              onValueChange={(v) => setRadiusKm(Number(v))}
             >
-              {RADII_KM.map((r) => (
-                <option key={r} value={r}>
-                  {r} km
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                size="sm"
+                aria-label="Search radius"
+                className="data-[size=sm]:h-7 shrink-0 px-1.5 text-xs"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                {RADII_KM.map((r) => (
+                  <SelectItem key={r} value={String(r)}>
+                    {r} km
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         ) : null}
       </div>

@@ -896,26 +896,33 @@ function UsersPanel({ meId }: { meId: string }) {
             >
               {u.verified ? "Unverify" : "Verify"}
             </Button>
-            <select
+            <Select
               value={u.role ?? "user"}
               disabled={u.isOwner}
-              title={
-                u.isOwner
-                  ? "The owner account is fixed — its role cannot be changed."
-                  : undefined
-              }
-              onChange={(e) =>
+              onValueChange={(v) =>
                 void setRole({
                   userId: u._id as Id<"users">,
-                  role: e.target.value as "user" | "creator" | "admin",
+                  role: v as "user" | "creator" | "admin",
                 })
               }
-              className="h-8 rounded-md border bg-transparent px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <option value="user">User</option>
-              <option value="creator">Creator</option>
-              <option value="admin">Admin</option>
-            </select>
+              <SelectTrigger
+                size="sm"
+                title={
+                  u.isOwner
+                    ? "The owner account is fixed — its role cannot be changed."
+                    : undefined
+                }
+                className="px-2 text-xs"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="user">User</SelectItem>
+                <SelectItem value="creator">Creator</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
+              </SelectContent>
+            </Select>
             {u._id !== meId && !u.isOwner ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1270,18 +1277,24 @@ function TicketsPanel() {
               rows={2}
             />
             <div className="flex shrink-0 items-center gap-2">
-              <select
+              <Select
                 value={draftStatus[t._id] ?? t.status}
-                onChange={(e) =>
-                  setDraftStatus((s) => ({ ...s, [t._id]: e.target.value }))
+                onValueChange={(v) =>
+                  setDraftStatus((s) => ({ ...s, [t._id]: v }))
                 }
-                className="h-9 rounded-md border bg-transparent px-2 text-xs outline-none"
               >
-                <option value="open">Open</option>
-                <option value="in_review">In review</option>
-                <option value="resolved">Resolved</option>
-                <option value="dismissed">Dismissed (false report)</option>
-              </select>
+                <SelectTrigger className="h-9 px-2 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="in_review">In review</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                  <SelectItem value="dismissed">
+                    Dismissed (false report)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 size="sm"
                 onClick={() =>
