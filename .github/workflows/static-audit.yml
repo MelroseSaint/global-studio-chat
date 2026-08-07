@@ -43,6 +43,36 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+  seo-static-files:
+    # The SEO basics must never regress silently: robots.txt and the XML
+    # sitemap are served as static files (wired ahead of the SPA fallback in
+    # vercel.json), and both hardcode the canonical host. This job fails if
+    # either file goes missing or drifts from SITE_URL_DEFAULT in
+    # vite.config.ts — the single repo-owned source of the canonical host.
+    name: SEO static files (robots.txt, sitemap.xml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert files exist and match the canonical host
+        run: |
+          set -euo pipefail
+          host="$(grep -oP 'SITE_URL_DEFAULT = "\K[^"]+' vite.config.ts)"
+          host="${host%/}"
+          test -n "$host" \
+            || { echo "::error::could not read SITE_URL_DEFAULT from vite.config.ts"; exit 1; }
+          test -f public/robots.txt \
+            || { echo "::error::public/robots.txt is missing"; exit 1; }
+          test -f public/sitemap.xml \
+            || { echo "::error::public/sitemap.xml is missing"; exit 1; }
+          test "$(grep -c '<loc>' public/sitemap.xml)" -ge 1 \
+            || { echo "::error::public/sitemap.xml has no <loc> entries"; exit 1; }
+          grep -q "Sitemap: ${host}/sitemap.xml" public/robots.txt \
+            || { echo "::error::robots.txt Sitemap line drifted from ${host} (vite.config.ts)"; exit 1; }
+          bad="$(grep -oE '<loc>[^<]+</loc>' public/sitemap.xml | grep -v "^<loc>${host}" || true)"
+          test -z "$bad" \
+            || { echo "::error::sitemap.xml has <loc> entries off ${host}:"; echo "$bad"; exit 1; }
+          echo "SEO static files OK — canonical host ${host}"
+
   secrets-scan:
     name: Secrets scan
     runs-on: ubuntu-latest
