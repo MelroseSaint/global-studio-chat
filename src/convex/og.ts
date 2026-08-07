@@ -196,10 +196,9 @@ ${articleLd}
 </head>
 <body style="margin:0;background:#171918;color:#f4f0e8;font-family:system-ui,sans-serif">
   <main style="max-width:560px;margin:0 auto;padding:48px 20px">
-    <p style="font-size:14px;color:#c97952;font-weight:600">PureWire</p>
     <h1 style="font-size:22px;margin:8px 0 4px">${esc(title)}</h1>
     <p style="font-size:15px;line-height:1.6;white-space:pre-wrap">${esc(description)}</p>
-    <p style="margin-top:20px"><a href="${esc(canonical)}" style="color:#b84a32;font-weight:600">View the post on PureWire</a></p>
+    <p style="margin-top:20px"><a href="${esc(canonical)}" style="color:#b84a32;font-weight:600">View the post</a></p>
   </main>
 </body>
 </html>`;
@@ -272,6 +271,11 @@ export const profileOg = httpAction(async (ctx, request) => {
     },
   });
 
+  // The <h1> is the person's NAME, not a duplicate of the <title> tag
+  // (which already carries "@handle on PureWire" for share cards). A
+  // heading that repeats the title verbatim doubles every "handle on
+  // PureWire" bigram in the page's text and inflates the repetition
+  // signal for crawlers that dump visible text.
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -298,10 +302,9 @@ ${profileLd}
 </head>
 <body style="margin:0;background:#171918;color:#f4f0e8;font-family:system-ui,sans-serif">
   <main style="max-width:560px;margin:0 auto;padding:48px 20px">
-    <p style="font-size:14px;color:#c97952;font-weight:600">PureWire</p>
-    <h1 style="font-size:22px;margin:8px 0 4px">${esc(title)}</h1>
+    <h1 style="font-size:22px;margin:8px 0 4px">${esc(displayName)}</h1>
     <p style="font-size:15px;line-height:1.6;white-space:pre-wrap">${esc(description)}</p>
-    <p style="margin-top:20px"><a href="${esc(canonical)}" style="color:#b84a32;font-weight:600">View profile on PureWire</a></p>
+    <p style="margin-top:20px"><a href="${esc(canonical)}" style="color:#b84a32;font-weight:600">View profile</a></p>
   </main>
 </body>
 </html>`;
