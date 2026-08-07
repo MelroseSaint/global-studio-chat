@@ -24,12 +24,18 @@ export function formatCount(n: number): string {
 }
 
 /**
- * Plain-language like label for a count: "1 like", "2 likes", "1.2K likes".
- * The fact form ("0 likes" included) — for static displays; interactive
- * like buttons use their own action-word variant for the zero case.
+ * Plain-language count label for the fact form: "1 like", "2 likes",
+ * "1 comment", "0 comments", "1.2K views" (singular gets no suffix,
+ * anything else gets "s" — regular plurals only). Interactive like buttons
+ * use their own action-word variant for zero.
  */
+export function formatPluralLabel(count: number, singular: string): string {
+  return `${formatCount(count)} ${count === 1 ? singular : `${singular}s`}`;
+}
+
+/** "1 like", "2 likes", "1.2K likes" — static display form. */
 export function formatLikeLabel(count: number): string {
-  return `${formatCount(count)} ${count === 1 ? "like" : "likes"}`;
+  return formatPluralLabel(count, "like");
 }
 
 /** Validate a username: 3-24 chars, lowercase alphanumeric + underscore. */

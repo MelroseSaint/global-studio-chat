@@ -302,6 +302,13 @@ async function main() {
       "browser: popup post preview shows the post's like count (0 likes)",
       (await dialog.getByText("0 likes").count()) >= 1,
     );
+    // The same meta row must show the post's comment count too ("4
+    // comments" — unique to the post preview, since the comment labels and
+    // the "Comments" header never render that string).
+    check(
+      "browser: popup post preview shows the post's comment count (4 comments)",
+      (await dialog.getByText("4 comments").count()) >= 1,
+    );
   } finally {
     // ── 5. Cleanup: the throwaway post dies with its comments and likes ────
     if (client !== null && postId !== null) {
