@@ -532,6 +532,33 @@ async function countByPostIndex(
 }
 
 /**
+ * Count one comment's like rows exactly, without loading them all into
+ * memory — the same bounded cursor pattern as countByPostIndex, but over
+ * the commentLikes table's by_comment index.
+ */
+async function countByCommentIndex(
+  ctx: MutationCtx,
+  commentId: Id<"comments">,
+): Promise<number> {
+  let total = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const rows = await ctx.db
+      .query("commentLikes")
+      .withIndex("by_comment", (q) => q.eq("commentId", commentId))
+      .order("asc")
+      .filter((q) =>
+        q.gt(q.field("_id"), (cursor ?? "") as Id<"commentLikes">),
+      )
+      .take(500);
+    if (rows.length === 0) break;
+    total += rows.length;
+    cursor = rows[rows.length - 1]._id;
+  }
+  return total;
+}
+
+/**
  * Sweep orphan engagement rows and reconcile every post's engagement
  * counters against the actual tables. Two jobs:
  *
@@ -544,12 +571,13 @@ async function countByPostIndex(
  * 2. Counter reconcile — posts.likeCount / commentCount / shareCount are
  *    denormalized counters incremented on like/comment/share and
  *    decremented on unlike; posts.reportCount is the number of open
- *    (open/in_review) support tickets targeting the post. Every post is
- *    patched to the exact surviving-row totals. Phantom engagement rows
- *    (a sandboxed account's absorbed like/comment) are counted like the
- *    follows reconcile counts phantom follows — the rows table is truth,
- *    matching the platform's unsilence behavior of retroactively counting
- *    phantom follows.
+ *    (open/in_review) support tickets targeting the post; and
+ *    comments.likeCount is the denormalized tally of its commentLikes
+ *    rows. Every post and comment is patched to the exact surviving-row
+ *    totals. Phantom engagement rows (a sandboxed account's absorbed
+ *    like/comment) are counted like the follows reconcile counts phantom
+ *    follows — the rows table is truth, matching the platform's unsilence
+ *    behavior of retroactively counting phantom follows.
  *
  * Idempotent — a clean run changes nothing and returns empty lists, so
  * the count-drift QA can assert clean state and this can be re-run any
@@ -568,9 +596,14 @@ export const reconcileEngagementCounts = mutation({
       }> = [];
       const orphanShares: Array<{ rowId: Id<"shares">; postId: Id<"posts"> }> =
         [];
+      const orphanCommentLikes: Array<{
+        rowId: Id<"commentLikes">;
+        commentId: Id<"comments">;
+      }> = [];
       let likesSeen = 0;
       let commentsSeen = 0;
       let sharesSeen = 0;
+      let commentLikesSeen = 0;
       let cursor: string | null = null;
       for (;;) {
         const rows = await ctx.db
@@ -605,6 +638,31 @@ export const reconcileEngagementCounts = mutation({
             orphanComments.push({ rowId: row._id, postId: row.postId });
           }
           commentCursor = row._id;
+        }
+      }
+      // Comment likes: rows whose comment no longer exists (left behind by
+      // comment deletions made before the sweep path was added) are removed
+      // the same way.
+      let commentLikeCursor: string | null = null;
+      for (;;) {
+        const rows = await ctx.db
+          .query("commentLikes")
+          .order("asc")
+          .filter((q) =>
+            q.gt(
+              q.field("_id"),
+              (commentLikeCursor ?? "") as Id<"commentLikes">,
+            ),
+          )
+          .take(500);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          commentLikesSeen++;
+          if ((await ctx.db.get(row.commentId)) === null) {
+            await ctx.db.delete(row._id);
+            orphanCommentLikes.push({ rowId: row._id, commentId: row.commentId });
+          }
+          commentLikeCursor = row._id;
         }
       }
       let shareCursor: string | null = null;
@@ -664,6 +722,15 @@ export const reconcileEngagementCounts = mutation({
           reportCount: number;
         };
       }> = [];
+      // Comment likeCounts are denormalized the same way as the post
+      // counters, so they get the same reconcile: every comment is patched
+      // to the count of its surviving commentLikes rows.
+      const fixedComments: Array<{
+        commentId: Id<"comments">;
+        was: number;
+        now: number;
+      }> = [];
+      let commentsReconciled = 0;
       let postsSeen = 0;
       let postCursor: string | null = null;
       for (;;) {
@@ -702,15 +769,43 @@ export const reconcileEngagementCounts = mutation({
           postCursor = post._id;
         }
       }
+      let commentReconcileCursor: string | null = null;
+      for (;;) {
+        const comments = await ctx.db
+          .query("comments")
+          .order("asc")
+          .filter((q) =>
+            q.gt(
+              q.field("_id"),
+              (commentReconcileCursor ?? "") as Id<"comments">,
+            ),
+          )
+          .take(500);
+        if (comments.length === 0) break;
+        for (const comment of comments) {
+          commentsReconciled++;
+          const likeCount = await countByCommentIndex(ctx, comment._id);
+          const was = comment.likeCount ?? 0;
+          if (was !== likeCount) {
+            await ctx.db.patch(comment._id, { likeCount });
+            fixedComments.push({ commentId: comment._id, was, now: likeCount });
+          }
+          commentReconcileCursor = comment._id;
+        }
+      }
       return {
         orphanLikes,
         orphanComments,
         orphanShares,
+        orphanCommentLikes,
         likesSeen,
         commentsSeen,
         sharesSeen,
+        commentLikesSeen,
         fixed,
         postsSeen,
+        fixedComments,
+        commentsReconciled,
       };
     } catch (e) {
       // Convex masks plain Error messages as "Server Error"; rethrow as a
@@ -1221,6 +1316,7 @@ export const getTestUserTraces = query({
       counts: {
         posts: (await ctx.db.query("posts").withIndex("by_author", (q) => q.eq("authorId", userId)).take(1000)).length,
         comments: (await ctx.db.query("comments").withIndex("by_author", (q) => q.eq("authorId", userId)).take(1000)).length,
+        commentLikes: (await ctx.db.query("commentLikes").withIndex("by_user", (q) => q.eq("userId", userId)).take(1000)).length,
         likes: (await ctx.db.query("likes").withIndex("by_user", (q) => q.eq("userId", userId)).take(1000)).length,
         shares: (await ctx.db.query("shares").withIndex("by_user", (q) => q.eq("userId", userId)).take(1000)).length,
         stories: (await ctx.db.query("stories").withIndex("by_author", (q) => q.eq("authorId", userId)).take(1000)).length,
@@ -1390,6 +1486,30 @@ export const auditDataOrphans = query({
       }
     }
 
+    // ── commentLikes ──────────────────────────────
+    const commentLikeRows = await ctx.db.query("commentLikes").take(1000);
+    const commentLikeOrphans: Array<{
+      id: string;
+      reason: "commentId" | "userId";
+      missingId: string;
+    }> = [];
+    for (const cl of commentLikeRows) {
+      if ((await ctx.db.get(cl.commentId)) === null) {
+        commentLikeOrphans.push({
+          id: cl._id,
+          reason: "commentId",
+          missingId: cl.commentId,
+        });
+      }
+      if ((await ctx.db.get(cl.userId)) === null) {
+        commentLikeOrphans.push({
+          id: cl._id,
+          reason: "userId",
+          missingId: cl.userId,
+        });
+      }
+    }
+
     // ── storyViews ────────────────────────────────
     const views = await ctx.db.query("storyViews").take(1000);
     const storyViewOrphans: Array<{
@@ -1414,6 +1534,7 @@ export const auditDataOrphans = query({
       dmMessageOrphans.length +
       silentFlagOrphans.length +
       moderationLogOrphans.length +
+      commentLikeOrphans.length +
       storyViewOrphans.length;
 
     return {
@@ -1425,6 +1546,7 @@ export const auditDataOrphans = query({
         dmMessages: dms.length,
         silentFlagEvents: flags.length,
         moderationLog: modLog.length,
+        commentLikes: commentLikeRows.length,
         storyViews: views.length,
       },
       notificationOrphans,
@@ -1434,6 +1556,7 @@ export const auditDataOrphans = query({
       dmMessageOrphans,
       silentFlagOrphans,
       moderationLogOrphans,
+      commentLikeOrphans,
       storyViewOrphans,
       totalOrphans,
     };
@@ -1572,6 +1695,23 @@ export const sweepDataOrphans = mutation({
           reason: targetGone
             ? `targetUserId ${m.targetUserId} deleted`
             : `actorId ${m.actorId} deleted`,
+        });
+      }
+    }
+
+    // ── commentLikes ──────────────────────────────
+    const commentLikeRows = await ctx.db.query("commentLikes").take(1000);
+    for (const cl of commentLikeRows) {
+      const commentGone = (await ctx.db.get(cl.commentId)) === null;
+      const userGone = (await ctx.db.get(cl.userId)) === null;
+      if (commentGone || userGone) {
+        await ctx.db.delete(cl._id);
+        swept.push({
+          table: "commentLikes",
+          id: cl._id,
+          reason: commentGone
+            ? `commentId ${cl.commentId} deleted`
+            : `userId ${cl.userId} deleted`,
         });
       }
     }

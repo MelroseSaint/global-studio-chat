@@ -352,9 +352,20 @@ const schema = defineSchema({
     // When the author last edited the comment (unix ms). Shown as a small
     // "edited" note next to the timestamp; absent on new comments.
     editedAt: v.optional(v.number()),
+    // Denormalized like tally for the heart button on a comment, patched on
+    // like/unlike — the same counter discipline as posts.likeCount. A
+    // sandboxed account's absorbed like inserts a row without bumping it.
+    likeCount: v.optional(v.number()),
   })
     .index("by_post", ["postId"])
     .index("by_author", ["authorId"]),
+  commentLikes: defineTable({
+    commentId: v.id("comments"),
+    userId: v.id("users"),
+  })
+    .index("by_comment", ["commentId"])
+    .index("by_user", ["userId"])
+    .index("by_pair", ["userId", "commentId"]),
   shares: defineTable({
     postId: v.id("posts"),
     userId: v.id("users"),

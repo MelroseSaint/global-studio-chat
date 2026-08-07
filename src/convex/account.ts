@@ -2,7 +2,11 @@ import { getAuthSessionId, getAuthUserId } from "@convex-dev/auth/server";
 import { v, ConvexError } from "convex/values";
 
 import { ADMIN_EMAIL, PERMANENT_SESSION_MS, SHORT_SESSION_MS } from "./auth";
-import { cleanupMediaItems, cleanupUserArtwork } from "./mediaCleanup";
+import {
+  cleanupMediaItems,
+  cleanupUserArtwork,
+  sweepCommentLikes,
+} from "./mediaCleanup";
 
 import {
   mutation,
@@ -36,6 +40,7 @@ const SWEEP = 500;
 type ErasableId =
   | Id<"posts">
   | Id<"comments">
+  | Id<"commentLikes">
   | Id<"likes">
   | Id<"shares">
   | Id<"follows">
@@ -201,6 +206,11 @@ export async function eraseAccount(
           .withIndex("by_post", (q) => q.eq("postId", post._id))
           .collect(),
       ]);
+      // The comments' own likes die with them, so the commentLikes table
+      // never keeps rows keyed to a deleted comment.
+      for (const comment of comments) {
+        await sweepCommentLikes(c, comment._id);
+      }
       for (const row of [...comments, ...likes, ...shares]) {
         await c.db.delete(row._id);
       }
@@ -272,7 +282,33 @@ export async function eraseAccount(
         return;
       }
       affectedPosts.add(comment.postId);
+      // The comment's likes die with it.
+      await sweepCommentLikes(c, comment._id);
       await c.db.delete(comment._id);
+    },
+  );
+  // Comment likes this user left on other people's comments. Each row is
+  // removed; afterwards every affected comment's likeCount is recomputed
+  // from its surviving rows (the same recompute discipline as the post
+  // engagement below), so erasing a sandboxed account's absorbed likes can
+  // never decrement a count that was never incremented.
+  const affectedComments = new Set<Id<"comments">>();
+  await sweep(
+    ctx,
+    async (c) => {
+      const rows = await c.db
+        .query("commentLikes")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .take(SWEEP);
+      return rows.map((r) => ({ id: r._id }));
+    },
+    async (c, { id }) => {
+      const like = await c.db.get(id as Id<"commentLikes">);
+      if (like === null) {
+        return;
+      }
+      affectedComments.add(like.commentId);
+      await c.db.delete(like._id);
     },
   );
   await sweep(
@@ -581,6 +617,20 @@ export async function eraseAccount(
       (t) => t.status === "open" || t.status === "in_review",
     ).length;
     await ctx.db.patch(postId, { reportCount });
+  }
+  // …and likeCount on every comment this account liked (same cap and
+  //    reasoning). Recomputed from the surviving commentLikes rows so an
+  //    absorbed like from a sandboxed period can never over-decrement.
+  for (const commentId of [...affectedComments].slice(0, 500)) {
+    const comment = await ctx.db.get(commentId);
+    if (comment === null) {
+      continue;
+    }
+    const likes = await ctx.db
+      .query("commentLikes")
+      .withIndex("by_comment", (q) => q.eq("commentId", commentId))
+      .collect();
+    await ctx.db.patch(commentId, { likeCount: likes.length });
   }
 
   // 9. Profile files, then the account itself. Dual-mode: both the

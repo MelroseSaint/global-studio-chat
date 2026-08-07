@@ -18,6 +18,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
@@ -204,6 +205,8 @@ export function PostDetail() {
     content: string;
     _creationTime: number;
     editedAt?: number;
+    likeCount?: number;
+    likedByMe: boolean;
   }[];
 
   const submit = async () => {
@@ -388,36 +391,42 @@ export function PostDetail() {
                     )}
                   >
                     {c.content}
-                  </p>
-                  {isLong ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExpandedComments((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(c._id)) next.delete(c._id);
-                          else next.add(c._id);
-                          return next;
-                        });
-                      }}
-                      className="mt-0.5 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {isExpanded ? (
-                        <>
-                          <ChevronUp className="size-3.5" />
-                          Show less
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="size-3.5" />
-                          Show more
-                        </>
-                      )}
-                    </button>
-                  ) : null}
+                  </p>                      {isLong ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedComments((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(c._id)) next.delete(c._id);
+                              else next.add(c._id);
+                              return next;
+                            });
+                          }}
+                          className="mt-0.5 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          {isExpanded ? (
+                            <>
+                              <ChevronUp className="size-3.5" />
+                              Show less
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="size-3.5" />
+                              Show more
+                            </>
+                          )}
+                        </button>
+                      ) : null}
+                      <div className="mt-1.5">
+                        <CommentLikeButton
+                          commentId={c._id as Id<"comments">}
+                          likedByMe={c.likedByMe}
+                          likeCount={c.likeCount ?? 0}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
             <CommentMenu
               postId={postIdTyped}
               comment={c}

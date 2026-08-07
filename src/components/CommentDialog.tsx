@@ -18,6 +18,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { CommentLikeButton } from "@/components/CommentLikeButton";
 import type { PostItem } from "@/components/PostCard";
 import { PostMediaGrid, RichText } from "@/components/SharedPostEmbed";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -57,6 +58,8 @@ interface PreviewComment {
   content: string;
   _creationTime: number;
   editedAt?: number;
+  likeCount?: number;
+  likedByMe: boolean;
 }
 
 /**
@@ -194,6 +197,13 @@ function CommentPreview({
                       <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
                         {c.content}
                       </p>
+                      <div className="mt-1">
+                        <CommentLikeButton
+                          commentId={c._id as Id<"comments">}
+                          likedByMe={c.likedByMe}
+                          likeCount={c.likeCount ?? 0}
+                        />
+                      </div>
                     </div>
                     {isMine && (
                       <DropdownMenu>

@@ -58,6 +58,27 @@ export async function cleanupMediaItems(
 }
 
 /**
+ * Delete every commentLikes row pointing at a comment, in chunks. Called
+ * wherever a comment dies — deleteComment, sweepPostEngagement, and the
+ * account erasure — so no orphan likes outlive the comment they key.
+ */
+export async function sweepCommentLikes(
+  ctx: MutationCtx,
+  commentId: Id<"comments">,
+): Promise<void> {
+  for (;;) {
+    const rows = await ctx.db
+      .query("commentLikes")
+      .withIndex("by_comment", (q) => q.eq("commentId", commentId))
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+  }
+}
+
+/**
  * Delete every like, comment, and share row pointing at a post, in chunks.
  * Called when a post is removed — the user-facing deletePost and the
  * admin's moderatePost — so no orphan engagement rows outlive it (they
@@ -89,6 +110,9 @@ export async function sweepPostEngagement(
       .take(500);
     if (rows.length === 0) break;
     for (const row of rows) {
+      // The comment's own likes die with it, so the commentLikes table
+      // never keeps rows keyed to a deleted comment.
+      await sweepCommentLikes(ctx, row._id);
       await ctx.db.delete(row._id);
     }
   }

@@ -22,16 +22,28 @@ export const exportMyData = query({
     const me = await ctx.db.get(userId);
     if (me === null) throw new Error("Account not found");
 
-    const [posts, comments, stories, followsOut, followsIn, blocks, notifs] =
-      await Promise.all([
-        ctx.db
-          .query("posts")
-          .withIndex("by_author", (q) => q.eq("authorId", userId))
-          .collect(),
-        ctx.db
-          .query("comments")
-          .withIndex("by_author", (q) => q.eq("authorId", userId))
-          .collect(),
+    const [
+      posts,
+      comments,
+      commentLikes,
+      stories,
+      followsOut,
+      followsIn,
+      blocks,
+      notifs,
+    ] = await Promise.all([
+      ctx.db
+        .query("posts")
+        .withIndex("by_author", (q) => q.eq("authorId", userId))
+        .collect(),
+      ctx.db
+        .query("comments")
+        .withIndex("by_author", (q) => q.eq("authorId", userId))
+        .collect(),
+      ctx.db
+        .query("commentLikes")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect(),
         ctx.db
           .query("stories")
           .withIndex("by_author", (q) => q.eq("authorId", userId))
@@ -61,6 +73,7 @@ export const exportMyData = query({
       stats: {
         posts: posts.length,
         comments: comments.length,
+        commentLikes: commentLikes.length,
         stories: stories.length,
         following: followsOut.length,
         followers: followsIn.length,

@@ -17,7 +17,11 @@ import {
   isValidLocation,
   locationValidator,
 } from "./location";
-import { cleanupMediaItems, sweepPostEngagement } from "./mediaCleanup";
+import {
+  cleanupMediaItems,
+  sweepCommentLikes,
+  sweepPostEngagement,
+} from "./mediaCleanup";
 import { textMatchesMutes } from "./mutes";
 import { publicLocation, publicUser } from "./privacy";
 import {
@@ -1417,7 +1421,22 @@ export const listComments = query({
     const page = await Promise.all(
       visible.map(async (c) => {
         const author = await ctx.db.get(c.authorId);
-        return { ...c, author: author ? publicUser(author) : null };
+        let likedByMe = false;
+        if (viewerId !== null) {
+          const like = await ctx.db
+            .query("commentLikes")
+            .withIndex("by_pair", (q) =>
+              q.eq("userId", viewerId).eq("commentId", c._id),
+            )
+            .first();
+          likedByMe = like !== null;
+        }
+        return {
+          ...c,
+          author: author ? publicUser(author) : null,
+          likeCount: c.likeCount ?? 0,
+          likedByMe,
+        };
       }),
     );
     return { ...result, page };
@@ -1453,6 +1472,9 @@ export const deleteComment = mutation({
         commentCount: Math.max(0, post.commentCount - 1),
       });
     }
+    // The comment's likes die with it — no orphan rows keyed to a deleted
+    // comment.
+    await sweepCommentLikes(ctx, commentId);
     await ctx.db.delete(commentId);
   },
 });
@@ -1548,6 +1570,89 @@ export const editComment = mutation({
     }
     await ctx.db.patch(commentId, { content: text, editedAt: Date.now() });
     return { ok: true };
+  },
+});
+
+/**
+ * Like a comment. Mirrors likePost: a sandboxed account's like is silently
+ * absorbed (a row exists for their own UI but never reaches the public
+ * count or the author), and the comment's denormalized likeCount is only
+ * bumped for real, visible likes.
+ */
+export const likeComment = mutation({
+  args: { commentId: v.id("comments") },
+  handler: async (ctx, { commentId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    if (await isSandboxed(ctx, userId)) {
+      const comment = await ctx.db.get(commentId);
+      if (comment !== null) {
+        const existing = await ctx.db
+          .query("commentLikes")
+          .withIndex("by_pair", (q) =>
+            q.eq("userId", userId).eq("commentId", commentId),
+          )
+          .first();
+        if (existing === null) {
+          await ctx.db.insert("commentLikes", { commentId, userId });
+        }
+      }
+      return;
+    }
+    await enforceActive(ctx, userId);
+    await enforceRateLimit(ctx, userId, "like");
+    const comment = await ctx.db.get(commentId);
+    if (comment === null) {
+      throw new Error("Comment not found");
+    }
+    const existing = await ctx.db
+      .query("commentLikes")
+      .withIndex("by_pair", (q) =>
+        q.eq("userId", userId).eq("commentId", commentId),
+      )
+      .first();
+    if (existing !== null) {
+      return;
+    }
+    await ctx.db.insert("commentLikes", { commentId, userId });
+    await ctx.db.patch(commentId, {
+      likeCount: (comment.likeCount ?? 0) + 1,
+    });
+  },
+});
+
+/** Remove your like from a comment. Mirrors unlikePost. */
+export const unlikeComment = mutation({
+  args: { commentId: v.id("comments") },
+  handler: async (ctx, { commentId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const comment = await ctx.db.get(commentId);
+    if (comment === null) {
+      return;
+    }
+    const existing = await ctx.db
+      .query("commentLikes")
+      .withIndex("by_pair", (q) =>
+        q.eq("userId", userId).eq("commentId", commentId),
+      )
+      .first();
+    if (existing === null) {
+      return;
+    }
+    await ctx.db.delete(existing._id);
+    // A sandboxed user's like was absorbed — the row existed but never
+    // bumped the count (see likeComment's sandbox path), so removing it
+    // must not decrement either.
+    if (!(await isSandboxed(ctx, userId))) {
+      await ctx.db.patch(commentId, {
+        likeCount: Math.max(0, (comment.likeCount ?? 0) - 1),
+      });
+    }
   },
 });
 
