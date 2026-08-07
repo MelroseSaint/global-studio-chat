@@ -188,7 +188,6 @@ jobs:
     # `secrets` is rejected in `if:` expressions — map to an env var.
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-    if: env.TEST_HARNESS_SECRET != ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -197,6 +196,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run upload→scan→evidence pipeline test
+        if: env.TEST_HARNESS_SECRET != ''
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
         run: npm run qa:ai-scan-integration
@@ -223,7 +223,6 @@ jobs:
     # failing every push — same gate the original single-job design used.
     env:
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-    if: env.ADMIN_PASSWORD != ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -233,6 +232,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Run the admin dashboard responsive QA
+        if: env.ADMIN_PASSWORD != ''
         env:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
@@ -244,7 +244,6 @@ jobs:
     timeout-minutes: 10
     env:
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-    if: env.ADMIN_PASSWORD != ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -254,6 +253,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Run the dense-page inflation QA
+        if: env.ADMIN_PASSWORD != ''
         env:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}

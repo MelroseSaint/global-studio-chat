@@ -40,7 +40,6 @@ jobs:
     # `secrets` is rejected in `if:` expressions — map to an env var.
     env:
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-    if: env.CONVEX_DEPLOY_KEY != ''
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -55,11 +54,13 @@ jobs:
         run: npm ci
 
       - name: Deploy the backend to production
+        if: env.CONVEX_DEPLOY_KEY != ''
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: npx convex deploy
 
       - name: Run all migrations
+        if: env.CONVEX_DEPLOY_KEY != ''
         id: migrate
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}

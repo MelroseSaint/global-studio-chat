@@ -344,7 +344,6 @@ jobs:
     # any if expression) — map it to an env var and gate on that instead.
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-    if: env.TEST_HARNESS_SECRET != ''
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -359,6 +358,7 @@ jobs:
         run: npm ci
 
       - name: Run the phishing QA
+        if: env.TEST_HARNESS_SECRET != ''
         id: phishing
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
@@ -462,7 +462,6 @@ jobs:
     timeout-minutes: 10
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-    if: env.TEST_HARNESS_SECRET != ''
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -477,6 +476,7 @@ jobs:
         run: npm ci
 
       - name: Run the blocklist sync
+        if: env.TEST_HARNESS_SECRET != ''
         id: sync
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
@@ -580,7 +580,6 @@ jobs:
     timeout-minutes: 10
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-    if: env.TEST_HARNESS_SECRET != ''
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -595,6 +594,7 @@ jobs:
         run: npm ci
 
       - name: Run the reinstate moderation QA
+        if: env.TEST_HARNESS_SECRET != ''
         id: reinstate
         env:
           # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
@@ -704,7 +704,6 @@ jobs:
     timeout-minutes: 10
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-    if: env.TEST_HARNESS_SECRET != ''
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -719,6 +718,7 @@ jobs:
         run: npm ci
 
       - name: Run the story-viewer QA
+        if: env.TEST_HARNESS_SECRET != ''
         id: story-views
         env:
           # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
@@ -833,7 +833,6 @@ jobs:
     timeout-minutes: 15
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-    if: env.TEST_HARNESS_SECRET != ''
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -848,6 +847,7 @@ jobs:
         run: npm ci
 
       - name: Run the blocklist engine QA
+        if: env.TEST_HARNESS_SECRET != ''
         id: blocklist-qa
         env:
           # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
