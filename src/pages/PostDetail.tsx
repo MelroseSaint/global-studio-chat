@@ -5,9 +5,11 @@ import {
   Loader2,
   MessageCircle,
   MoreHorizontal,
+  Pencil,
   ScanSearch,
   Send,
   ShieldAlert,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
@@ -24,6 +26,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,12 +45,18 @@ import { phishingTicketArgs } from "@/lib/phishing-report";
 function CommentMenu({
   postId,
   comment,
+  isMine,
+  onEdit,
+  onDelete,
 }: {
   postId: Id<"posts">;
   comment: {
     author: { _id: string } | null;
     content: string;
   };
+  isMine?: boolean;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const createTicket = useMutation(api.support.createTicket);
   const [reporting, setReporting] = useState(false);
@@ -109,6 +118,19 @@ function CommentMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {isMine && (
+          <>
+            <DropdownMenuItem onClick={() => onEdit?.()}>
+              <Pencil className="size-4" />
+              Edit comment
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void onDelete?.()}>
+              <Trash2 className="size-4 text-destructive" />
+              Delete comment
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuItem onClick={() => void reportAi()}>
           <ScanSearch className="size-4 text-oxide" />
           Report AI content
@@ -128,6 +150,8 @@ export function PostDetail() {
   const postIdTyped = postId as Id<"posts">;
   const post = useQuery(api.posts.getPost, { postId: postIdTyped });
   const addComment = useMutation(api.posts.addComment);
+  const editComment = useMutation(api.posts.editComment);
+  const deleteComment = useMutation(api.posts.deleteComment);
   const powChallenge = useQuery(api.pow.getChallenge);
   const { results, status, loadMore } = usePaginatedQuery(
     api.posts.listComments,
@@ -140,6 +164,11 @@ export function PostDetail() {
   // Per-comment expand state for the Show more/less clamp so a single
   // long comment never inflates the list on a tablet.
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
+  // Inline edit state: which comment is being edited, its draft text, and
+  // whether the save is in flight.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     if (inView && status === "CanLoadMore") {
@@ -174,6 +203,7 @@ export function PostDetail() {
     } | null;
     content: string;
     _creationTime: number;
+    editedAt?: number;
   }[];
 
   const submit = async () => {
@@ -200,6 +230,47 @@ export function PostDetail() {
       toast.error(err instanceof Error ? err.message : "Could not comment.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!window.confirm("Delete this comment? This cannot be undone.")) return;
+    try {
+      await deleteComment({ commentId: commentId as Id<"comments"> });
+      if (editingId === commentId) setEditingId(null);
+      toast.success("Comment deleted.");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not delete comment.",
+      );
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editingId || savingEdit) return;
+    const text = editText.trim();
+    if (!text) return;
+    setSavingEdit(true);
+    try {
+      // Proof-of-work before the write — same scheme as commenting.
+      const pow = await solveChallenge(powChallenge);
+      const res = await editComment({
+        commentId: editingId as Id<"comments">,
+        content: text,
+        powChallenge: pow.powChallenge,
+        powNonce: pow.powNonce,
+        powIssuedAt: pow.powIssuedAt,
+      });
+      if (!res.ok) {
+        toast.error(res.error ?? "Could not edit comment.");
+        return;
+      }
+      setEditingId(null);
+      toast.success("Comment updated.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not edit comment.");
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -263,49 +334,100 @@ export function PostDetail() {
       {comments.map((c) => {
         const isExpanded = expandedComments.has(c._id);
         const isLong = (c.content ?? "").length > 200;
+        const isEditing = editingId === c._id;
         return (
           <div key={c._id} className="group flex gap-3 px-4 py-3 sm:px-5">
             <UserAvatar user={c.author} className="size-9" />
-            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-2.5">
-              <p className="text-sm font-semibold">
-                {c.author?.name || c.author?.username || "Unknown"}
-              </p>
-              <p
-                className={cn(
-                  "whitespace-pre-wrap break-words text-sm leading-relaxed",
-                  !isExpanded && "line-clamp-3",
-                )}
-              >
-                {c.content}
-              </p>
-              {isLong ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExpandedComments((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(c._id)) next.delete(c._id);
-                      else next.add(c._id);
-                      return next;
-                    });
-                  }}
-                  className="mt-0.5 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {isExpanded ? (
-                    <>
-                      <ChevronUp className="size-3.5" />
-                      Show less
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown className="size-3.5" />
-                      Show more
-                    </>
-                  )}
-                </button>
-              ) : null}
+            <div className="min-w-0 flex-1">
+              {isEditing ? (
+                <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-3 py-2.5">
+                  <Textarea
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    rows={2}
+                    maxLength={500}
+                    className="min-h-10 resize-none bg-background"
+                  />
+                  <div className="mt-2 flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingId(null)}
+                      disabled={savingEdit}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => void saveEdit()}
+                      disabled={savingEdit || !editText.trim()}
+                    >
+                      {savingEdit ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Pencil className="size-3.5" />
+                      )}
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-2.5">
+                  <p className="flex flex-wrap items-baseline gap-x-1.5 text-sm font-semibold">
+                    {c.author?.name || c.author?.username || "Unknown"}
+                    {c.editedAt ? (
+                      <span className="text-[11px] font-normal text-muted-foreground">
+                        · edited
+                      </span>
+                    ) : null}
+                  </p>
+                  <p
+                    className={cn(
+                      "whitespace-pre-wrap break-words text-sm leading-relaxed",
+                      !isExpanded && "line-clamp-3",
+                    )}
+                  >
+                    {c.content}
+                  </p>
+                  {isLong ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedComments((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(c._id)) next.delete(c._id);
+                          else next.add(c._id);
+                          return next;
+                        });
+                      }}
+                      className="mt-0.5 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {isExpanded ? (
+                        <>
+                          <ChevronUp className="size-3.5" />
+                          Show less
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="size-3.5" />
+                          Show more
+                        </>
+                      )}
+                    </button>
+                  ) : null}
+                </div>
+              )}
             </div>
-            <CommentMenu postId={postIdTyped} comment={c} />
+            <CommentMenu
+              postId={postIdTyped}
+              comment={c}
+              isMine={c.author?._id === user?._id}
+              onEdit={() => {
+                setEditingId(c._id);
+                setEditText(c.content);
+              }}
+              onDelete={() => void handleDeleteComment(c._id)}
+            />
           </div>
         );
       })}

@@ -3,7 +3,15 @@ import {
   usePaginatedQuery,
   useQuery,
 } from "convex/react";
-import { Loader2, Lock, MessageCircle, Send } from "lucide-react";
+import {
+  Loader2,
+  Lock,
+  MessageCircle,
+  MoreHorizontal,
+  Pencil,
+  Send,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -23,10 +31,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { timeAgo } from "@/lib/format";
-import { solveChallenge } from "@/lib/pow";
+import { solveChallenge, type PowChallenge } from "@/lib/pow";
 import { cn } from "@/lib/utils";
 
 const MAX_LENGTH = 500;
@@ -42,22 +56,84 @@ interface PreviewComment {
   } | null;
   content: string;
   _creationTime: number;
+  editedAt?: number;
 }
 
 /**
- * A compact, read-only peek at the most recent comments on the post, so
- * the popup shows the conversation before you reply. Mounted only while
- * the dialog is open — post cards in the feed never query comments.
+ * A compact peek at the most recent comments on the post, so the popup
+ * shows the conversation before you reply. Your own comments carry a
+ * small menu to edit or delete them in place. Mounted only while the
+ * dialog is open — post cards in the feed never query comments.
  */
-function CommentPreview({ postId }: { postId: Id<"posts"> }) {
+function CommentPreview({
+  postId,
+  viewerId,
+  powChallenge,
+  onDeleted,
+}: {
+  postId: Id<"posts">;
+  viewerId?: string;
+  powChallenge?: PowChallenge;
+  onDeleted?: () => void;
+}) {
   const { results, status } = usePaginatedQuery(
     api.posts.listComments,
     { postId },
     { initialNumItems: 3 },
   );
+  const editComment = useMutation(api.posts.editComment);
+  const deleteComment = useMutation(api.posts.deleteComment);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [busy, setBusy] = useState(false);
   const comments = results as unknown as PreviewComment[];
 
   if (status === "LoadingFirstPage" || comments.length === 0) return null;
+
+  const handleDelete = async (c: PreviewComment) => {
+    if (busy) return;
+    if (!window.confirm("Delete this comment? This cannot be undone.")) return;
+    setBusy(true);
+    try {
+      await deleteComment({ commentId: c._id as Id<"comments"> });
+      if (editingId === c._id) setEditingId(null);
+      onDeleted?.();
+      toast.success("Comment deleted.");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not delete comment.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editingId || busy) return;
+    const text = editText.trim();
+    if (!text) return;
+    setBusy(true);
+    try {
+      const pow = await solveChallenge(powChallenge);
+      const res = await editComment({
+        commentId: editingId as Id<"comments">,
+        content: text,
+        powChallenge: pow.powChallenge,
+        powNonce: pow.powNonce,
+        powIssuedAt: pow.powIssuedAt,
+      });
+      if (!res.ok) {
+        toast.error(res.error ?? "Could not edit comment.");
+        return;
+      }
+      setEditingId(null);
+      toast.success("Comment updated.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not edit comment.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div>
@@ -66,24 +142,94 @@ function CommentPreview({ postId }: { postId: Id<"posts"> }) {
         Comments
       </p>
       <div className="mt-2 space-y-2.5">
-        {comments.map((c) => (
-          <div key={c._id} className="flex gap-2">
-            <UserAvatar user={c.author} className="size-7" />
-            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted/60 px-3 py-2">
-              <p className="flex flex-wrap items-baseline gap-x-1.5 text-xs">
-                <span className="font-semibold">
-                  {c.author?.name || c.author?.username || "Unknown"}
-                </span>
-                <span className="text-[11px] text-muted-foreground">
-                  {timeAgo(c._creationTime)}
-                </span>
-              </p>
-              <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
-                {c.content}
-              </p>
+        {comments.map((c) => {
+          const isMine = c.author?._id === viewerId;
+          const isEditing = editingId === c._id;
+          return (
+            <div key={c._id} className="flex gap-2">
+              <UserAvatar user={c.author} className="size-7" />
+              <div className="min-w-0 flex-1">
+                {isEditing ? (
+                  <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-3 py-2">
+                    <Textarea
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                      rows={2}
+                      maxLength={500}
+                      className="min-h-9 resize-none bg-background"
+                    />
+                    <div className="mt-1.5 flex justify-end gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditingId(null)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => void saveEdit()}
+                        disabled={busy || !editText.trim()}
+                      >
+                        {busy ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : null}
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="group flex items-start gap-1 rounded-2xl rounded-tl-sm bg-muted/60 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="flex flex-wrap items-baseline gap-x-1.5 text-xs">
+                        <span className="font-semibold">
+                          {c.author?.name || c.author?.username || "Unknown"}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {timeAgo(c._creationTime)}
+                          {c.editedAt ? " · edited" : ""}
+                        </span>
+                      </p>
+                      <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
+                        {c.content}
+                      </p>
+                    </div>
+                    {isMine && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Comment actions"
+                            className="size-6 shrink-0 rounded-full opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100 max-sm:opacity-100"
+                          >
+                            <MoreHorizontal className="size-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setEditingId(c._id);
+                              setEditText(c.content);
+                            }}
+                          >
+                            <Pencil className="size-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void handleDelete(c)}>
+                            <Trash2 className="size-4 text-destructive" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -100,11 +246,13 @@ export function CommentDialog({
   open,
   onOpenChange,
   onCommented,
+  onCommentDeleted,
 }: {
   post: PostItem;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCommented?: () => void;
+  onCommentDeleted?: () => void;
 }) {
   const { user } = useAuth();
   const addComment = useMutation(api.posts.addComment);
@@ -233,7 +381,14 @@ export function CommentDialog({
           ) : null}
         </div>
 
-        {open && <CommentPreview postId={post._id} />}
+        {open && (
+          <CommentPreview
+            postId={post._id}
+            viewerId={user?._id}
+            powChallenge={powChallenge}
+            onDeleted={onCommentDeleted}
+          />
+        )}
 
         <DialogFooter>
           <Button

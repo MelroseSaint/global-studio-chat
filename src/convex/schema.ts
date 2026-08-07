@@ -349,6 +349,9 @@ const schema = defineSchema({
     postId: v.id("posts"),
     authorId: v.id("users"),
     content: v.string(),
+    // When the author last edited the comment (unix ms). Shown as a small
+    // "edited" note next to the timestamp; absent on new comments.
+    editedAt: v.optional(v.number()),
   })
     .index("by_post", ["postId"])
     .index("by_author", ["authorId"]),

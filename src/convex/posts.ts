@@ -1424,6 +1424,133 @@ export const listComments = query({
   },
 });
 
+/**
+ * Remove a comment. Only its author (or an admin) may delete it; the
+ * post's denormalized commentCount is kept honest so the badge on the
+ * card and the thread page agree.
+ */
+export const deleteComment = mutation({
+  args: { commentId: v.id("comments") },
+  handler: async (ctx, { commentId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const comment = await ctx.db.get(commentId);
+    if (comment === null) {
+      return;
+    }
+    const user = await ctx.db.get(userId);
+    if (comment.authorId !== userId && user?.role !== "admin") {
+      throw new Error("You can only delete your own comments.");
+    }
+    const post = await ctx.db.get(comment.postId);
+    // A sandboxed author's comment was inserted without ever incrementing
+    // the post's commentCount (see addComment's sandbox path), so deleting
+    // it must not decrement either — otherwise the count would drift.
+    if (post !== null && !(await isSandboxed(ctx, comment.authorId))) {
+      await ctx.db.patch(post._id, {
+        commentCount: Math.max(0, post.commentCount - 1),
+      });
+    }
+    await ctx.db.delete(commentId);
+  },
+});
+
+/**
+ * Edit a comment. Only its author may edit it. The replacement text gets
+ * the exact same AI/phishing/racism scans as addComment — a clean comment
+ * can never be swapped for a blocked one after the fact — and the row is
+ * stamped with editedAt so viewers see a small "edited" note.
+ */
+export const editComment = mutation({
+  args: {
+    commentId: v.id("comments"),
+    content: v.string(),
+    // Client-side proof-of-work, same scheme as addComment.
+    powChallenge: v.optional(v.string()),
+    powNonce: v.optional(v.string()),
+    powIssuedAt: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    { commentId, content, powChallenge, powNonce, powIssuedAt },
+  ) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    await requireProof(powChallenge, powNonce, powIssuedAt);
+    const text = content.trim();
+    if (text.length === 0 || text.length > 500) {
+      throw new Error("Comment must be between 1 and 500 characters.");
+    }
+    const comment = await ctx.db.get(commentId);
+    if (comment === null) {
+      throw new Error("Comment not found");
+    }
+    if (comment.authorId !== userId) {
+      throw new Error("You can only edit your own comments.");
+    }
+    // A sandboxed account's comment is invisible to everyone else, so its
+    // edits are stored silently without scans or escalation.
+    if (await isSandboxed(ctx, userId)) {
+      await ctx.db.patch(commentId, { content: text, editedAt: Date.now() });
+      return { ok: true };
+    }
+    await enforceActive(ctx, userId);
+    // ── Re-scan the replacement text, mirroring addComment ─────────────
+    const textScan = scanText(text);
+    if (textScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      await escalateForAiSpam(ctx, userId);
+      return {
+        ok: false,
+        error:
+          "AI-generated content isn't allowed on PureWire. Say it in your own words.",
+      };
+    }
+    if (textScan.status === "review") {
+      await escalateSilently(ctx, userId, 1, "ai", "ai-review-comment");
+    }
+    const phishScan = await scanBlockedContent(ctx, text);
+    if (phishScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "phish-block-comment");
+      return {
+        ok: false,
+        error:
+          phishScan.message ??
+          "That looks like a phishing or scam link — links that could compromise someone's account aren't allowed.",
+      };
+    }
+    if (phishScan.status === "review") {
+      await escalateSilently(ctx, userId, 2, "scam", "phish-review-comment");
+      return {
+        ok: false,
+        error:
+          "This link can't be posted as-is — share the direct link instead.",
+      };
+    }
+    const racismScan = scanForRacism(text);
+    if (racismScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 5, "harassment", "racism-block-comment");
+      return {
+        ok: false,
+        error: `That can't be posted — ${racismScan.reason}.`,
+      };
+    }
+    if (racismScan.status === "review") {
+      await escalateSilently(ctx, userId, 2, "harassment", "racism-review-comment");
+      return {
+        ok: false,
+        error: `That may not be allowed — ${racismScan.reason}. Rephrase or report the content you're responding to.`,
+      };
+    }
+    await ctx.db.patch(commentId, { content: text, editedAt: Date.now() });
+    return { ok: true };
+  },
+});
+
 export const sharePost = mutation({
   args: { postId: v.id("posts") },
   handler: async (ctx, { postId }) => {

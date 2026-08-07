@@ -134,12 +134,23 @@ export function PostCard({
 
   const [liked, setLiked] = useState(post.likedByMe);
   const [likeCount, setLikeCount] = useState(post.likeCount);
-  // Local offset on top of the reactive query count, so a comment posted
-  // through the popup bumps the badge immediately without going stale when
-  // the query refreshes (e.g. the PostDetail page's inline composer).
-  const [localComments, setLocalComments] = useState(0);
+  const [commentCount, setCommentCount] = useState(post.commentCount);
   const [shareCount, setShareCount] = useState(post.shareCount);
   const [commentOpen, setCommentOpen] = useState(false);
+
+  // Remember the last (post, server-count) pair we adopted so we can tell
+  // when the query catches up — or the card moves to a different post. On
+  // either, adopt the server value: it already includes anything this
+  // card's popup posted/deleted optimistically, so the badge never
+  // double-counts and never carries a stale optimistic bump into the next
+  // post. Derived-state-during-render, the React-endorsed way to sync
+  // state from a changing prop.
+  const serverKey = `${post._id}:${post.commentCount}`;
+  const [lastServerKey, setLastServerKey] = useState(serverKey);
+  if (serverKey !== lastServerKey) {
+    setLastServerKey(serverKey);
+    setCommentCount(post.commentCount);
+  }
   const [reportOpen, setReportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [reportingPhish, setReportingPhish] = useState(false);
@@ -463,7 +474,7 @@ export function PostCard({
             className="flex items-center gap-1.5 rounded-full px-2 py-1 text-sm transition-colors hover:bg-primary/10 hover:text-primary"
           >
             <MessageCircle className="size-[18px]" />
-            <span>{formatCount(post.commentCount + localComments)}</span>
+            <span>{formatCount(commentCount)}</span>
           </button>
 
           <Link
@@ -505,7 +516,8 @@ export function PostCard({
         post={post}
         open={commentOpen}
         onOpenChange={setCommentOpen}
-        onCommented={() => setLocalComments((c) => c + 1)}
+        onCommented={() => setCommentCount((c) => c + 1)}
+        onCommentDeleted={() => setCommentCount((c) => Math.max(0, c - 1))}
       />
 
       <ReportDialog
