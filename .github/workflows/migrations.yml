@@ -1,0 +1,146 @@
+name: Run Convex migrations
+
+# Deploys the Convex backend to production and runs every registered
+# migration (see convex/migrationsRunner.ts) in order. Runs on every push
+# to `main` — so schema backfills ship the moment code ships — plus once a
+# night to catch anything a push missed, and manually from the Actions tab.
+#
+# The migration runner is the only place the workflow cares about:
+# `runAllMigrations` walks the registered steps in code, so adding a new
+# migration never requires editing this file.
+#
+# Requires the CONVEX_DEPLOY_KEY secret (a project deploy key from the
+# Convex dashboard: Settings → Access tokens → Deploy). The job is skipped
+# on repositories that haven't configured it yet.
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # 04:00 UTC — an hour after the production health check (03:00) so the
+    # deployment is known-good before migrations touch the data.
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  # Never overlap runs: migrations are idempotent but two simultaneous
+  # deploys would race each other.
+  group: convex-migrations
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # open a deduplicated alert issue when a migration fails
+
+jobs:
+  migrate:
+    name: Deploy + run migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ secrets.CONVEX_DEPLOY_KEY != '' }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy the backend to production
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex deploy
+
+      - name: Run all migrations
+        id: migrate
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          set -o pipefail
+          npx convex run internal.migrationsRunner.runAllMigrations 2>&1 | tee migrations.log
+
+      - name: Upload the migration log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrations-log
+          path: migrations.log
+
+      # Alerting: same deduplicated pattern as the other production jobs —
+      # a single persistent issue (label prod-migrations) so a failed
+      # migration is visible and never silently lost.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-migrations";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Convex migration failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The nightly Convex migration run failed against production.",
+                "",
+                "This means a schema backfill (or the deploy that precedes it) failed —",
+                "the data may be in a partially migrated state until it is fixed.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the migrations-log artifact for which step failed. Migrations",
+                "are idempotent, so fixing the cause and re-running (or running the",
+                "failed step alone via runAllMigrations' `only` arg) converges cleanly.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-migrations";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open migration alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed migration alert issue #${issue.number}.`);
+            }

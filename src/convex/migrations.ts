@@ -8,6 +8,11 @@ import {
 
 import { internalMutation } from "./_generated/server";
 
+// NOTE FOR NEW MIGRATIONS: after defining a migration here, register it in
+// the `steps` list of migrationsRunner.ts — the nightly CI job runs that
+// runner, so an unregistered migration would never execute automatically.
+// Each migration must stay idempotent (it runs on every push and nightly).
+
 /**
  * One-pass email-hash re-salt migration.
  *
