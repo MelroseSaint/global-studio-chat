@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { formatCount } from "@/lib/format";
+import { formatLikeLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /**
@@ -51,10 +51,7 @@ export function CommentLikeButton({
   // Plain-language label: the count reads as "N likes" (singular "1 like"),
   // and a comment with no likes yet reads simply "Like" — friendlier than a
   // bare number. The aria-label keeps the verb form for screen readers.
-  const label =
-    count === 0
-      ? "Like"
-      : `${formatCount(count)} ${count === 1 ? "like" : "likes"}`;
+  const label = count === 0 ? "Like" : formatLikeLabel(count);
 
   return (
     <button

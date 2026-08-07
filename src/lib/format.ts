@@ -23,6 +23,15 @@ export function formatCount(n: number): string {
   return `${n}`;
 }
 
+/**
+ * Plain-language like label for a count: "1 like", "2 likes", "1.2K likes".
+ * The fact form ("0 likes" included) — for static displays; interactive
+ * like buttons use their own action-word variant for the zero case.
+ */
+export function formatLikeLabel(count: number): string {
+  return `${formatCount(count)} ${count === 1 ? "like" : "likes"}`;
+}
+
 /** Validate a username: 3-24 chars, lowercase alphanumeric + underscore. */
 export function isValidUsername(username: string): boolean {
   return /^[a-z0-9_]{3,24}$/.test(username);

@@ -293,6 +293,15 @@ async function main() {
       JSON.stringify(previewCounts.map((c) => c.liked)) === JSON.stringify([true, true, false]),
       JSON.stringify(previewCounts),
     );
+
+    // The popup's post preview must show the post's own like count too
+    // (previously omitted). The throwaway post has no post-likes, so its
+    // label is "0 likes" — a string that can only come from the post
+    // preview, since the comment like buttons never render "0 likes".
+    check(
+      "browser: popup post preview shows the post's like count (0 likes)",
+      (await dialog.getByText("0 likes").count()) >= 1,
+    );
   } finally {
     // ── 5. Cleanup: the throwaway post dies with its comments and likes ────
     if (client !== null && postId !== null) {

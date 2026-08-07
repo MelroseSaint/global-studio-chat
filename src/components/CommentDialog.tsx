@@ -4,6 +4,7 @@ import {
   useQuery,
 } from "convex/react";
 import {
+  Heart,
   Loader2,
   Lock,
   MessageCircle,
@@ -40,7 +41,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
-import { timeAgo } from "@/lib/format";
+import { formatLikeLabel, timeAgo } from "@/lib/format";
 import { solveChallenge, type PowChallenge } from "@/lib/pow";
 import { cn } from "@/lib/utils";
 
@@ -383,6 +384,18 @@ export function CommentDialog({
               </span>
             </span>
           </div>
+          {/* The post's own like count, shown in plain language like the
+              comment hearts — this surface previously omitted it. Static
+              (non-interactive): the post card behind is where you like it. */}
+          <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+            <Heart
+              className={cn(
+                "size-3.5",
+                post.likedByMe && "fill-current text-primary",
+              )}
+            />
+            {formatLikeLabel(post.likeCount)}
+          </p>
           {post.content ? (
             <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed">
               <RichText text={post.content} />
