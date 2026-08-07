@@ -12,7 +12,14 @@ on:
   schedule:
     # Nightly at 03:00 UTC — well outside usual deploy windows.
     - cron: "0 3 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      # A deep audit on demand: sample EVERY post and profile in the live
+      # sitemap instead of the default 8-per-class (up to 1000 + 1000).
+      full_sweep:
+        description: "Full sitemap sweep (all posts + profiles)"
+        type: boolean
+        default: false
 
 concurrency:
   # Never overlap runs: if the previous one is still going (slow email
@@ -110,7 +117,12 @@ jobs:
       # silently submit dead URLs. A failure here fails the job and opens
       # the alert issue below.
       - name: Sitemap URL health (sampled posts + profiles)
-        run: npm run qa:sitemap-urls
+        run: |
+          if [ "${{ github.event.inputs.full_sweep }}" = "true" ]; then
+            npm run qa:sitemap-urls:all
+          else
+            npm run qa:sitemap-urls
+          fi
 
       # Dynamic rendering guard: a Googlebot fetch of the newest /post/:id
       # and /u/:handle must return the server-rendered OG page (Article /

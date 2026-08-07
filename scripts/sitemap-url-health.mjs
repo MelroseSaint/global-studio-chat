@@ -16,7 +16,10 @@
  *     content.
  *
  * Zero dependencies (Node ≥18 built-in fetch). Override the target with
- * SITEMAP_SITE_URL. Exit 0 = all sampled URLs healthy, 1 = a failure.
+ * SITEMAP_SITE_URL and the per-class sample size with SITEMAP_SAMPLE
+ * (default 8). Pass --all for a FULL sweep of every post and profile in
+ * the sitemap — the deep-audit mode used by `npm run qa:sitemap-urls:all`
+ * and the healthcheck's manual dispatch. Exit 0 = healthy, 1 = a failure.
  */
 const SITE = (
   process.env.SITEMAP_SITE_URL ?? "https://purewire.vercel.app"
@@ -28,7 +31,12 @@ const CRAWLER_UA =
   "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
 
 const SPA_MARKER = '<div id="root">';
-const MAX_PER_CLASS = 8; // newest-first sample from the sitemap
+const FULL_SWEEP = process.argv.includes("--all");
+const rawSample = Number(process.env.SITEMAP_SAMPLE ?? 8);
+// Newest-first per-class sample size (posts, profiles); SITEMAP_SAMPLE=0
+// is ignored, so a garbage value falls back to the default 8.
+const SAMPLE_PER_CLASS =
+  Number.isFinite(rawSample) && rawSample >= 1 ? Math.floor(rawSample) : 8;
 const siteHost = new URL(SITE).hostname;
 
 // The canonical tag as a normalized absolute URL, or null when missing/
@@ -53,7 +61,10 @@ const check = (name, ok, extra = "") => {
 };
 
 const main = async () => {
-  console.log(`\nSitemap URL health — ${SITE}\n`);
+  const mode = FULL_SWEEP
+    ? "FULL SWEEP (all posts + profiles)"
+    : `sample ${SAMPLE_PER_CLASS}/class`;
+  console.log(`\nSitemap URL health — ${SITE} — ${mode}\n`);
 
   const sitemapRes = await fetch(`${SITE}/sitemap.xml`, {
     headers: { "user-agent": CRAWLER_UA },
@@ -70,9 +81,9 @@ const main = async () => {
   const fixed = locs.filter((u) => !/\/post\/|\/u\//.test(u));
   const posts = locs.filter((u) => u.includes("/post/"));
   const profiles = locs.filter((u) => u.includes("/u/"));
-  const sample = [
-    ...new Set([...fixed, ...posts.slice(0, MAX_PER_CLASS), ...profiles.slice(0, MAX_PER_CLASS)]),
-  ];
+  const postSample = FULL_SWEEP ? posts : posts.slice(0, SAMPLE_PER_CLASS);
+  const profileSample = FULL_SWEEP ? profiles : profiles.slice(0, SAMPLE_PER_CLASS);
+  const sample = [...new Set([...fixed, ...postSample, ...profileSample])];
   if (posts.length + profiles.length === 0) {
     console.log("No posts/profiles in the sitemap — nothing dynamic to verify.");
   }
