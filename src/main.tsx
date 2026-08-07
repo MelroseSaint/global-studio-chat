@@ -1,4 +1,4 @@
-import { StrictMode, Suspense, lazy } from "react";
+import { StrictMode, Suspense, lazy, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
@@ -12,6 +12,7 @@ import { RequireAuth } from "@/components/RequireAuth";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/index.css";
+import { PUBLIC_ROUTES } from "@/lib/routes";
 
 // Entry and error pages stay eager for an instant first paint. Every other
 // route is code-split: the shell downloads once and the page body streams in
@@ -53,6 +54,16 @@ const Support = lazy(() =>
 );
 const Terms = lazy(() => import("@/pages/Terms").then((m) => ({ default: m.Terms })));
 
+// One element per shared public route (PUBLIC_ROUTES). Adding a route to
+// the manifest registers it here AND in the SEO sitemap automatically.
+const PUBLIC_ELEMENTS: Record<(typeof PUBLIC_ROUTES)[number], ReactNode> = {
+  "/": <Landing />,
+  "/auth": <Auth />,
+  "/privacy": <Privacy />,
+  "/terms": <Terms />,
+  "/status": <Status />,
+};
+
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
 // PWA: register the offline-capable service worker in production only (in
@@ -76,11 +87,9 @@ createRoot(document.getElementById("root")!).render(
           <BrowserRouter>
           <Suspense fallback={<PageLoader />}>
             <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route path="/auth" element={<Auth />} />
-              <Route path="/privacy" element={<Privacy />} />
-              <Route path="/terms" element={<Terms />} />
-              <Route path="/status" element={<Status />} />
+              {PUBLIC_ROUTES.map((path) => (
+                <Route key={path} path={path} element={PUBLIC_ELEMENTS[path]} />
+              ))}
               <Route
                 element={
                   <RequireAuth>

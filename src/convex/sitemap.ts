@@ -4,9 +4,11 @@
  *
  * Served at /sitemap.xml by the Vercel middleware (middleware.ts proxies
  * the path here for every user-agent, like the OG pages do for crawlers).
- * The URL set is: the six fixed public pages, plus the newest public posts
- * (/post/:id) and public profiles (/u/:handle) — the exact URLs whose
- * server-rendered OG pages carry index,follow + a real-host canonical.
+ * The URL set is: the fixed public pages (PUBLIC_ROUTES in src/lib/routes.ts,
+ * shared with the router — add a public page there and it appears here
+ * automatically), plus the newest public posts (/post/:id) and public
+ * profiles (/u/:handle) — the exact URLs whose server-rendered OG pages
+ * carry index,follow + a real-host canonical.
  *
  * Visibility mirrors the app for an anonymous crawler: posts pending AI
  * review and shadowbanned profiles are excluded (their pages 404 via
@@ -18,10 +20,8 @@
 import { httpAction } from "./_generated/server";
 
 import { internal } from "./_generated/api";
+import { PUBLIC_ROUTES } from "@/lib/routes";
 import { SITE_URL } from "./og";
-
-/** The six fixed public routes. */
-const FIXED_PATHS = ["/", "/auth", "/support", "/status", "/terms", "/privacy"];
 
 function urlTag(loc: string, lastmod?: number): string {
   const lastmodTag =
@@ -40,7 +40,7 @@ export const sitemapXml = httpAction(async (ctx) => {
   const body = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-    ...FIXED_PATHS.map((p) => urlTag(`${SITE_URL}${p}`)),
+    ...PUBLIC_ROUTES.map((p) => urlTag(`${SITE_URL}${p}`)),
     ...posts.map((p) => urlTag(`${SITE_URL}/post/${p.id}`, p.lastmod)),
     ...users.map((u) =>
       urlTag(`${SITE_URL}/u/${encodeURIComponent(u.username)}`, u.lastmod),
