@@ -61,7 +61,7 @@ export function Explore() {
             <Empty
               icon={Search}
               title="No matches"
-              description={`Nothing found for “${debounced}”. Try a different name.`}
+              description={`Nothing found for “${debounced}”. Try a different name or @username.`}
             />
           ) : (
             results.map((u, i) => (

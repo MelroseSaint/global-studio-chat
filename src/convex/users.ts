@@ -737,6 +737,19 @@ export const listFollowing = query({
 });
 
 /**
+ * Shared visibility gate for every user-discovery surface (suggestedUsers,
+ * searchUsers, the follow lists): nothing pending approval, restricted,
+ * banned, or quietly shadowbanned ever appears. A moderated account can't
+ * be reached through ANY search/suggestion path — exact handle or fuzzy.
+ */
+const isPubliclyVisible = (u: {
+  shadowban?: boolean | null | undefined;
+  accountStatus?: string | undefined;
+}) =>
+  u.shadowban !== true &&
+  (u.accountStatus === undefined || u.accountStatus === "active");
+
+/**
  * The same shadowban gate getProfile uses: a quietly shadowbanned profile's
  * lists are only visible to the account itself and admins, so the list
  * queries can't be used to enumerate a hidden user's circle directly.
@@ -767,23 +780,19 @@ export const suggestedUsers = query({
       .withIndex("by_follower", (q) => q.eq("followerId", viewerId))
       .take(200);
     const followingIds = new Set(following.map((f) => f.followingId));
-    const all = await ctx.db.query("users").take(200);
-    // Suspicious (awaiting approval), restricted, banned, and quietly
-    // shadowbanned accounts never appear as suggestions — they're off the
-    // public surface until cleared.
-    const visible = (u: {
-      accountStatus?: string | undefined;
-      shadowban?: boolean | null | undefined;
-    }) =>
-      u.shadowban !== true &&
-      (u.accountStatus === undefined || u.accountStatus === "active");
+    // Newest slice of the table (same convention as searchUsers and
+    // listPublicUsersForSitemap) so a freshly registered account is always
+    // eligible to be suggested — the plain take() would only ever draw from
+    // the oldest accounts. The popularity sort below still decides the five
+    // that actually surface.
+    const all = await ctx.db.query("users").order("desc").take(500);
     const candidates = all
       .filter(
         (u) =>
           u._id !== viewerId &&
           !followingIds.has(u._id) &&
           (u.username ?? "").length > 0 &&
-          visible(u),
+          isPubliclyVisible(u),
       )
       .sort((a, b) => (b.followersCount ?? 0) - (a.followersCount ?? 0))
       .slice(0, 5);
@@ -806,21 +815,57 @@ export const suggestedUsers = query({
 export const searchUsers = query({
   args: { query: v.string() },
   handler: async (ctx, { query }) => {
-    const q = query.toLowerCase().trim();
+    // Strip a leading @ so "@handle" searches behave exactly like "handle"
+    // (re-trimmed after the strip so "@ name" still works), and lowercase
+    // to match stored usernames (always lowercase by construction at
+    // registration/updateProfile).
+    const q = query.trim().replace(/^@+/, "").trim().toLowerCase();
     if (q.length === 0) {
       return [];
     }
-    const all = await ctx.db.query("users").take(500);
-    // Suspicious/restricted/banned/shadowbanned accounts are invisible in search.
+
+    // EXACT username lookup first: the by_username index resolves in one
+    // hop, so ANY registered user is findable by their proper @handle —
+    // even an account outside the bounded scan window below. Without this,
+    // a user past the scan cap is unreachable no matter how precisely their
+    // handle is typed. The visibility gate applies here too, so a
+    // moderated account can't be surfaced through the exact path.
+    const exact = await ctx.db
+      .query("users")
+      .withIndex("by_username", (x) => x.eq("username", q))
+      .first();
+
+    // Fuzzy scan: the NEWEST slice of the table (same newest-first
+    // convention as listPublicUsersForSitemap), matched by display name or a
+    // username fragment — recent registrants are always inside the window.
+    const all = await ctx.db.query("users").order("desc").take(1000);
+    const exactId = exact !== null ? exact._id : undefined;
     const matches = all.filter(
       (u) =>
-        u.shadowban !== true &&
-        (u.accountStatus === undefined || u.accountStatus === "active") &&
+        u._id !== exactId &&
+        isPubliclyVisible(u) &&
         ((u.username ?? "").includes(q) ||
           (u.name ?? "").toLowerCase().includes(q)),
     );
+    // Relevance order: a username prefix beats a name prefix, which beats a
+    // bare substring; ties fall back to popularity. The exact handle hit is
+    // pinned first no matter what.
+    const score = (u: Doc<"users">) =>
+      (u.username ?? "").startsWith(q)
+        ? 0
+        : (u.name ?? "").toLowerCase().startsWith(q)
+          ? 1
+          : 2;
+    const ranked = matches.sort(
+      (a, b) => score(a) - score(b) || (b.followersCount ?? 0) - (a.followersCount ?? 0),
+    );
+    // head pins the exact handle hit first, so the slice below always keeps
+    // it; the remaining slots fill by relevance. No pre-slice: when there is
+    // no exact hit, all ten slots go to fuzzy matches.
+    const head =
+      exact !== null && isPubliclyVisible(exact) ? [exact, ...ranked] : ranked;
     return await Promise.all(
-      matches.slice(0, 10).map(async (u) => {
+      head.slice(0, 10).map(async (u) => {
         const [avatarUrl, bannerUrl] = await Promise.all([
           // Dual-mode: an external Cloudinary URL wins; otherwise resolve the
           // Convex storage id (legacy/fallback path).
