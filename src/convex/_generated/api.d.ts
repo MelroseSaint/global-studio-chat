@@ -27,6 +27,7 @@ import type * as media from "../media.js";
 import type * as mediaCleanup from "../mediaCleanup.js";
 import type * as mediaStorage from "../mediaStorage.js";
 import type * as migrations from "../migrations.js";
+import type * as migrationsRunner from "../migrationsRunner.js";
 import type * as mutes from "../mutes.js";
 import type * as notifications from "../notifications.js";
 import type * as og from "../og.js";
@@ -72,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   mediaCleanup: typeof mediaCleanup;
   mediaStorage: typeof mediaStorage;
   migrations: typeof migrations;
+  migrationsRunner: typeof migrationsRunner;
   mutes: typeof mutes;
   notifications: typeof notifications;
   og: typeof og;

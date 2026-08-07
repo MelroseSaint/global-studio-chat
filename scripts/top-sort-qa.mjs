@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Top-comments sort QA against the live production site.
+ * Top-comments sort + like-count visibility QA against the live production
+ * site.
  *
  * Signs in as the admin through the real Auth form, then — using the same
  * mutations the UI calls — creates a throwaway post with four comments and
@@ -11,8 +12,10 @@
  *      unliked ones, newest-first within equal like counts; "newest" stays
  *      strictly reverse-chronological; the two sorts differ.
  *   2. Browser: the post page defaults to Top order (liked comments rise),
- *      the Newest toggle flips to reverse-chronological, and the comment
- *      popup's preview shows the best replies first.
+ *      the Newest toggle flips to reverse-chronological, the comment popup's
+ *      preview shows the best replies first — and the per-comment like
+ *      counts are visibly rendered (not just sorted by) with the right
+ *      numbers in both surfaces.
  *
  * The throwaway post (and its comments/likes) is deleted at the end, so the
  * site is left exactly as found. Run (password never in this file — see
@@ -71,7 +74,7 @@ async function main() {
     console.log(passwordHint());
     process.exit(2);
   }
-  console.log(`\nTop-comments sort QA (${SITE_URL})\n`);
+  console.log(`\nTop-comments sort + like-count visibility QA (${SITE_URL})\n`);
   const browser = await launchBrowser({ headed: HEADED });
   let client = null;
   let postId = null;
@@ -193,11 +196,62 @@ async function main() {
           .map((t) => t.split(" ")[0]),
       );
 
+    // The like count must be VISIBLY rendered next to each heart, not just
+    // used to sort: read the comment like buttons in DOM order and capture
+    // whether they're liked and the number shown. Buttons are matched by
+    // their exact aria-label so the post card's "Comment on this post" and
+    // the "Comment actions" menus never leak in.
+    const readCounts = async (scope) =>
+      scope.evaluate((root) =>
+        [...root.querySelectorAll("button")]
+          .filter((b) => {
+            const a = b.getAttribute("aria-label") ?? "";
+            return a === "Like this comment" || a === "Unlike this comment";
+          })
+          .map((b) => {
+            const span = b.querySelector("span");
+            const cs = span ? getComputedStyle(span) : null;
+            return {
+              liked: (b.getAttribute("aria-label") ?? "").startsWith("Unlike"),
+              count: (b.textContent ?? "").trim(),
+              // The number must be styled to be clearly visible, not a
+              // whisper: semibold (600) at 13px.
+              weight: cs ? cs.fontWeight : "",
+              size: cs ? cs.fontSize : "",
+            };
+          }),
+      );
+
     const defaultOrder = await readOrder(page.locator("body"));
     check(
       "browser: thread defaults to Top (liked first)",
       JSON.stringify(defaultOrder) === JSON.stringify(["four", "two", "three", "one"]),
       JSON.stringify(defaultOrder),
+    );
+
+    // The per-comment like counts must be visible on the thread: top order
+    // shows 1, 1, 0, 0 and the first two hearts are filled (liked).
+    const threadCounts = await readCounts(page.locator("body"));
+    check(
+      "browser: thread shows like counts visibly (1,1,0,0 in top order)",
+      JSON.stringify(threadCounts.map((c) => c.count)) === JSON.stringify(["1", "1", "0", "0"]),
+      JSON.stringify(threadCounts),
+    );
+    check(
+      "browser: liked comments render a filled heart in the thread",
+      JSON.stringify(threadCounts.map((c) => c.liked)) === JSON.stringify([true, true, false, false]),
+      JSON.stringify(threadCounts),
+    );
+    // The count must be *styled* to be clearly visible — at least semibold
+    // and 13px — not a whisper. Thresholds (not exact Tailwind values) keep
+    // the check honest but resilient to later sizing tweaks.
+    check(
+      "browser: counts styled prominently (≥semibold, ≥13px)",
+      threadCounts.length === 4 &&
+        threadCounts.every(
+          (c) => parseInt(c.weight, 10) >= 600 && parseFloat(c.size) >= 13,
+        ),
+      JSON.stringify(threadCounts.map((c) => ({ weight: c.weight, size: c.size }))),
     );
 
     await page.getByRole("button", { name: "Newest" }).click();
@@ -221,6 +275,20 @@ async function main() {
       "browser: popup preview shows the best replies first (top 3)",
       JSON.stringify(preview) === JSON.stringify(["four", "two", "three"]),
       JSON.stringify(preview),
+    );
+
+    // The popup preview must show the counts too: top 3 comments render
+    // 1, 1, 0 with the liked hearts filled.
+    const previewCounts = await readCounts(dialog);
+    check(
+      "browser: popup preview shows like counts visibly (1,1,0)",
+      JSON.stringify(previewCounts.map((c) => c.count)) === JSON.stringify(["1", "1", "0"]),
+      JSON.stringify(previewCounts),
+    );
+    check(
+      "browser: popup preview renders liked hearts filled",
+      JSON.stringify(previewCounts.map((c) => c.liked)) === JSON.stringify([true, true, false]),
+      JSON.stringify(previewCounts),
     );
   } finally {
     // ── 5. Cleanup: the throwaway post dies with its comments and likes ────

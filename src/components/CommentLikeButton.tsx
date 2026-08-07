@@ -53,14 +53,15 @@ export function CommentLikeButton({
       type="button"
       onClick={() => void toggle()}
       aria-label={liked ? "Unlike this comment" : "Like this comment"}
+      title={liked ? "Unlike this comment" : "Like this comment"}
       className={cn(
-        "flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs transition-colors hover:bg-primary/10 hover:text-primary",
+        "flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] transition-colors hover:bg-primary/10 hover:text-primary",
         liked && "text-primary",
         className,
       )}
     >
-      <Heart className={cn("size-3.5", liked && "fill-current")} />
-      <span className="tabular-nums">{formatCount(count)}</span>
+      <Heart className={cn("size-4", liked && "fill-current")} />
+      <span className="font-semibold tabular-nums">{formatCount(count)}</span>
     </button>
   );
 }
