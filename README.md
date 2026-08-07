@@ -48,6 +48,13 @@ say it.
 - Share 24-hour stories with a built-in viewer
 - Follow people and build your own circle — search followers and following
 - Like, comment, share, and @mention (multiple tags supported)
+- Comment from an in-place **popup** — no page redirect — with a preview of
+  the thread's best replies, **Top** (ranked by likes) and **Newest**
+  sorts, comment likes shown as plain language ("3 likes" / "Like"),
+  threaded replies, and edit/delete for your own comments
+- Search **every registered member** by their exact **@handle** — or by
+  name or partial handle — from Messages and Discover, even accounts that
+  registered after the first few hundred
 - Pick your feed: **Global | Following | Latest | Local | Photos & videos**
 - Send **direct messages** — end-to-end encrypted, readable only on the
   devices of the people in the conversation
@@ -58,7 +65,25 @@ say it.
 - Report AI content, phishing, racism, and other violations with one tap
 - **Verified badges** for authentic, notable accounts
 - Install PureWire as a **PWA** — works offline, on any device, adapts from
-  phones to tablets to desktops
+  phones to tablets to desktops, and ships store-style install screenshots
+  in its manifest
+
+## Comments & threads
+
+Commenting is a first-class conversation surface, not a redirect:
+
+- **Comment popup** — opens over the post (from any post card) with a
+  preview of the thread's best replies, the post's own like and comment
+  counts, and a composer. A small **View comments** link next to the
+  comment count still takes you to the full post page for the whole thread.
+- **Top sort** — ranks comments by like count (highest first) with a
+  deterministic tiebreak, so the preview and the thread surface the best
+  replies. A **Newest** sort is one tap away. The like tally is
+  denormalized per comment (same counter discipline as posts) and kept
+  consistent by an automated backfill migration.
+- **Engage** — like/unlike any comment, reply to comments (replies hang
+  one level deep under the top-level comment), and edit or delete your own
+  comments, with reply counts kept in sync.
 
 ## Content moderation pipeline
 
@@ -172,6 +197,50 @@ place:
   email hash, timestamp, admin) — auditable, never resurrectable.
 - **Reinstate** — restore moderated accounts with a required reason; the
   member gets a system notification.
+- **Backend-verified IP binding** — admin power is bound to the IP the
+  Convex edge *actually observed* on the request (cf-connecting-ip /
+  x-forwarded-for), verified through the `/admin/ip/verify` HTTP action
+  after a fresh admin sign-in. The admin can never claim an IP — the
+  backend records what it saw, stores only a salted one-way hash, and
+  silently revokes the binding (and admin power) when it goes stale or a
+  session shows up from a different network.
+
+## SEO & indexability
+
+The site is built to be crawlable and to win social cards — no JavaScript
+required for the important pages:
+
+- **Server-rendered OG pages** — `/og/post/:id` and `/og/profile/:handle`
+  (Convex HTTP actions) render the real post/profile as static HTML with
+  Article / ProfilePage JSON-LD, a real-host canonical, and `index,follow`.
+  Vercel middleware serves them to crawlers and social unfurlers for
+  `/post/:id` and `/u/:handle`; browsers get the SPA, whose per-route
+  metadata module (`src/lib/seo.ts`) applies the matching tags at runtime.
+  Dynamic rendering is CI-verified — a Googlebot fetch must never return
+  the SPA shell.
+- **Dynamic sitemap** — `/sitemap.xml` is generated from Convex: the six
+  fixed public pages (from `src/lib/routes.ts`, a routes manifest shared
+  with the router — add a public page there and it appears automatically)
+  plus the newest public posts and profiles, excluding content that 404s
+  for an anonymous crawler (posts in AI review, shadowbanned profiles).
+  CDN-cached and refreshed on a schedule.
+- **robots.txt + manifest** — a real `robots.txt` (wired through Vercel so
+  the SPA fallback never swallows it), a trimmed ≤160-char meta
+  description, `og:locale` + `twitter:image:alt`, a 180 px apple-touch
+  icon, and store-style install screenshots in the web manifest.
+- **Canonical host is repo-owned** — `vite.config.ts` substitutes
+  `%PUREWIRE_SITE_URL%` from the `PUREWIRE_SITE_URL` Vercel env var,
+  defaulting to `https://purewire.vercel.app`, so the canonical/OG tags can
+  never regress to a preview or mirror hostname. A CI env guard fails if a
+  stale `VITE_SITE_URL` ever reappears, and a build-log guard fails if the
+  shipped deploy's log carries the "ignored" warning.
+- **SEO audit suite** — nightly lints and quality scoring across the live
+  sitemap (claude-seo's gbp-deprecation, structural HTML, and content
+  quality), with a committed flag baseline so a *new* issue fails CI;
+  sitemap URLs are sampled (configurable, `--all` for a full sweep) and
+  each must return HTTP 200 with real content, a same-host canonical, and
+  no redirect drift. An opt-in IPTC `DigitalSourceType` label check
+  (`REQUIRE_IPTC_LABEL=1`) covers Google Merchant Center compliance.
 
 ## Architecture
 
@@ -183,7 +252,7 @@ place:
 | AI content detection | In-house byte-level scanner + C2PA verification | AI-generator metadata, provenance, deepfake markers, TTS/voice-clone watermarks |
 | Email | Resend | Verification and password-reset codes |
 | Bot check | Cloudflare Turnstile | Human-only email triggers |
-| Delivery | Vercel (primary) | `purewire.vercel.app` |
+| Delivery | Vercel (primary) + Convex static-hosting mirror | `purewire.vercel.app` / `outgoing-seal-727.convex.site` |
 
 ## Privacy & security
 
@@ -216,6 +285,14 @@ place:
   [`is-antibot`](https://github.com/microlinkhq/is-antibot) (MIT) on every
   fetched URL; a destination answering with a Cloudflare/DataDome/…
   challenge is recorded as `challenged` and never carded
+- **Backend-verified admin IP binding** — admin sessions are bound to the
+  IP the backend observed (salted hash only, never the raw address), so a
+  stolen admin session used from a different network is revoked; see the
+  Admin dashboard section
+- **Search visibility is exact** — every registered member is findable by
+  their exact @handle via an indexed lookup (the same visibility gate as
+  everywhere else keeps shadowbanned/restricted/banned accounts out), and
+  the newest accounts are always inside the partial-search window
 
 ### User control & transparency
 
@@ -243,8 +320,13 @@ annotated reference.
 | Variable | Purpose |
 | --- | --- |
 | `VITE_CONVEX_URL` | Convex backend URL |
-| `VITE_SITE_URL` | Canonical site URL for share metadata |
 | `VITE_TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key |
+
+**Vercel (project env, build-time):**
+
+| Variable | Purpose |
+| --- | --- |
+| `PUREWIRE_SITE_URL` | Canonical host for SEO tags (defaults to `https://purewire.vercel.app`; set explicitly so the dashboard self-documents it). `VITE_SITE_URL` is deprecated and **ignored** — a CI guard fails if it is ever re-added |
 
 **Backend (Convex, runtime — `npx convex env set NAME value`):**
 
@@ -276,16 +358,39 @@ All scripts runnable locally against the live site:
 | `npm run qa:blocklist-sync` | External source synchronization |
 | `npm run qa:shadowban` | Silent-moderation escalation paths |
 | `npm run qa:reinstate` | Admin reinstatement with audit trail |
+| `npm run qa:suspend-story` | Story suspension + admin evidence (harness-gated) |
 | `npm run qa:story-views` | Story viewer lists: newest-first ordering, re-view dedupe, non-author privacy (harness-gated) |
+| `npm run qa:top-sort` | Top comments sort: like-rank determinism + backfill migration (harness-gated) |
+| `npm run qa:follows` | Follow/unfollow e2e across profiles |
 | `npm run qa:salt` | Salt-rotation migration idempotency |
 | `npm run qa:video-privacy` | GPS-atom stripping on uploaded video |
+| `npm run qa:automation` | Browser-automation signal scoring |
+| `npm run qa:evidence-no-resemble` | AI evidence panel never ships Resemble watermark text |
 | `npm run qa:admin-auth` | Admin password sign-in round-trip |
+| `npm run qa:admin-ip` | Backend-verified admin IP binding (harness-gated) |
+| `npm run qa:admin-auth-browser` | Admin sign-in driven in a real browser (JWT + refresh token) |
 | `npm run qa:admin-responsive` | Admin dashboard at 320/390/768 px widths |
 | `npm run qa:pages-inflation` | Page inflation at 800px with root-font-size scaling |
 | `npm run qa:cloudinary-health` | Unsigned-preset upload probe |
 | `npm run qa:session-audit` | Session-lifetime guarantees |
+| `npm run qa:extend-sessions` | Session extension tooling |
 | `npm run qa:count-drift` | Data-integrity DQS audit (harness-gated) |
-| `npm run qa:cleanup-test-users` | Sweep leftover QA accounts (harness-gated) |
+| `npm run qa:live-engage` | Live engagement e2e (likes/comments/replies) |
+| `npm run qa:prod-pipeline` | Full production pipeline verification |
+| `npm run qa:signup-e2e` | Sign-up flow e2e against production |
+| `npm run qa:cleanup-test-users` / `qa:cleanup-test-domains` | Sweep leftover QA accounts / blocklist test domains (harness-gated) |
+
+### SEO & canonical-host QA
+
+| Command | What it verifies |
+| --- | --- |
+| `npm run qa:sitemap-urls` (add `:all` for a full sweep) | Live sitemap URLs return HTTP 200 with real content (not the SPA shell), a same-host canonical, and no redirect drift; sample size via `SITEMAP_SAMPLE` |
+| `npm run qa:seo-audit` | SEO audit of the newest post + profile (claude-seo linters) |
+| `npm run qa:seo-sweep` (add `:all`) | Sitemap-wide SEO sweep with a committed flag baseline — new issues fail CI |
+| `seo-sweep:baseline` | Re-record the committed sweep baseline |
+| `npm run qa:dynamic-render` | Googlebot fetch of `/u/:handle` + `/post/:id` returns server-rendered HTML, never the SPA shell |
+| `npm run qa:vercel-env` | `PUREWIRE_SITE_URL` still set; stale `VITE_SITE_URL` fails CI |
+| `npm run qa:vercel-build-warnings` | The shipped deploy's build log contains no canonical-host warnings |
 
 ### Browser-session QA (JWT + refresh token)
 
@@ -334,9 +439,43 @@ reload so the auth provider reads storage on mount.
 
 ## CI/CD
 
-- **Static Audit** — typecheck, lint, build, secrets scan, and 10+ parallel
-  QA jobs on every push to `main`
-- **Vercel** — auto-deploys frontend on every push to `main`
+Six workflows on GitHub Actions, all gated on `main`:
+
+- **Static Audit** (`static-audit.yml`, on push) — typecheck, lint, build,
+  secrets scan, static SEO file guard (robots/sitemap drift), sitemap URL
+  health, and 15+ parallel QA jobs (racism, phishing, blocklist, AI scan,
+  automation, shadowban, reinstate, salt, admin-responsive, count-drift,
+  session-audit, cleanup).
+- **Deploy to Vercel** (`deploy.yml`, on push) — `vercel --prod` for the
+  frontend; shares a concurrency group with the drift redeploy so deploys
+  never race.
+- **Production Health Check** (`production-healthcheck.yml`, on push +
+  nightly 03:00 UTC) — live-site e2e probes (auth loop, phishing, blocklist
+  sync, moderation reinstate, admin IP binding, story views, cloudinary
+  upload) plus the Vercel env guard and the build-log warning guard; any
+  failure opens a deduplicated alert issue.
+- **SEO Audit** (`seo-audit.yml`, nightly 04:00 UTC) — runs the claude-seo
+  audit and the sitemap-wide sweep against the live site; score regressions
+  open an alert issue.
+- **Run Convex migrations** (`migrations.yml`, on push + nightly 04:00
+  UTC) — deploys the Convex backend and auto-runs schema migrations, so
+  backfills like the comment like-count never need a manual step.
+- **Redeploy on drift** (`redeploy-drift.yml`, nightly 03:47 UTC) —
+  compares the commit live on Vercel production against `main` HEAD and
+  redeploys only when they drift, so the canonical/env state never silently
+  lags the repo. Fails safe: a check error never triggers a deploy.
+
+## Engineering tooling
+
+- **Bridged skills** — reusable, self-contained instructions live in
+  `.agents/skills/` (seo, seo-optimizer, senior-security, senior-architect,
+  code-reviewer, code-tour, adversarial-reviewer, chaos-engineering,
+  compliance-os, data-quality-auditor, dependency-auditor,
+  feature-flags-architect, focused-fix, gdpr-audit-prep, grill-me,
+  migration-architect, resemble-detect, security-guidance, ship-gate,
+  skill-security-auditor, soc2-audit-prep, zero-hallucination-coder) —
+  loadable by name in any session, and the SEO skill's scripts are wired
+  into the nightly audit.
 
 ---
 
