@@ -185,7 +185,10 @@ jobs:
     name: AI scan integration QA (harness)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: ${{ secrets.TEST_HARNESS_SECRET != '' }}
+    # `secrets` is rejected in `if:` expressions — map to an env var.
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    if: env.TEST_HARNESS_SECRET != ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -218,7 +221,9 @@ jobs:
     # The browser QAs sign in on production with the admin password. When
     # the secret isn't configured the job SKIPS cleanly (green) instead of
     # failing every push — same gate the original single-job design used.
-    if: ${{ secrets.ADMIN_PASSWORD != '' }}
+    env:
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    if: env.ADMIN_PASSWORD != ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -237,7 +242,9 @@ jobs:
     name: Page inflation QA
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: ${{ secrets.ADMIN_PASSWORD != '' }}
+    env:
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    if: env.ADMIN_PASSWORD != ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

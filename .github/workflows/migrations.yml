@@ -37,7 +37,10 @@ jobs:
     name: Deploy + run migrations
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: ${{ secrets.CONVEX_DEPLOY_KEY != '' }}
+    # `secrets` is rejected in `if:` expressions — map to an env var.
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    if: env.CONVEX_DEPLOY_KEY != ''
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
