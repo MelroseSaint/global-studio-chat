@@ -14,8 +14,8 @@
  *   2. Browser: the post page defaults to Top order (liked comments rise),
  *      the Newest toggle flips to reverse-chronological, the comment popup's
  *      preview shows the best replies first — and the per-comment like
- *      counts are visibly rendered (not just sorted by) with the right
- *      numbers in both surfaces.
+ *      labels are visibly rendered (not just sorted by) with the right
+ *      plain-language wording in both surfaces ("1 like"/"N likes"/"Like").
  *
  * The throwaway post (and its comments/likes) is deleted at the end, so the
  * site is left exactly as found. Run (password never in this file — see
@@ -229,12 +229,14 @@ async function main() {
       JSON.stringify(defaultOrder),
     );
 
-    // The per-comment like counts must be visible on the thread: top order
-    // shows 1, 1, 0, 0 and the first two hearts are filled (liked).
+    // The per-comment like labels must be visible on the thread: top order
+    // shows "1 like", "1 like", "Like", "Like" and the first two hearts
+    // are filled (liked).
     const threadCounts = await readCounts(page.locator("body"));
     check(
-      "browser: thread shows like counts visibly (1,1,0,0 in top order)",
-      JSON.stringify(threadCounts.map((c) => c.count)) === JSON.stringify(["1", "1", "0", "0"]),
+      "browser: thread shows plain-language like labels (1 like, 1 like, Like, Like)",
+      JSON.stringify(threadCounts.map((c) => c.count)) ===
+        JSON.stringify(["1 like", "1 like", "Like", "Like"]),
       JSON.stringify(threadCounts),
     );
     check(
@@ -277,12 +279,13 @@ async function main() {
       JSON.stringify(preview),
     );
 
-    // The popup preview must show the counts too: top 3 comments render
-    // 1, 1, 0 with the liked hearts filled.
+    // The popup preview must show the labels too: top 3 comments render
+    // "1 like", "1 like", "Like" with the liked hearts filled.
     const previewCounts = await readCounts(dialog);
     check(
-      "browser: popup preview shows like counts visibly (1,1,0)",
-      JSON.stringify(previewCounts.map((c) => c.count)) === JSON.stringify(["1", "1", "0"]),
+      "browser: popup preview shows plain-language like labels (1 like, 1 like, Like)",
+      JSON.stringify(previewCounts.map((c) => c.count)) ===
+        JSON.stringify(["1 like", "1 like", "Like"]),
       JSON.stringify(previewCounts),
     );
     check(

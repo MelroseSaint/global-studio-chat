@@ -48,6 +48,14 @@ export function CommentLikeButton({
     }
   };
 
+  // Plain-language label: the count reads as "N likes" (singular "1 like"),
+  // and a comment with no likes yet reads simply "Like" — friendlier than a
+  // bare number. The aria-label keeps the verb form for screen readers.
+  const label =
+    count === 0
+      ? "Like"
+      : `${formatCount(count)} ${count === 1 ? "like" : "likes"}`;
+
   return (
     <button
       type="button"
@@ -61,7 +69,7 @@ export function CommentLikeButton({
       )}
     >
       <Heart className={cn("size-4", liked && "fill-current")} />
-      <span className="font-semibold tabular-nums">{formatCount(count)}</span>
+      <span className="font-semibold tabular-nums">{label}</span>
     </button>
   );
 }
