@@ -40,11 +40,35 @@ import { api, internal } from "./_generated/api";
 import {
   action,
   internalMutation,
+  internalQuery,
   mutation,
   query,
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
+
+/**
+ * Sitemap feed — the newest public posts an anonymous crawler can
+ * actually render (mirrors getPost with a null viewer: only posts pending
+ * AI review are invisible, everything else is public). Internal only: the
+ * /sitemap.xml httpAction is the sole caller, so clients never get a bulk
+ * listing API.
+ */
+export const listPublicPostsForSitemap = internalQuery({
+  handler: async (ctx) => {
+    // Newest 1000 — generous for crawl coverage, bounded so the sitemap
+    // endpoint never scans the whole table per cache miss.
+    const posts = await ctx.db.query("posts").order("desc").take(1000);
+    const out: { id: Id<"posts">; lastmod: number }[] = [];
+    for (const post of posts) {
+      // Pending AI review → getPost returns null anonymously → the OG
+      // page 404s, so the URL must not be submitted.
+      if (post.aiStatus === "review") continue;
+      out.push({ id: post._id, lastmod: post._creationTime });
+    }
+    return out;
+  },
+});
 
 /**
  * Simple FNV-1a fingerprint used to verify content originality.

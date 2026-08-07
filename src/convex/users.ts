@@ -29,6 +29,7 @@ import {
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
+  internalQuery,
   mutation,
   query,
   type QueryCtx,
@@ -62,6 +63,28 @@ export const getCurrentUser = query({
       // plain-text address.
       isOwner: user.email === ADMIN_EMAIL,
     };
+  },
+});
+
+/**
+ * Sitemap feed — the newest profiles an anonymous crawler can render
+ * (mirrors getProfile with a null viewer: shadowbanned accounts 404, and a
+ * username is required for a public /u/:handle URL). Internal only.
+ */
+export const listPublicUsersForSitemap = internalQuery({
+  handler: async (ctx) => {
+    // Newest 1000 — generous for crawl coverage, bounded so the sitemap
+    // endpoint never scans the whole table per cache miss.
+    const users = await ctx.db.query("users").order("desc").take(1000);
+    const out: { username: string; lastmod: number }[] = [];
+    for (const user of users) {
+      // getProfile returns null anonymously for shadowbanned accounts, so
+      // their profile URL 404s and must not be submitted.
+      if (user.shadowban === true) continue;
+      if (!user.username) continue;
+      out.push({ username: user.username, lastmod: user._creationTime });
+    }
+    return out;
   },
 });
 

@@ -33,8 +33,11 @@ import { api } from "./_generated/api";
  * PUREWIRE_SITE_URL when a custom domain lands. The old VITE_SITE_URL name
  * is deliberately NOT read: a stale value there is exactly what shipped the
  * Convex static-hosting host in share tags.
+ *
+ * Exported so the dynamic sitemap (sitemap.ts) shares the single source
+ * of truth instead of re-declaring it.
  */
-const SITE_URL = (process.env.PUREWIRE_SITE_URL ?? "https://purewire.vercel.app").replace(
+export const SITE_URL = (process.env.PUREWIRE_SITE_URL ?? "https://purewire.vercel.app").replace(
   /\/$/,
   "",
 );

@@ -3,6 +3,7 @@ import { registerStaticRoutes } from "@convex-dev/static-hosting";
 
 import { auth } from "@/convex/auth";
 import { postOg, profileOg } from "./og";
+import { sitemapXml } from "./sitemap";
 import { components } from "./_generated/api";
 
 const http = httpRouter();
@@ -29,6 +30,16 @@ http.route({
   pathPrefix: "/og/profile/",
   method: "GET",
   handler: profileOg,
+});
+
+// Dynamic sitemap: replaces the static public/sitemap.xml so user content
+// (posts + profiles) is indexable. The Vercel middleware proxies
+// /sitemap.xml here for every user-agent. Registered before the static
+// routes so the SPA catch-all can never shadow it.
+http.route({
+  path: "/sitemap.xml",
+  method: "GET",
+  handler: sitemapXml,
 });
 
 // Serve the PureWire frontend (dist) from https://outgoing-seal-727.convex.site.

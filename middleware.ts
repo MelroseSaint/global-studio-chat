@@ -34,6 +34,31 @@ export default async function middleware(
   request: Request,
 ): Promise<Response | undefined> {
   const { pathname, origin } = new URL(request.url);
+
+  // Dynamic sitemap — served to EVERY user-agent (robots.txt points search
+  // engines here; browsers hitting it should get XML too). Proxied from the
+  // Convex backend, which lists the newest public posts + profiles. Falls
+  // through to the SPA on a backend error rather than failing the request.
+  if (pathname === "/sitemap.xml" && request.method === "GET") {
+    try {
+      const res = await fetch(`${CONVEX_SITE}/sitemap.xml`, {
+        headers: { "user-agent": request.headers.get("user-agent") ?? "" },
+      });
+      if (res.ok) {
+        const xml = await res.text();
+        return new Response(xml, {
+          status: 200,
+          headers: {
+            "content-type": "application/xml; charset=utf-8",
+            "cache-control": "public, s-maxage=3600, max-age=300",
+          },
+        });
+      }
+    } catch {
+      // fall through
+    }
+  }
+
   const postMatch = pathname.match(/^\/post\/([^/]+)\/?$/);
   const profileMatch = pathname.match(/^\/u\/([^/]+)\/?$/);
   if ((!postMatch && !profileMatch) || request.method !== "GET") {
@@ -83,5 +108,5 @@ export default async function middleware(
 }
 
 export const config = {
-  matcher: ["/post/:path*", "/u/:path*"],
+  matcher: ["/post/:path*", "/u/:path*", "/sitemap.xml"],
 };
