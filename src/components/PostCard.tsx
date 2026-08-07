@@ -23,6 +23,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { CommentDialog } from "@/components/CommentDialog";
 import { LinkCard } from "@/components/LinkCard";
 import { ReportDialog } from "@/components/ReportDialog";
 import { ShareDialog } from "@/components/ShareDialog";
@@ -133,7 +134,12 @@ export function PostCard({
 
   const [liked, setLiked] = useState(post.likedByMe);
   const [likeCount, setLikeCount] = useState(post.likeCount);
+  // Local offset on top of the reactive query count, so a comment posted
+  // through the popup bumps the badge immediately without going stale when
+  // the query refreshes (e.g. the PostDetail page's inline composer).
+  const [localComments, setLocalComments] = useState(0);
   const [shareCount, setShareCount] = useState(post.shareCount);
+  const [commentOpen, setCommentOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [reportingPhish, setReportingPhish] = useState(false);
@@ -452,11 +458,12 @@ export function PostCard({
           </button>
 
           <button
-            onClick={() => navigate(`/post/${post._id}`)}
+            onClick={() => setCommentOpen(true)}
+            aria-label="Comment on this post"
             className="flex items-center gap-1.5 rounded-full px-2 py-1 text-sm transition-colors hover:bg-primary/10 hover:text-primary"
           >
             <MessageCircle className="size-[18px]" />
-            <span>{formatCount(post.commentCount)}</span>
+            <span>{formatCount(post.commentCount + localComments)}</span>
           </button>
 
           <button
@@ -468,13 +475,13 @@ export function PostCard({
           </button>
 
           {showComments && (
-            <Link
-              to={`/post/${post._id}`}
+            <button
+              onClick={() => setCommentOpen(true)}
               className="flex items-center gap-1.5 rounded-full px-2 py-1 text-sm transition-colors hover:bg-primary/10 hover:text-primary"
             >
               <Pencil className="size-[18px]" />
               <span>Reply</span>
-            </Link>
+            </button>
           )}
 
           <button
@@ -486,6 +493,13 @@ export function PostCard({
           </button>
         </div>
       </div>
+
+      <CommentDialog
+        post={post}
+        open={commentOpen}
+        onOpenChange={setCommentOpen}
+        onCommented={() => setLocalComments((c) => c + 1)}
+      />
 
       <ReportDialog
         open={reportOpen}
