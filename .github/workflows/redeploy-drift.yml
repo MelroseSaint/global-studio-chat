@@ -1,0 +1,70 @@
+name: Redeploy on drift
+
+# Nightly safety net for the canonical/env state: if the commit LIVE on
+# Vercel production (the newest READY production deployment's
+# githubCommitSha) has drifted from main's HEAD — a manual dashboard
+# redeploy of an older commit, a push deploy that silently failed, or a
+# deploy that never happened — redeploy from the repo so the live site can
+# never silently lag the repo. When they match, this is a no-op.
+#
+# The drift check runs scripts/vercel-drift-check.mjs, which prints
+# `drifted=true|false`; the deploy step below is skipped unless drifted.
+# The check exits 0 in both states and only fails on an API/check error,
+# so an outage never triggers an accidental redeploy.
+on:
+  schedule:
+    # 03:47 UTC — after the nightly healthcheck (03:00) has validated the
+    # previous deploy, and safely outside usual push hours. GitHub runs
+    # cron on the default branch; GITHUB_SHA is main's HEAD.
+    - cron: "47 3 * * *"
+  workflow_dispatch: {}
+
+# Same concurrency group as the Deploy workflow so a drift redeploy and a
+# push-triggered deploy never race the same Vercel project — one waits
+# for the other (cancel-in-progress: false).
+concurrency:
+  group: deploy-vercel
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  redeploy-if-drifted:
+    name: Redeploy production if drifted from main
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Compares the live production commit against GITHUB_SHA (main HEAD)
+      # and writes drifted=true|false to $GITHUB_OUTPUT. The checkout is
+      # main HEAD, so a triggered redeploy always ships the repo state.
+      - name: Compare live commit vs main HEAD
+        id: drift
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_S3b0Y2fnJhOo8sdP39P0zfGP
+          VERCEL_PROJECT_ID: prj_Y8sMe7X0RLGsMWa0tcMi8auuNpXa
+        run: node scripts/vercel-drift-check.mjs
+
+      # Identical command to the Deploy workflow's production step, so a
+      # drift redeploy behaves exactly like a normal push deploy (same
+      # verified-email validation, same --scope target).
+      - name: Deploy to production (only when drifted)
+        if: steps.drift.outputs.drifted == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_S3b0Y2fnJhOo8sdP39P0zfGP
+          VERCEL_PROJECT_ID: prj_Y8sMe7X0RLGsMWa0tcMi8auuNpXa
+        run: npx --yes vercel@latest --prod --yes --scope team_S3b0Y2fnJhOo8sdP39P0zfGP
+
+      - name: Note the redeploy
+        if: steps.drift.outputs.drifted == 'true'
+        run: echo "Production redeployed to main HEAD — the live commit now matches the repo."
