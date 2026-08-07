@@ -1,6 +1,6 @@
 import { useMutation } from "convex/react";
 import {
-  AudioLines,
+  AtSign,
   BadgeCheck,
   Flag,
   Heart,
@@ -10,6 +10,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   Pencil,
+  Repeat2,
   ScanSearch,
   Share2,
   ShieldAlert,
@@ -23,8 +24,13 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { LinkCard } from "@/components/LinkCard";
-import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
 import { ReportDialog } from "@/components/ReportDialog";
+import { ShareDialog } from "@/components/ShareDialog";
+import {
+  PostMediaGrid,
+  RichText,
+  SharedPostEmbed,
+} from "@/components/SharedPostEmbed";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { Button } from "@/components/ui/button";
@@ -41,7 +47,7 @@ import { extractFirstUrl, formatCount, postUrl, timeAgo } from "@/lib/format";
 import { phishingTicketArgs } from "@/lib/phishing-report";
 import { cn } from "@/lib/utils";
 
-interface PostMedia {
+export interface PostMedia {
   storageId: Id<"_storage">;
   kind: "image" | "video" | "audio";
   url: string | null;
@@ -73,6 +79,21 @@ export interface PostItem {
   likeCount: number;
   commentCount: number;
   shareCount: number;
+  // When set, this post is a SHARE: `sharedFrom` is the original post
+  // (with its media) embedded beneath the caption. Null means the original
+  // was deleted, or is hidden from this viewer (blocked/banned/silenced).
+  sharedFromId?: Id<"posts"> | null;
+  sharedFrom?: PostItem | null;
+  // Users explicitly tagged in the content (resolved from @mentions at
+  // creation), so the card can show a "with @alice" line beneath it.
+  taggedUsers?:
+    | {
+        _id: Id<"users">;
+        username: string | null;
+        name: string | null;
+        avatarUrl: string | null;
+      }[]
+    | null;
   commentsLocked?: boolean | null;
   originalityVerified?: boolean | null;
   likedByMe: boolean;
@@ -95,104 +116,6 @@ export interface PostItem {
   creatorDisclosure?: string | null;
 }
 
-/** Render @mentions and URLs inside post text. */
-function RichText({ text }: { text: string }) {
-  const parts = text.split(/(@[a-z0-9_]{3,24}|\bhttps?:\/\/[^\s]+)/gi);
-  return (
-    <>
-      {parts.map((part, i) => {
-        if (/^@[a-z0-9_]{3,24}$/i.test(part)) {
-          return (
-            <Link
-              key={i}
-              to={`/u/${part.slice(1).toLowerCase()}`}
-              className="font-medium text-primary hover:underline"
-            >
-              {part}
-            </Link>
-          );
-        }
-        if (/^https?:\/\//i.test(part)) {
-          return (
-            <a
-              key={i}
-              href={part}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              {part}
-            </a>
-          );
-        }
-        return <span key={i}>{part}</span>;
-      })}
-    </>
-  );
-}
-
-function PostMediaGrid({
-  media,
-}: {
-  media: PostMedia[];
-}) {
-  if (media.length === 0) return null;
-  // Any attached photo/video had GPS/device metadata removed before
-  // upload — a tiny chip on the media tells viewers it was scrubbed.
-  const anyStripped = media.some((m) => m.stripped === true);
-
-  const strippedChip = anyStripped ? <MetadataStrippedChip /> : null;
-
-  if (media.length === 1) {
-    const m = media[0];
-    return (
-      <div className="relative mt-3 overflow-hidden rounded-xl border bg-muted/40">
-        {m.kind === "image" && m.url && (
-          <img
-            src={m.url}
-            alt=""
-            className="max-h-[480px] w-full object-cover"
-            loading="lazy"
-          />
-        )}
-        {m.kind === "video" && m.url && (
-          <video src={m.url} controls className="max-h-[480px] w-full" />
-        )}
-        {m.kind === "audio" && m.url && (
-          <div className="flex items-center gap-2 p-4">
-            <AudioLines className="size-5 shrink-0 text-primary" />
-            <audio src={m.url} controls className="w-full" />
-          </div>
-        )}
-        {strippedChip}
-      </div>
-    );
-  }
-  return (
-    <div className="relative mt-3">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {media.map((m, i) => (
-          <div
-            key={i}
-            className="aspect-square overflow-hidden rounded-xl border bg-muted/40"
-          >
-            {m.kind === "image" && m.url ? (
-              <img src={m.url} alt="" className="size-full object-cover" loading="lazy" />
-            ) : m.kind === "video" && m.url ? (
-              <video src={m.url} controls className="size-full object-cover" />
-            ) : (
-              <div className="flex size-full items-center justify-center">
-                <AudioLines className="size-6 text-primary" />
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-      {strippedChip}
-    </div>
-  );
-}
-
 export function PostCard({
   post,
   showComments = false,
@@ -204,7 +127,6 @@ export function PostCard({
   const navigate = useNavigate();
   const likePost = useMutation(api.posts.likePost);
   const unlikePost = useMutation(api.posts.unlikePost);
-  const sharePost = useMutation(api.posts.sharePost);
   const deletePost = useMutation(api.posts.deletePost);
   const setCommentsLocked = useMutation(api.posts.setCommentsLocked);
   const createTicket = useMutation(api.support.createTicket);
@@ -213,6 +135,7 @@ export function PostCard({
   const [likeCount, setLikeCount] = useState(post.likeCount);
   const [shareCount, setShareCount] = useState(post.shareCount);
   const [reportOpen, setReportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [reportingPhish, setReportingPhish] = useState(false);
   const [reportingAi, setReportingAi] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -238,29 +161,11 @@ export function PostCard({
     }
   };
 
-  const handleShare = async () => {
-    const url = postUrl(post._id);
+  // Copy the direct link to the post — the lightweight alternative to a
+  // full share (no new post is created, so the share count is untouched).
+  const copyLink = async () => {
     try {
-      await sharePost({ postId: post._id });
-      setShareCount((c) => c + 1);
-    } catch {
-      // silent — share tracking is best-effort
-    }
-    const shareData = {
-      title: `${post.author?.name ?? post.author?.username ?? "PureWire"} on PureWire`,
-      text: post.content.slice(0, 120),
-      url,
-    };
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-        return;
-      } catch {
-        // fall through to clipboard
-      }
-    }
-    try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(postUrl(post._id));
       toast.success("Link copied to clipboard.");
     } catch {
       toast.error("Could not copy link.");
@@ -490,6 +395,48 @@ export function PostCard({
           </p>
         ) : null}
 
+        {post.taggedUsers && post.taggedUsers.length > 0 ? (
+          <p className="mt-2 flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+            <AtSign className="size-3.5 shrink-0" />
+            <span>
+              with{" "}
+              {post.taggedUsers.map((t, i) => (
+                <span key={t._id}>
+                  {i > 0 ? ", " : null}
+                  {t.username ? (
+                    <Link
+                      to={`/u/${t.username}`}
+                      className="font-medium text-primary hover:underline"
+                    >
+                      @{t.username}
+                    </Link>
+                  ) : (
+                    <span className="font-medium text-primary">
+                      @{t.name ?? "unknown"}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </span>
+          </p>
+        ) : null}
+
+        {post.sharedFromId ? (
+          <div className="mt-3">
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Repeat2 className="size-3.5 shrink-0" />
+              <span>
+                {post.sharedFrom
+                  ? `Shared ${post.sharedFrom.author?.name ?? (post.sharedFrom.author?.username ? `@${post.sharedFrom.author.username}` : "a post")}'s post`
+                  : "Shared a post that is no longer available"}
+              </span>
+            </p>
+            {post.sharedFrom ? (
+              <SharedPostEmbed post={post.sharedFrom} />
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="mt-3 flex max-w-sm items-center justify-between text-muted-foreground">
           <button
             onClick={() => void toggleLike()}
@@ -513,7 +460,7 @@ export function PostCard({
           </button>
 
           <button
-            onClick={() => void handleShare()}
+            onClick={() => setShareOpen(true)}
             className="flex items-center gap-1.5 rounded-full px-2 py-1 text-sm transition-colors hover:bg-primary/10 hover:text-primary"
           >
             <Share2 className="size-[18px]" />
@@ -531,7 +478,7 @@ export function PostCard({
           )}
 
           <button
-            onClick={() => void handleShare()}
+            onClick={() => void copyLink()}
             className="hidden rounded-full px-2 py-1 text-sm transition-colors hover:bg-primary/10 hover:text-primary sm:flex"
             aria-label="Copy link"
           >
@@ -546,6 +493,13 @@ export function PostCard({
         postId={post._id}
         offenderId={post.authorId}
         offenderUsername={post.author?.username ?? null}
+      />
+
+      <ShareDialog
+        post={post}
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        onShared={() => setShareCount((c) => c + 1)}
       />
     </article>
   );

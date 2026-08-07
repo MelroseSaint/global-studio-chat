@@ -182,31 +182,50 @@ async function isDuplicate(
   return null;
 }
 
-/** Resolve @username mentions in content to user ids and notify them. */
-async function notifyMentions(
+/**
+ * Resolve @username mentions in content to the tagged users' ids (existing
+ * accounts, excluding the author). Shared by tag storage and mention
+ * notifications so the visible "with @alice" line on a post and the
+ * notification inbox always agree.
+ */
+async function resolveMentionIds(
   ctx: MutationCtx,
   content: string,
   authorId: Id<"users">,
-  postId: Id<"posts">,
-) {
+): Promise<Id<"users">[]> {
   const mentions = [...content.matchAll(/@([a-z0-9_]{3,24})/gi)].map((m) =>
     m[1].toLowerCase(),
   );
   const unique = [...new Set(mentions)];
+  const ids: Id<"users">[] = [];
   for (const username of unique) {
     const target = await ctx.db
       .query("users")
       .withIndex("by_username", (q) => q.eq("username", username))
       .first();
     if (target !== null && target._id !== authorId) {
-      await ctx.db.insert("notifications", {
-        userId: target._id,
-        type: "mention",
-        actorId: authorId,
-        postId,
-        read: false,
-      });
+      ids.push(target._id);
     }
+  }
+  return ids;
+}
+
+/** Notify every @username mentioned in content, linking to the post. */
+async function notifyMentions(
+  ctx: MutationCtx,
+  content: string,
+  authorId: Id<"users">,
+  postId: Id<"posts">,
+) {
+  const ids = await resolveMentionIds(ctx, content, authorId);
+  for (const userId of ids) {
+    await ctx.db.insert("notifications", {
+      userId,
+      type: "mention",
+      actorId: authorId,
+      postId,
+      read: false,
+    });
   }
 }
 
@@ -416,6 +435,11 @@ export const createPostInternal = internalMutation({
     if (text.length > 1000) {
       throw new ConvexError("Post is too long (max 1000 characters).");
     }
+    // Tags: every @username in the content is resolved to a real account
+    // (the same lookup that fires mention notifications) and stored on the
+    // post, so viewers see a structured "with @alice" line beneath it.
+    const tags =
+      text.length > 0 ? await resolveMentionIds(ctx, text, userId) : undefined;
     // Creator disclosure: "ai-generated" is rejected outright — the policy
     // is zero tolerance for AI-generated content.
     if (creatorDisclosure === "ai-generated") {
@@ -517,6 +541,7 @@ export const createPostInternal = internalMutation({
         authorId: userId,
         content: text,
         media,
+        tags,
         aiStatus: "clean",
         aiEvidence,
         c2paVerifiedHuman,
@@ -714,6 +739,7 @@ export const createPostInternal = internalMutation({
       authorId: userId,
       content: text,
       media,
+      tags,
       fingerprint: fp,
       // Shingle tokens and media hash sets back the near-duplicate layer;
       // store them only when a check actually ran.
@@ -818,6 +844,26 @@ export const deletePost = mutation({
     // again). The post's own like/comment/share counters die with the
     // row — nothing else needs decrementing here.
     await sweepPostEngagement(ctx, postId);
+    // If this post was a SHARE, the share row it recorded against the
+    // original and the original's shareCount die with it, so the count on
+    // the original post stays honest when a share is removed.
+    const sharedFromId = post.sharedFromId;
+    if (sharedFromId !== undefined) {
+      const target = await ctx.db.get(sharedFromId);
+      if (target !== null) {
+        const shareRow = await ctx.db
+          .query("shares")
+          .withIndex("by_post", (q) => q.eq("postId", sharedFromId))
+          .filter((r) => r.eq(r.field("userId"), post.authorId))
+          .first();
+        if (shareRow !== null) {
+          await ctx.db.delete(shareRow._id);
+          await ctx.db.patch(target._id, {
+            shareCount: Math.max(0, target.shareCount - 1),
+          });
+        }
+      }
+    }
     await ctx.db.delete(postId);
     // Keep the author's postsCount honest — the admin's moderatePost
     // decrements, and so must the user-facing delete, or the profile count
@@ -846,11 +892,45 @@ async function withMedia(ctx: QueryCtx, user: Doc<"users"> | null) {
   return { ...publicUser(user), avatarUrl, bannerUrl };
 }
 
+/** A media item with its client-safe display URL resolved. */
+type MediaWithUrl = Omit<
+  NonNullable<Doc<"posts">["media"]>[number],
+  "url"
+> & {
+  url: string | null;
+};
+
+/** Lightweight tagged-user preview attached to a post. */
+interface TaggedUserView {
+  _id: Id<"users">;
+  username: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
+/**
+ * A post enriched for clients: its author (with resolved artwork), display
+ * URLs for its media, the users tagged in it, and — when the post is a
+ * share — the original post embedded beneath it. Recursive (a share's
+ * embedded original is itself a PostView) but bounded by design: shares
+ * always point at originals, never at other shares.
+ */
+interface PostView extends Omit<Doc<"posts">, "location"> {
+  // Coordinates are sensitive: clients see only the public label, even
+  // though the server keeps them to power the Local feed filter.
+  location: ReturnType<typeof publicLocation>;
+  author: Awaited<ReturnType<typeof withMedia>>;
+  likedByMe: boolean;
+  mediaUrls: MediaWithUrl[] | undefined;
+  taggedUsers: TaggedUserView[] | undefined;
+  sharedFrom: PostView | null | undefined;
+}
+
 async function withAuthor(
   ctx: QueryCtx,
   post: Doc<"posts">,
   viewerId: Id<"users"> | null,
-) {
+): Promise<PostView> {
   const author = await withMedia(ctx, await ctx.db.get(post.authorId));
   let likedByMe = false;
   if (viewerId !== null) {
@@ -874,6 +954,62 @@ async function withAuthor(
         })),
       )
     : undefined;
+  // Tags: lightweight previews of every tagged user (kept in sync with the
+  // mention notifications fired at creation), so the client can render the
+  // "with @alice and @bob" line without a second query.
+  let taggedUsers:
+    | {
+        _id: Id<"users">;
+        username: string | null;
+        name: string | null;
+        avatarUrl: string | null;
+      }[]
+    | undefined;
+  if (post.tags !== undefined && post.tags.length > 0) {
+    taggedUsers = (
+      await Promise.all(
+        post.tags.map(async (id) => {
+          const u = await ctx.db.get(id);
+          if (u === null) {
+            return null;
+          }
+          return {
+            _id: u._id,
+            username: u.username ?? null,
+            name: u.name ?? null,
+            // Dual-mode: an external Cloudinary URL wins; otherwise resolve
+            // the Convex storage id (legacy/fallback path).
+            avatarUrl:
+              u.avatarUrl ??
+              (u.avatarStorageId ? await ctx.storage.getUrl(u.avatarStorageId) : null),
+          };
+        }),
+      )
+    ).filter((t): t is NonNullable<typeof t> => t !== null);
+  }
+  // Shared post: the original embedded beneath a share, with its own author
+  // and media, respecting the same visibility rules as the feed — blocked,
+  // banned, silenced, or pending-review originals render as an unavailable
+  // note instead of leaking content, and a deleted original does the same.
+  let sharedFrom: PostView | null | undefined;
+  if (post.sharedFromId !== undefined) {
+    const original = await ctx.db.get(post.sharedFromId);
+    if (original === null) {
+      sharedFrom = null;
+    } else {
+      const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
+      const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
+      const silencedIds = await silencedAuthorIds(ctx, viewerId);
+      const invisible =
+        hiddenIds.includes(original.authorId) ||
+        silencedIds.includes(original.authorId);
+      const pendingReview =
+        original.aiStatus === "review" &&
+        viewerId !== original.authorId &&
+        viewer?.role !== "admin";
+      sharedFrom = invisible || pendingReview ? null : await withAuthor(ctx, original, viewerId);
+    }
+  }
   return {
     ...post,
     // Coordinates are sensitive: clients see only the public label, even
@@ -882,6 +1018,8 @@ async function withAuthor(
     author,
     likedByMe,
     mediaUrls,
+    taggedUsers,
+    sharedFrom,
   };
 }
 
@@ -927,10 +1065,17 @@ export const feed = query({
       }
       // Viewer follows nobody — keep the full feed as the base.
     } else if (filter === "media") {
-      // media is either undefined or a non-empty array (enforced in createPost)
-      base = ctx.db
-        .query("posts")
-        .filter((q) => q.neq(q.field("media"), undefined));
+      // The Media tab shows posts that render photos/videos: posts with
+      // their own attachments, plus SHARES — a share has no media of its
+      // own but renders the original post's media embedded beneath the
+      // caption. Text-only shares (and shares whose original is gone or
+      // hidden) are dropped after pagination below.
+      base = ctx.db.query("posts").filter((q) =>
+        q.or(
+          q.neq(q.field("media"), undefined),
+          q.neq(q.field("sharedFromId"), undefined),
+        ),
+      );
     } else if (filter === "local") {
       // Anchor the "nearby" search on the ephemeral location the client
       // passes — browser geolocation, held only for this one request and
@@ -1012,6 +1157,19 @@ export const feed = query({
     );
     if (mutedKeywords !== undefined && mutedKeywords.length > 0) {
       page = page.filter((p) => !textMatchesMutes(p.content, mutedKeywords));
+    }
+    // Media tab: after resolving authors + embedded originals, keep only
+    // the posts that actually render photos/videos — their own media, or a
+    // share whose original carries media. Text-only shares and shares with
+    // a deleted/hidden original (sharedFrom null) fall out here; they'd
+    // only dilute a "Photos & videos" browse. Same post-pagination pattern
+    // as the keyword muting above.
+    if (filter === "media") {
+      page = page.filter(
+        (p) =>
+          (p.mediaUrls?.length ?? 0) > 0 ||
+          (p.sharedFrom?.mediaUrls?.length ?? 0) > 0,
+      );
     }
     return { ...result, page };
   },
@@ -1301,6 +1459,222 @@ export const sharePost = mutation({
         read: false,
       });
     }
+  },
+});
+
+/**
+ * Facebook-style share: create a NEW post that embeds the original post
+ * (with its media) beneath an optional caption. The share is a first-class
+ * post — it appears in feeds and on the sharer's profile — and it counts
+ * toward the original's shareCount, exactly like a repost. The caption is
+ * post content, so it gets the same AI-text / phishing / racism scans as a
+ * text-only post, and its @mentions notify the tagged users (see the tag
+ * feature). Share chains are flattened: sharing a share always points at
+ * the ORIGINAL post, never at another share, so no endless nesting.
+ */
+export const createShare = mutation({
+  args: {
+    postId: v.id("posts"),
+    content: v.string(),
+    // Client-side proof-of-work, same scheme as createPost/addComment.
+    powChallenge: v.optional(v.string()),
+    powNonce: v.optional(v.string()),
+    powIssuedAt: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    { postId, content, powChallenge, powNonce, powIssuedAt },
+  ) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new ConvexError("Not authenticated");
+    }
+    await requireProof(powChallenge, powNonce, powIssuedAt);
+    const caption = content.trim();
+    if (caption.length > 1000) {
+      throw new ConvexError(
+        "Share caption is too long (max 1000 characters).",
+      );
+    }
+    const original = await ctx.db.get(postId);
+    if (original === null) {
+      throw new ConvexError("This post is no longer available to share.");
+    }
+    // A share must respect the same visibility rules as the feed: content
+    // from blocked, banned, or pending-review authors can't be amplified
+    // into a fresh post.
+    const hiddenIds = await hiddenAuthorIds(ctx, userId);
+    if (hiddenIds.includes(original.authorId)) {
+      throw new ConvexError("You can't share this post.");
+    }
+    if (original.aiStatus === "review" && original.authorId !== userId) {
+      throw new ConvexError(
+        "This post is still being reviewed and can't be shared yet.",
+      );
+    }
+    // Flatten share chains: point at the original post, never at another
+    // share. If the root was deleted since the share was made, fall back to
+    // the post itself.
+    let target = original;
+    if (original.sharedFromId !== undefined) {
+      const root = await ctx.db.get(original.sharedFromId);
+      if (root !== null) {
+        target = root;
+      }
+    }
+    const tags =
+      caption.length > 0
+        ? await resolveMentionIds(ctx, caption, userId)
+        : undefined;
+    // Quiet sandbox: a shadowbanned or pending-review account's share is
+    // accepted so nothing looks wrong to them, but stays invisible to
+    // everyone else — and never counts toward the original's shareCount.
+    if (await isSandboxed(ctx, userId)) {
+      const shareId = await ctx.db.insert("posts", {
+        authorId: userId,
+        content: caption,
+        sharedFromId: target._id,
+        tags,
+        aiStatus: "clean",
+        likeCount: 0,
+        commentCount: 0,
+        shareCount: 0,
+        reportCount: 0,
+      });
+      const me = await ctx.db.get(userId);
+      await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
+      return { ok: true, postId: shareId };
+    }
+    await enforceActive(ctx, userId);
+    // Rate-limit breaches reject with a structured result (not a throw) so
+    // the quiet flag survives — same pattern as createPostInternal.
+    if (!(await enforceRateLimitResult(ctx, userId, "share"))) {
+      return {
+        ok: false,
+        error:
+          "You're moving a little too fast. Slow down and try again in a moment.",
+      };
+    }
+    // The caption is post content: it gets the same scans as a text-only
+    // post — AI-text, phishing/blocklist, and racism — with review-tier
+    // results routed to the human queue exactly like a regular post.
+    let needsReview = false;
+    let aiStatusReason: string | undefined;
+    let racismReviewCategory: string | undefined;
+    let racismEvasionScore: number | undefined;
+    // Which signal sent the share to the human queue, mirroring the post
+    // path's escalation source so the Silenced tab shows the same reasons.
+    let reviewSignal: "ai" | "scam" = "ai";
+    let reviewSource = "ai-review";
+    if (caption.length > 0) {
+      const textScan = scanText(caption);
+      if (textScan.status === "blocked") {
+        await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+        await escalateForAiSpam(ctx, userId);
+        return {
+          ok: false,
+          error:
+            "AI-generated content isn't allowed on PureWire. Say it yourself — in your own words.",
+        };
+      }
+      if (textScan.status === "review") {
+        needsReview = true;
+        aiStatusReason = textScan.reason;
+      }
+      const phishScan = await scanBlockedContent(ctx, caption);
+      if (phishScan.status === "blocked") {
+        await escalateSilently(ctx, userId, 3, "scam", "phish-block-post");
+        return {
+          ok: false,
+          error:
+            phishScan.message ??
+            "That looks like a phishing or scam link — nothing on PureWire may try to steal accounts, money, or personal information.",
+        };
+      }
+      if (phishScan.status === "review") {
+        needsReview = true;
+        reviewSignal = "scam";
+        reviewSource = "phish-review-post";
+        aiStatusReason =
+          aiStatusReason !== undefined
+            ? `${aiStatusReason} · ${phishScan.reason}`
+            : phishScan.reason;
+      }
+      const racismScan = scanForRacism(caption);
+      if (racismScan.status === "blocked") {
+        await escalateSilently(ctx, userId, 5, "harassment", "racism-block-post");
+        return {
+          ok: false,
+          error: `That can't be posted — ${racismScan.reason}.`,
+        };
+      }
+      if (racismScan.status === "review") {
+        needsReview = true;
+        racismReviewCategory = racismScan.category;
+        racismEvasionScore = racismScan.evasionScore;
+        aiStatusReason =
+          aiStatusReason !== undefined
+            ? `${aiStatusReason} · ${racismScan.reason}`
+            : racismScan.reason;
+      }
+    }
+    // Review-tier content counts toward a quiet shadowban exactly like a
+    // review-tier post, so a share spammer can't use shares to dodge the
+    // flag (see the post path for the reasoning).
+    if (needsReview) {
+      await escalateSilently(
+        ctx,
+        userId,
+        2,
+        reviewSignal,
+        reviewSource,
+      );
+    }
+    const shareId = await ctx.db.insert("posts", {
+      authorId: userId,
+      content: caption,
+      sharedFromId: target._id,
+      tags,
+      aiStatus: needsReview ? "review" : "clean",
+      aiStatusReason: needsReview ? aiStatusReason : undefined,
+      racismReviewCategory,
+      racismEvasionScore,
+      likeCount: 0,
+      commentCount: 0,
+      shareCount: 0,
+      reportCount: 0,
+    });
+    const me = await ctx.db.get(userId);
+    await ctx.db.patch(userId, { postsCount: (me?.postsCount ?? 0) + 1 });
+    if (caption.length > 0) {
+      await notifyMentions(ctx, caption, userId, shareId);
+    }
+    // Record the share: a row for the original's share count plus a
+    // notification to its author (skipped for your own posts).
+    const existing = await ctx.db
+      .query("shares")
+      .withIndex("by_pair", (q) =>
+        q.eq("userId", userId).eq("postId", target._id),
+      )
+      .first();
+    if (existing === null) {
+      await ctx.db.insert("shares", { postId: target._id, userId });
+      await ctx.db.patch(target._id, { shareCount: target.shareCount + 1 });
+      if (target.authorId !== userId) {
+        await ctx.db.insert("notifications", {
+          userId: target.authorId,
+          type: "share",
+          actorId: userId,
+          postId: target._id,
+          read: false,
+        });
+      }
+    }
+    return {
+      ok: true,
+      postId: shareId,
+      aiReviewReason: needsReview ? aiStatusReason : undefined,
+    };
   },
 });
 

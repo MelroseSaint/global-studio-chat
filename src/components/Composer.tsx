@@ -7,6 +7,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { LocationPicker, type PickedLocation } from "@/components/LocationPicker";
 import { MediaUpload, type MediaItem, type MediaKind } from "@/components/MediaUpload";
+import { MentionPicker } from "@/components/MentionPicker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -53,6 +54,28 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
 
   const canPost = content.trim().length > 0 || media.length > 0;
   const overLimit = content.length > MAX_LENGTH;
+
+  // Insert an @mention (from the tag picker) at the textarea cursor so the
+  // tagged user is linked in the post and notified on submit.
+  const insertMention = (username: string) => {
+    if (!username) return;
+    const ta = textareaRef.current;
+    setContent((c) => {
+      const token = `@${username} `;
+      if (ta) {
+        const start = ta.selectionStart ?? c.length;
+        const end = ta.selectionEnd ?? c.length;
+        const next = c.slice(0, start) + token + c.slice(end);
+        requestAnimationFrame(() => {
+          ta.focus();
+          const pos = start + token.length;
+          ta.setSelectionRange(pos, pos);
+        });
+        return next;
+      }
+      return c + token;
+    });
+  };
 
   const submit = async () => {
     if (!canPost || submitting || overLimit) return;
@@ -201,6 +224,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
               max={4}
               compact
             />
+            <MentionPicker disabled={submitting} onPick={insertMention} />
             <div className="relative" ref={pickerRef}>
               {location ? (
                 <button

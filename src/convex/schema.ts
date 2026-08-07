@@ -233,10 +233,21 @@ const schema = defineSchema({
         label: v.optional(v.string()),
       }),
     ),
+    // When set, this post is a SHARE of another post (Facebook-style): the
+    // row carries its own caption as `content` (possibly empty for a plain
+    // repost) and renders the original post — with its media — embedded
+    // beneath. Points at the ORIGINAL post, never at another share, so
+    // share chains are flattened to one level at creation (see createShare).
+    sharedFromId: v.optional(v.id("posts")),
+    // Explicitly tagged users (resolved from @mentions in the content at
+    // creation). Structured so posts can show a "with @alice" line and
+    // notifications fire for every tag, on original posts and shares alike.
+    tags: v.optional(v.array(v.id("users"))),
   })
     .index("by_author", ["authorId"])
     .index("by_fingerprint", ["fingerprint"])
-    .index("by_ai_status", ["aiStatus"]),
+    .index("by_ai_status", ["aiStatus"])
+    .index("by_shared_from", ["sharedFromId"]),
   // Feeds order by _creationTime via the built-in per-table index that
   // Convex maintains automatically — `order("desc")` on the Global,
   // Following, Latest, and Media feed queries resolves against it, so
