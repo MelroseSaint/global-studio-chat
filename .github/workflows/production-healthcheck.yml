@@ -310,6 +310,118 @@ jobs:
               console.log(`Closed Vercel env alert issue #${issue.number}.`);
             }
 
+  vercel-build-warnings:
+    # The env guard proves the stale VITE_SITE_URL var is absent from the
+    # dashboard — but a dashboard edit between runs can re-add it, and the
+    # only place its damage shows up is the Vercel BUILD LOG, where
+    # vite.config.ts's siteUrl() plugin prints `[purewire-site-url]
+    # VITE_SITE_URL is set but ignored`. This job is the log-level twin of
+    # the env guard: it finds the production deployment for THIS commit
+    # (git SHA, or the newest production deploy of the last 20 min), waits
+    # for the build to finish, fetches the deployment events (the build
+    # log), and fails if `VITE_SITE_URL is set but ignored` or any other
+    # `[purewire-site-url]` warning appears — proving the canonical host is
+    # correct in the SHIPPED bundle, not just the dashboard
+    # (scripts/vercel-build-warnings.mjs). Runs on the same schedule as
+    # the env guard; skips when VERCEL_TOKEN is not configured.
+    name: Vercel build-log warning guard (no purewire-site-url warnings)
+    runs-on: ubuntu-latest
+    # Script worst case is find (2 min) + ready poll (10 min); 20 keeps
+    # comfortable margin over a slow build so the runner never kills the
+    # guard mid-poll and surfaces a spurious alert.
+    timeout-minutes: 20
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run the build-log warning guard
+        if: env.VERCEL_TOKEN != ''
+        run: npm run qa:vercel-build-warnings
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a reintroduced stale var (or any purewire-site-url
+      # warning in the build log) gets its own visible alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-build-warnings";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `purewire-site-url warning in the production build log (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The Vercel build-log warning guard failed against the live deployment's build log.",
+                "",
+                "This means **VITE_SITE_URL is set but ignored** (or another **purewire-site-url**",
+                "warning) appeared in the production build — the stale var was re-added to a",
+                "Vercel environment, or the canonical-host plugin in vite.config.ts is misconfigured.",
+                "The shipped bundle then carries the wrong canonical/OG host, re-opening the",
+                "cross-host duplicate-content defect.",
+                "",
+                "Fix: remove VITE_SITE_URL from every Vercel environment (Settings → Environment",
+                "Variables) and ensure PUREWIRE_SITE_URL=https://purewire.vercel.app exists in",
+                "production.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-build-warnings";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open build-warnings alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed build-warnings alert issue #${issue.number}.`);
+            }
+
   cloudinary-upload:
     # Proves the unsigned-preset upload path works (the exact call the
     # browser makes) by uploading a 1x1 PNG and destroying it. Catches a

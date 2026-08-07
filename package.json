@@ -42,6 +42,7 @@
     "qa:seo-audit": "node scripts/seo-audit.mjs",
     "qa:dynamic-render": "node scripts/dynamic-render-check.mjs",
     "qa:vercel-env": "node scripts/vercel-env-guard.mjs",
+    "qa:vercel-build-warnings": "node scripts/vercel-build-warnings.mjs",
     "qa:cloudinary-health": "node scripts/cloudinary-health-probe.mjs",
     "qa:extend-sessions": "node scripts/extend-sessions.mjs",
     "qa:session-lifetime": "node scripts/session-lifetime-qa.mjs",
