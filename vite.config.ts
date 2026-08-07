@@ -5,6 +5,37 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 /**
+ * Resolve the canonical site URL baked into index.html's SEO tags
+ * (canonical, og:url, og:image, twitter:image, JSON-LD).
+ *
+ * The previous mechanism read Vite's `%VITE_SITE_URL%` token, which picked
+ * up a stale build env var and shipped the Convex static-hosting host in
+ * the canonical/OG tags of the production site — cross-host duplicate
+ * content. This plugin substitutes the repo-owned `%PUREWIRE_SITE_URL%`
+ * token from an explicit PUREWIRE_SITE_URL override only when set, and
+ * defaults to the production host otherwise, so the canonical can never
+ * silently regress. A future custom domain is one env var away:
+ *
+ *   PUREWIRE_SITE_URL=https://purewire.example npx vite build
+ */
+const SITE_URL_DEFAULT = "https://purewire.vercel.app";
+
+function siteUrl(): Plugin {
+  return {
+    name: "purewire-site-url",
+    transformIndexHtml(html) {
+      // process.env, not loadEnv: the override is an environment variable
+      // (CI/Vercel), and hardcoding a mode would misbehave under `vite dev`.
+      const url = (
+        process.env.PUREWIRE_SITE_URL ??
+        SITE_URL_DEFAULT
+      ).replace(/\/+$/, "");
+      return html.replaceAll("%PUREWIRE_SITE_URL%", url);
+    },
+  };
+}
+
+/**
  * Build-time PWA wiring. Two outputs:
  *
  * 1. precache-manifest.json — lists every hashed JS/CSS asset the build
@@ -58,7 +89,7 @@ function precacheManifest(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), precacheManifest()],
+  plugins: [react(), tailwindcss(), siteUrl(), precacheManifest()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

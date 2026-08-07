@@ -8,11 +8,12 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/icon-192.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="description" content="PureWire — say it anyway. A social platform built around expression, connection, and freedom — not advertising or corporate sponsorships. Every post verified original, no algorithms, no ads." />
-  <meta name="keywords" content="PureWire, say it anyway, free speech, social network, no algorithms, no ads, original content, independent creators, verified profiles" />
+  <meta name="description" content="PureWire — say it anyway. A social platform built on expression and freedom — not advertising or corporate sponsorships. Every post is verified original." />
   <meta name="theme-color" content="#171918" />
   <meta name="robots" content="index, follow" />
-  <link rel="canonical" href="%VITE_SITE_URL%" />
+  <!-- Canonical host is repo-owned (see the siteUrl plugin in vite.config.ts);
+       override with PUREWIRE_SITE_URL when a custom domain lands. -->
+  <link rel="canonical" href="%PUREWIRE_SITE_URL%" />
 
   <!-- PWA install / mobile-web-app presentation -->
   <meta name="mobile-web-app-capable" content="yes" />
@@ -22,20 +23,22 @@
 
   <!-- Open Graph -->
   <meta property="og:type" content="website" />
+  <meta property="og:locale" content="en_US" />
   <meta property="og:site_name" content="PureWire" />
   <meta property="og:title" content="PureWire — Say it anyway." />
-  <meta property="og:description" content="A social platform built around expression, connection, and freedom — not advertising or corporate sponsorships. Every post verified original, no algorithms, no ads." />
-  <meta property="og:url" content="%VITE_SITE_URL%" />
-  <meta property="og:image" content="%VITE_SITE_URL%/og-image.png" />
+  <meta property="og:description" content="PureWire — say it anyway. A social platform built on expression and freedom — not advertising or corporate sponsorships. Every post is verified original." />
+  <meta property="og:url" content="%PUREWIRE_SITE_URL%" />
+  <meta property="og:image" content="%PUREWIRE_SITE_URL%/og-image.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="PureWire — say it anyway. A social platform built around expression, connection, and freedom." />
+  <meta property="og:image:alt" content="PureWire — say it anyway. A social platform built on expression and freedom, with every post verified original." />
 
   <!-- Twitter / X -->
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="PureWire — Say it anyway." />
-  <meta name="twitter:description" content="A social platform built around expression, connection, and freedom — not advertising or corporate sponsorships. Every post verified original, no algorithms, no ads." />
-  <meta name="twitter:image" content="%VITE_SITE_URL%/og-image.png" />
+  <meta name="twitter:description" content="PureWire — say it anyway. A social platform built on expression and freedom — not advertising or corporate sponsorships. Every post is verified original." />
+  <meta name="twitter:image" content="%PUREWIRE_SITE_URL%/og-image.png" />
+  <meta name="twitter:image:alt" content="PureWire — say it anyway. A social platform built on expression and freedom, with every post verified original." />
 
   <title>PureWire — Say it anyway.</title>
 
@@ -44,8 +47,8 @@
     "@context": "https://schema.org",
     "@type": "WebSite",
     "name": "PureWire",
-    "url": "%VITE_SITE_URL%",
-    "description": "A social platform built around expression, connection, and freedom — every post verified original, no algorithms, no ads."
+    "url": "%PUREWIRE_SITE_URL%",
+    "description": "PureWire — say it anyway. A social platform built on expression and freedom — not advertising or corporate sponsorships. Every post is verified original."
   }
   </script>
 </head>

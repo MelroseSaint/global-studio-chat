@@ -1,0 +1,6 @@
+# Host is hardcoded — keep in sync with SITE_URL_DEFAULT in
+# vite.config.ts (and public/sitemap.xml) when the canonical domain changes.
+User-agent: *
+Allow: /
+
+Sitemap: https://purewire.vercel.app/sitemap.xml

@@ -71,6 +71,25 @@ jobs:
           name: healthcheck-log
           path: healthcheck.log
 
+      # SEO basics guard: the canonical host must be the production host
+      # (never the Convex static-hosting mirror), the OG locale must be
+      # present, and robots.txt + the XML sitemap must be served. A
+      # regression here is silent, so it fails the job and the alert step
+      # below opens an issue.
+      - name: SEO basics guard (canonical, robots, sitemap)
+        run: |
+          set -euo pipefail
+          html="$(curl -fsSL https://purewire.vercel.app/)"
+          echo "$html" | grep -q 'rel="canonical" href="https://purewire.vercel.app' \
+            || { echo "::error::canonical host is not purewire.vercel.app"; exit 1; }
+          echo "$html" | grep -q 'property="og:locale"' \
+            || { echo "::error::og:locale meta is missing"; exit 1; }
+          curl -fsSL https://purewire.vercel.app/robots.txt | grep -qi "sitemap:" \
+            || { echo "::error::robots.txt is not served"; exit 1; }
+          curl -fsSL https://purewire.vercel.app/sitemap.xml | grep -q "<urlset" \
+            || { echo "::error::sitemap.xml is not served"; exit 1; }
+          echo "SEO basics OK"
+
       # Alerting: GitHub already emails on failed runs. This also opens a
       # single persistent issue (label prod-healthcheck) so a failing nightly
       # check is visible on the repo and never silently lost — and never
@@ -101,7 +120,7 @@ jobs:
               title: `Production health check failed (${via}, ${new Date().toISOString()})`,
               labels: [label],
               body: [
-                "The PureWire auth-loop E2E failed against the live site.",
+                "A PureWire production check failed against the live site.",
                 "",
                 `Triggered by: ${via}`,
                 `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
