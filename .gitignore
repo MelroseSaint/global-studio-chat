@@ -28,6 +28,8 @@ desktop-v2.db-wal
 
 # Installed community skills (downloaded from source repos)
 .agents/
+# Runtime output of the nightly SEO audit (scripts/seo-audit.mjs).
+seo-audit-metrics.md
 .claude/
 
 # Local data stores

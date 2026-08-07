@@ -1,0 +1,172 @@
+name: SEO Audit (claude-seo)
+
+# Nightly audit of the live site with a subset of the claude-seo toolkit
+# (AgriciDaniel/claude-seo, pinned to a release tag): Googlebot fetches of
+# the sitemap + newest post/profile (proves dynamic rendering still serves
+# real content), the GBP deprecation schema lint, and the QRG content-quality
+# scorer. A score dropping below its floor — or a fetch/lint regression —
+# fails the job and opens a deduplicated alert issue (label prod-seo-audit),
+# the same pattern as the production healthcheck. Runs nightly at 04:00 UTC
+# (after the 03:00 production healthcheck so the two never overlap) and on
+# demand from the Actions tab.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: seo-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # open a deduplicated alert issue when scores regress
+
+env:
+  SITE_URL: https://purewire.vercel.app
+  # The claude-seo release the audit pins to. Bump deliberately, not casually —
+  # the whole point of pinning is that a skill update can't silently change
+  # what the nightly audit measures.
+  SEO_SKILL_TAG: v2.2.4
+
+jobs:
+  seo-audit:
+    name: Nightly SEO audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The skill scripts are NOT in this repo (.agents/ is gitignored), so
+      # CI clones the pinned public release — the same source the local
+      # install was built from — and runs its scripts directly.
+      - name: Clone the pinned claude-seo release
+        run: |
+          git clone --depth 1 --branch "${{ env.SEO_SKILL_TAG }}" \
+            https://github.com/AgriciDaniel/claude-seo.git /tmp/claude-seo
+
+      # The audit subset (fetch_page, gbp_deprecation_lint, content_quality)
+      # only needs `requests` — no playwright, no weasyprint, no browser.
+      - name: Minimal Python venv (requests only)
+        run: |
+          python -m venv /tmp/seo-venv
+          /tmp/seo-venv/bin/python -m pip install --quiet requests
+
+      - name: Run the SEO audit against the live site
+        id: audit
+        env:
+          PYTHON: /tmp/seo-venv/bin/python
+          SEO_SCRIPTS_DIR: /tmp/claude-seo/scripts
+          SITE_URL: ${{ env.SITE_URL }}
+        run: |
+          set -o pipefail
+          # `|| ec=$?` (not a bare `; ec=$?`) matters: the runner uses
+          # `bash -e`, which would abort on the audit's non-zero exit before
+          # the metrics capture below — exactly when we want the numbers.
+          ec=0
+          npm run qa:seo-audit > seo-audit.log 2>&1 || ec=$?
+          # Capture the metrics table into a step output so the alert issue
+          # below can embed the actual numbers (runs even on failure).
+          {
+            echo "metrics<<SEO_METRICS_EOF"
+            cat seo-audit-metrics.md 2>/dev/null || echo "(metrics file not produced)"
+            echo "SEO_METRICS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          cat seo-audit.log
+          exit $ec
+
+      - name: Upload the audit log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seo-audit-log
+          path: seo-audit.log
+
+      # Alerting: same deduplicated pattern as the production healthcheck —
+      # one open issue per regression, closed automatically on the next pass,
+      # so a failing nightly audit is visible on the repo and never spams.
+      - name: Alert on regression
+        if: failure()
+        uses: actions/github-script@v7
+        env:
+          METRICS: ${{ steps.audit.outputs.metrics }}
+        with:
+          script: |
+            const label = "prod-seo-audit";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `SEO audit regression (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The nightly claude-seo SEO audit failed against the live site.",
+                "",
+                "A score dropped below its regression floor, a Googlebot fetch",
+                "stopped server-rendering real content, the schema lint found",
+                "deprecated properties, or the sitemap stopped listing user",
+                "content.",
+                "",
+                process.env.METRICS || "(metrics not captured)",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the seo-audit-log artifact for the failing checks.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-seo-audit";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open SEO audit alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed SEO audit alert issue #${issue.number}.`);
+            }

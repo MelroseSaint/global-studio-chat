@@ -37,6 +37,7 @@
     "qa:top-sort": "node scripts/top-sort-qa.mjs",
     "qa:signup-e2e": "node scripts/signup-e2e-prod.mjs",
     "qa:sitemap-urls": "node scripts/sitemap-url-health.mjs",
+    "qa:seo-audit": "node scripts/seo-audit.mjs",
     "qa:cloudinary-health": "node scripts/cloudinary-health-probe.mjs",
     "qa:extend-sessions": "node scripts/extend-sessions.mjs",
     "qa:session-lifetime": "node scripts/session-lifetime-qa.mjs",
