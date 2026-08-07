@@ -1,10 +1,15 @@
-import { useMutation, useQuery } from "convex/react";
+import {
+  useMutation,
+  usePaginatedQuery,
+  useQuery,
+} from "convex/react";
 import { Loader2, Lock, MessageCircle, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import type { PostItem } from "@/components/PostCard";
 import { PostMediaGrid, RichText } from "@/components/SharedPostEmbed";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -20,10 +25,69 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
+import { timeAgo } from "@/lib/format";
 import { solveChallenge } from "@/lib/pow";
 import { cn } from "@/lib/utils";
 
 const MAX_LENGTH = 500;
+
+interface PreviewComment {
+  _id: string;
+  author: {
+    _id: string;
+    name?: string | null;
+    username?: string | null;
+    avatarUrl?: string | null;
+    verified?: boolean | null;
+  } | null;
+  content: string;
+  _creationTime: number;
+}
+
+/**
+ * A compact, read-only peek at the most recent comments on the post, so
+ * the popup shows the conversation before you reply. Mounted only while
+ * the dialog is open — post cards in the feed never query comments.
+ */
+function CommentPreview({ postId }: { postId: Id<"posts"> }) {
+  const { results, status } = usePaginatedQuery(
+    api.posts.listComments,
+    { postId },
+    { initialNumItems: 3 },
+  );
+  const comments = results as unknown as PreviewComment[];
+
+  if (status === "LoadingFirstPage" || comments.length === 0) return null;
+
+  return (
+    <div>
+      <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+        <MessageCircle className="size-3.5" />
+        Comments
+      </p>
+      <div className="mt-2 space-y-2.5">
+        {comments.map((c) => (
+          <div key={c._id} className="flex gap-2">
+            <UserAvatar user={c.author} className="size-7" />
+            <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted/60 px-3 py-2">
+              <p className="flex flex-wrap items-baseline gap-x-1.5 text-xs">
+                <span className="font-semibold">
+                  {c.author?.name || c.author?.username || "Unknown"}
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  {timeAgo(c._creationTime)}
+                </span>
+              </p>
+              <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
+                {c.content}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Popup comment composer: clicking the comment button on a post opens this
@@ -168,6 +232,8 @@ export function CommentDialog({
             <PostMediaGrid media={post.mediaUrls} />
           ) : null}
         </div>
+
+        {open && <CommentPreview postId={post._id} />}
 
         <DialogFooter>
           <Button
