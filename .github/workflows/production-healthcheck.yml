@@ -788,6 +788,128 @@ jobs:
               console.log(`Closed moderation alert issue #${issue.number}.`);
             }
 
+  admin-ip-qa:
+    # Proves the backend-verified admin device gate end-to-end against
+    # production (scripts/admin-ip-qa.mjs): a fresh admin sign-in verified
+    # through /admin/ip/verify binds the session to the IP the backend
+    # OBSERVED (never a client claim) and grants admin power; the harness
+    # then ages the binding server-side and requireAdmin must refuse even
+    # with a valid JWT (enforcement is backend, not UI gating); simulating
+    # an IP change must revoke the session outright, and re-verifying must
+    # stay revoked (sticky). Runs on the same schedule as the auth loop.
+    # Harness-gated for the enforcement/revocation steps; the happy path
+    # runs whenever ADMIN_PASSWORD is configured.
+    name: Admin IP binding QA (backend-verified device gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the admin IP binding QA
+        if: env.ADMIN_PASSWORD != ''
+        id: admin-ip
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:admin-ip 2>&1 | tee admin-ip.log
+
+      - name: Upload the admin-ip QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-ip-log
+          path: admin-ip.log
+
+      # Deduplicated alert with its own label so a device-gate regression
+      # (revocation not sticky, stale binding granting power, verify broken)
+      # is visible instead of being swallowed by another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-admin-ip";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Admin IP binding check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The backend-verified admin IP gate QA failed against production.",
+                "",
+                "This means admin power may be decoupled from the backend-observed",
+                "IP: revocation may not be sticky (a stolen JWT revives the",
+                "session), a stale binding may still grant power, or the",
+                "/admin/ip/verify endpoint may be broken.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the admin-ip-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-admin-ip";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open admin-ip alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed admin-ip alert issue #${issue.number}.`);
+            }
+
   story-views-qa:
     # Proves the story-viewer feature end-to-end against production with
     # three throwaway accounts (one author, two viewers):
