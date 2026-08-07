@@ -112,6 +112,16 @@ jobs:
       - name: Sitemap URL health (sampled posts + profiles)
         run: npm run qa:sitemap-urls
 
+      # Dynamic rendering guard: a Googlebot fetch of the newest /post/:id
+      # and /u/:handle must return the server-rendered OG page (Article /
+      # ProfilePage JSON-LD) — never the SPA shell — while a plain browser
+      # must still get the SPA. A regression here means search engines see
+      # a blank app and every OG/JSON-LD investment is dead (or the reverse:
+      # browsers get a non-interactive page). Fails the job and opens the
+      # alert issue below, on every push to main + nightly.
+      - name: Dynamic rendering guard (Googlebot vs browser)
+        run: npm run qa:dynamic-render
+
       # Alerting: GitHub already emails on failed runs. This also opens a
       # single persistent issue (label prod-healthcheck) so a failing nightly
       # check is visible on the repo and never silently lost — and never
