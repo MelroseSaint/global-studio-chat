@@ -208,6 +208,108 @@ jobs:
               console.log(`Closed alert issue #${issue.number}.`);
             }
 
+  vercel-env-guard:
+    # The canonical host is repo-owned by construction: vite.config.ts
+    # defaults to it and the dashboard self-documents it via
+    # PUREWIRE_SITE_URL. The stale VITE_SITE_URL var was the original
+    # source of the wrong-host bug, so this guard fails the job if it EVER
+    # reappears in any Vercel environment — and asserts PUREWIRE_SITE_URL
+    # is still set in production — so a dashboard edit can never silently
+    # re-open the defect. Uses the same VERCEL_TOKEN secret as the Deploy
+    # workflow (scripts/vercel-env-guard.mjs).
+    name: Vercel env guard (no stale VITE_SITE_URL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run the Vercel env guard
+        if: env.VERCEL_TOKEN != ''
+        run: npm run qa:vercel-env
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a reintroduced stale var gets its own visible alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-vercel-env";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Stale VITE_SITE_URL detected in Vercel env (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The Vercel env guard failed against the project's environment variables.",
+                "",
+                "This means **VITE_SITE_URL was re-added to the Vercel project env**, or",
+                "**PUREWIRE_SITE_URL is no longer set in production**. The canonical host",
+                "is repo-owned by construction — the stale var re-opens the wrong-host",
+                "defect and re-emits the build warning.",
+                "",
+                "Fix: remove VITE_SITE_URL from every Vercel environment (Settings →",
+                "Environment Variables) and ensure PUREWIRE_SITE_URL=https://purewire.vercel.app",
+                "exists in production.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-vercel-env";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open Vercel env alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed Vercel env alert issue #${issue.number}.`);
+            }
+
   cloudinary-upload:
     # Proves the unsigned-preset upload path works (the exact call the
     # browser makes) by uploading a 1x1 PNG and destroying it. Catches a
