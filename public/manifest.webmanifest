@@ -44,6 +44,22 @@
       "purpose": "any"
     }
   ],
+  "screenshots": [
+    {
+      "src": "/screenshots/landing-1280x800.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "PureWire on desktop"
+    },
+    {
+      "src": "/screenshots/landing-390x844.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "PureWire on mobile"
+    }
+  ],
   "shortcuts": [
     {
       "name": "Home",
