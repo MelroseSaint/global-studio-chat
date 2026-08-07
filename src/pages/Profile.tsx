@@ -1,12 +1,13 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import { Ban, CalendarDays, Link2, MapPin, MessageSquare, Settings2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import { canonicalBase, seoExcerpt, usePageMeta } from "@/lib/seo";
 import { FollowButton } from "@/components/FollowButton";
 import { FollowsList, type FollowsTab } from "@/components/FollowsList";
 import { PostCard, type PostItem } from "@/components/PostCard";
@@ -46,6 +47,42 @@ export function Profile() {
       navigate("/home", { replace: true });
     }
   }, [profile, navigate]);
+
+  // Per-route metadata: ProfilePage JSON-LD + the profile's own title,
+  // description, canonical, and OG tags (mirroring the server-rendered
+  // /og/profile/:handle page for JS-rendering crawlers).
+  const pageMeta = useMemo(() => {
+    if (!profile) return null;
+    const handle = profile.username ?? "";
+    const display = profile.name || handle || "Someone";
+    const title = handle ? `@${handle} on PureWire` : `${display} on PureWire`;
+    const description = profile.bio
+      ? seoExcerpt(profile.bio)
+      : `Check out @${handle || display} on PureWire.`;
+    const base = canonicalBase();
+    return {
+      title,
+      description,
+      path: `/u/${handle}`,
+      type: "profile" as const,
+      image: profile.avatarUrl ?? null,
+      jsonLd: {
+        "@context": "https://schema.org",
+        "@type": "ProfilePage",
+        name: display,
+        description,
+        url: `${base}/u/${handle}`,
+        dateCreated: new Date(profile._creationTime).toISOString(),
+        mainEntity: {
+          "@type": "Person",
+          name: display,
+          url: `${base}/u/${handle}`,
+          ...(profile.avatarUrl ? { image: profile.avatarUrl } : {}),
+        },
+      },
+    };
+  }, [profile]);
+  usePageMeta(pageMeta);
 
   if (profile === undefined) {
     return (

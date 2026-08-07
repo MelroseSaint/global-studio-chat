@@ -11,13 +11,14 @@ import {
   ShieldAlert,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { useParams } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { canonicalBase, seoExcerpt, usePageMeta } from "@/lib/seo";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import { PostCard, type PostItem } from "@/components/PostCard";
@@ -182,6 +183,42 @@ export function PostDetail() {
       void loadMore(10);
     }
   }, [inView, status, loadMore]);
+
+  // Per-route metadata: when the post resolves, swap the generic site tags
+  // for the post's own title/description/canonical/OG + Article JSON-LD
+  // (mirroring the server-rendered /og/post/:id page for JS crawlers).
+  const pageMeta = useMemo(() => {
+    if (!post) return null;
+    const handle = post.author?.username ?? null;
+    const display = post.author?.name ?? handle ?? "Someone";
+    const title = handle ? `@${handle} on PureWire` : `${display} on PureWire`;
+    const description = seoExcerpt(post.content);
+    const image =
+      post.mediaUrls?.find((m) => m.kind === "image" && m.url)?.url ?? null;
+    const base = canonicalBase();
+    return {
+      title,
+      description,
+      path: `/post/${post._id}`,
+      type: "article" as const,
+      image,
+      jsonLd: {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        headline: title,
+        description,
+        url: `${base}/post/${post._id}`,
+        datePublished: new Date(post._creationTime).toISOString(),
+        ...(image ? { image: [image] } : {}),
+        author: {
+          "@type": "Person",
+          name: display,
+          ...(handle ? { url: `${base}/u/${handle}` } : {}),
+        },
+      },
+    };
+  }, [post]);
+  usePageMeta(pageMeta);
 
   if (post === undefined) {
     return (

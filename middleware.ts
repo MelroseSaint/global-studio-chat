@@ -1,18 +1,19 @@
 /**
  * PureWire link-preview middleware (Vercel Edge).
  *
- * When a post is shared, the URL is /post/:id. Link previews are rendered
- * by crawlers (Discord, X/Twitter, WhatsApp, iMessage, Slack, LinkedIn…)
- * that fetch the raw HTML WITHOUT running the app's JavaScript — so the SPA
- * shell's generic site tags used to make every shared post preview as the
- * generic PureWire card.
+ * When a post or profile is shared, the URL is /post/:id or /u/:handle.
+ * Link previews are rendered by crawlers (Discord, X/Twitter, WhatsApp,
+ * iMessage, Slack, LinkedIn…) that fetch the raw HTML WITHOUT running the
+ * app's JavaScript — so the SPA shell's generic site tags used to make
+ * every shared URL preview as the generic PureWire card.
  *
- * This middleware watches requests to /post/:id and, ONLY for known crawler
- * user-agents, serves the server-rendered OG page from the Convex backend
- * (https://outgoing-seal-727.convex.site/og/post/:id) — the real post:
- * author handle in the title, body in the description, first photo as the
- * image. Every other request returns `undefined` so Vercel passes it
- * through to the app untouched.
+ * This middleware watches those two route shapes and, ONLY for known
+ * crawler user-agents, serves the server-rendered OG page from the Convex
+ * backend (https://outgoing-seal-727.convex.site/og/post/:id or
+ * /og/profile/:handle) — real content: author handle in the title, post
+ * body or bio in the description, first photo or avatar as the image, plus
+ * Article/ProfilePage JSON-LD. Every other request returns `undefined` so
+ * Vercel passes it through to the app untouched.
  *
  * The canonical URL is forwarded as `?u=` so the OG page's og:url points at
  * the purewire.vercel.app address the crawler asked for, never the backend.
@@ -33,9 +34,10 @@ export default async function middleware(
   request: Request,
 ): Promise<Response | undefined> {
   const { pathname, origin } = new URL(request.url);
-  const match = pathname.match(/^\/post\/([^/]+)\/?$/);
-  if (!match || request.method !== "GET") {
-    // Not a GET on /post/:id — let the app serve it normally.
+  const postMatch = pathname.match(/^\/post\/([^/]+)\/?$/);
+  const profileMatch = pathname.match(/^\/u\/([^/]+)\/?$/);
+  if ((!postMatch && !profileMatch) || request.method !== "GET") {
+    // Not a GET on /post/:id or /u/:handle — let the app serve it normally.
     return undefined;
   }
   const userAgent = request.headers.get("user-agent") ?? "";
@@ -43,11 +45,13 @@ export default async function middleware(
     // Real browser — hand the request to the SPA.
     return undefined;
   }
-  const postId = match[1];
   const canonical = `${origin}${pathname}`;
+  const backendPath = postMatch
+    ? `/og/post/${encodeURIComponent(postMatch[1])}`
+    : `/og/profile/${encodeURIComponent(profileMatch![1])}`;
   try {
     const res = await fetch(
-      `${CONVEX_SITE}/og/post/${encodeURIComponent(postId)}?u=${encodeURIComponent(canonical)}`,
+      `${CONVEX_SITE}${backendPath}?u=${encodeURIComponent(canonical)}`,
       { headers: { "user-agent": userAgent } },
     );
     if (res.ok) {
@@ -67,5 +71,5 @@ export default async function middleware(
 }
 
 export const config = {
-  matcher: ["/post/:path*"],
+  matcher: ["/post/:path*", "/u/:path*"],
 };
