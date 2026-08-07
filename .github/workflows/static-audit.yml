@@ -68,6 +68,26 @@ jobs:
             || { echo "::error::robots.txt Sitemap line drifted from ${host} (vite.config.ts)"; exit 1; }
           echo "SEO static files OK — canonical host ${host}"
 
+  sitemap-url-health:
+    # Proves the dynamic sitemap only submits URLs that actually render —
+    # and (since the canonical guard landed) that each sampled post/profile
+    # carries a canonical EXACTLY equal to its sitemap URL with no redirect
+    # drift. The production healthcheck already runs this on every push to
+    # main + nightly; this job adds PR coverage so a visibility or
+    # canonicalization regression is caught before merge instead of after.
+    # Zero dependencies (plain Node fetch against the live site), same as
+    # the other production QA jobs in this workflow.
+    name: Sitemap URL health (live render + canonical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Sample the live sitemap and verify every URL renders
+        run: npm run qa:sitemap-urls
+
   secrets-scan:
     name: Secrets scan
     runs-on: ubuntu-latest
