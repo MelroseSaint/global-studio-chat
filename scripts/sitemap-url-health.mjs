@@ -60,13 +60,33 @@ const check = (name, ok, extra = "") => {
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${extra ? ` — ${extra}` : ""}`);
 };
 
+// Retry transient failures (network errors, 429, 5xx) with backoff. The
+// sitemap job runs in parallel with the Vercel deploy, which briefly serves
+// 5xx during rollout — a real regression must fail, but a deploy-window
+// blip must not.
+const isTransient = (status) => status === 429 || status >= 500;
+const fetchWithRetry = async (url, options, attempts = 3) => {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (!isTransient(res.status) || i === attempts - 1) return res;
+    } catch (err) {
+      lastErr = err;
+      if (i === attempts - 1) throw err;
+    }
+    await new Promise((r) => setTimeout(r, 2000 * 2 ** i));
+  }
+  throw lastErr ?? new Error(`exhausted retries on ${url}`);
+};
+
 const main = async () => {
   const mode = FULL_SWEEP
     ? "FULL SWEEP (all posts + profiles)"
     : `sample ${SAMPLE_PER_CLASS}/class`;
   console.log(`\nSitemap URL health — ${SITE} — ${mode}\n`);
 
-  const sitemapRes = await fetch(`${SITE}/sitemap.xml`, {
+  const sitemapRes = await fetchWithRetry(`${SITE}/sitemap.xml`, {
     headers: { "user-agent": CRAWLER_UA },
   });
   if (!sitemapRes.ok) {
@@ -97,7 +117,7 @@ const main = async () => {
         ? '"@type":"ProfilePage"'
         : null;
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithRetry(url, {
         headers: { "user-agent": CRAWLER_UA },
         redirect: "follow",
       });
