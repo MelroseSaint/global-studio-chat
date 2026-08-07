@@ -33,7 +33,9 @@ jobs:
   seo-audit:
     name: Nightly SEO audit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The sitemap-wide sweep fetches + lints up to 2*SITEMAP_SAMPLE pages;
+    # 15 min was comfortable for the 2-page audit but not the sweep.
+    timeout-minutes: 30
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -56,12 +58,13 @@ jobs:
           git clone --depth 1 --branch "${{ env.SEO_SKILL_TAG }}" \
             https://github.com/AgriciDaniel/claude-seo.git /tmp/claude-seo
 
-      # The audit subset (fetch_page, gbp_deprecation_lint, content_quality)
-      # only needs `requests` — no playwright, no weasyprint, no browser.
-      - name: Minimal Python venv (requests only)
+      # The audit/sweep subset (fetch_page, gbp_deprecation_lint,
+      # content_quality, parse_html) needs `requests` (HTTP) and
+      # `beautifulsoup4` (parse_html's HTML tree) — nothing heavier.
+      - name: Minimal Python venv (requests + beautifulsoup4)
         run: |
           python -m venv /tmp/seo-venv
-          /tmp/seo-venv/bin/python -m pip install --quiet requests
+          /tmp/seo-venv/bin/python -m pip install --quiet requests beautifulsoup4
 
       - name: Run the SEO audit against the live site
         id: audit
@@ -86,6 +89,31 @@ jobs:
           cat seo-audit.log
           exit $ec
 
+      # Sitemap-wide sweep (scripts/seo-sweep.mjs): the same linters +
+      # content quality over EVERY sampled post/profile URL in the live
+      # sitemap (fetch 200 + server-rendered JSON-LD, parse_html structural
+      # lints, gbp_deprecation_lint, content_quality floor + NEW-flag
+      # regression vs the committed seo-sweep-baseline.json). Same
+      # `|| ec=$?` pattern so the metrics are captured even on failure.
+      - name: Run the SEO sweep (sitemap-wide)
+        id: sweep
+        env:
+          PYTHON: /tmp/seo-venv/bin/python
+          SEO_SCRIPTS_DIR: /tmp/claude-seo/scripts
+          SITE_URL: ${{ env.SITE_URL }}
+          SITEMAP_SAMPLE: ${{ vars.SITEMAP_SAMPLE || 8 }}
+        run: |
+          set -o pipefail
+          ec=0
+          npm run qa:seo-sweep > seo-sweep.log 2>&1 || ec=$?
+          {
+            echo "sweep_metrics<<SWEEP_METRICS_EOF"
+            cat seo-sweep-metrics.md 2>/dev/null || echo "(sweep metrics file not produced)"
+            echo "SWEEP_METRICS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          cat seo-sweep.log
+          exit $ec
+
       - name: Upload the audit log
         if: failure()
         uses: actions/upload-artifact@v4
@@ -101,6 +129,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           METRICS: ${{ steps.audit.outputs.metrics }}
+          SWEEP_METRICS: ${{ steps.sweep.outputs.sweep_metrics }}
         with:
           script: |
             const label = "prod-seo-audit";
@@ -128,10 +157,13 @@ jobs:
                 "",
                 "A score dropped below its regression floor, a Googlebot fetch",
                 "stopped server-rendering real content, the schema lint found",
-                "deprecated properties, or the sitemap stopped listing user",
-                "content.",
+                "deprecated properties, the sitemap stopped listing user",
+                "content, or the sitemap-wide sweep found a NEW content-quality",
+                "flag on a sampled page.",
                 "",
-                process.env.METRICS || "(metrics not captured)",
+                process.env.METRICS || "(audit metrics not captured)",
+                "",
+                process.env.SWEEP_METRICS || "(sweep metrics not captured)",
                 "",
                 `Triggered by: ${via}`,
                 `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,

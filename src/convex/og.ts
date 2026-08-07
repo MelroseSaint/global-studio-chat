@@ -147,6 +147,11 @@ export const postOg = httpAction(async (ctx, request) => {
     post.content.trim().length > 0
       ? excerpt(post.content)
       : "Shared something on PureWire.";
+  // Google truncates search snippets around 155-160 chars; the social tags
+  // (Discord etc.) tolerate ~200. Keep the meta description inside the
+  // snippet window while og:description / twitter:description / body keep
+  // the fuller 180-char version.
+  const metaDescription = excerpt(description, 155);
   // Prefer the post's first photo; otherwise fall back to the brand card.
   const image =
     post.mediaUrls?.find((m) => m.kind === "image" && m.url)?.url ??
@@ -178,7 +183,7 @@ export const postOg = httpAction(async (ctx, request) => {
 <meta name="robots" content="index, follow" />
 <link rel="canonical" href="${esc(canonical)}" />
 <title>${esc(title)}</title>
-<meta name="description" content="${esc(description)}" />
+<meta name="description" content="${esc(metaDescription)}" />
 <meta property="og:site_name" content="PureWire" />
 <meta property="og:type" content="article" />
 <meta property="og:title" content="${esc(title)}" />
@@ -252,6 +257,9 @@ export const profileOg = httpAction(async (ctx, request) => {
     profile.bio && profile.bio.trim().length > 0
       ? excerpt(profile.bio)
       : `Check out @${profile.username ?? displayName} on PureWire.`;
+  // Google truncates search snippets around 155-160 chars; the social tags
+  // tolerate ~200. Keep the meta description inside the snippet window.
+  const metaDescription = excerpt(description, 155);
   // Prefer the profile avatar; otherwise fall back to the brand card.
   const image = profile.avatarUrl ?? `${SITE_URL}/og-image.png`;
   const imageIsBrand = image === `${SITE_URL}/og-image.png`;
@@ -284,7 +292,7 @@ export const profileOg = httpAction(async (ctx, request) => {
 <meta name="robots" content="index, follow" />
 <link rel="canonical" href="${esc(canonical)}" />
 <title>${esc(title)}</title>
-<meta name="description" content="${esc(description)}" />
+<meta name="description" content="${esc(metaDescription)}" />
 <meta property="og:site_name" content="PureWire" />
 <meta property="og:type" content="profile" />
 <meta property="og:title" content="${esc(title)}" />
