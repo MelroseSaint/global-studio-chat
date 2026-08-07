@@ -5,6 +5,8 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { isStandardId } from "@/lib/standard";
 
+import { assertAdminIpVerified } from "./adminIp";
+
 import { internal } from "./_generated/api";
 import { publicUser } from "./privacy";
 
@@ -714,6 +716,9 @@ export const listFlaggedAccounts = query({
     if (me?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts) — admin surfaces must
+    // prove the session's IP was recently observed by the backend.
+    await assertAdminIpVerified(ctx);
     // Only accounts that actually need a decision — suspicious signups,
     // restricted, and banned — not every account that was ever scored.
     // Quietly shadowbanned accounts live in the dedicated Silenced tab,
@@ -768,6 +773,9 @@ export const exportFlaggedAccounts = query({
     if (me?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts) — admin surfaces must
+    // prove the session's IP was recently observed by the backend.
+    await assertAdminIpVerified(ctx);
     const rows = await ctx.db
       .query("users")
       .filter((q) =>
@@ -817,6 +825,9 @@ export const listSilencedAccounts = query({
     if (me?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts) — admin surfaces must
+    // prove the session's IP was recently observed by the backend.
+    await assertAdminIpVerified(ctx);
     const result = await ctx.db
       .query("users")
       .filter((q) => q.eq(q.field("shadowban"), true))
@@ -881,6 +892,9 @@ export const silentFlagHistory = query({
     if (me?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts) — admin surfaces must
+    // prove the session's IP was recently observed by the backend.
+    await assertAdminIpVerified(ctx);
     const user = await ctx.db.get(userId);
     if (user === null) {
       return null;
@@ -955,6 +969,8 @@ export const bulkUnsilence = mutation({
     if (admin?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts).
+    await assertAdminIpVerified(ctx);
     // Cap the batch so a large selection can't blow a single mutation's
     // write budget — each restore can reconcile up to 100 phantom follows.
     for (const userId of userIds.slice(0, 50)) {
@@ -992,6 +1008,8 @@ export const setAccountStatus = mutation({
     if (admin?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts).
+    await assertAdminIpVerified(ctx);
     if (standardId !== undefined && !isStandardId(standardId)) {
       throw new Error("That isn't a principle of the PureWire Standard.");
     }
@@ -1081,6 +1099,8 @@ export const suspendAccount = mutation({
     if (admin?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts).
+    await assertAdminIpVerified(ctx);
     if (!Number.isFinite(durationHours) || durationHours < 1 || durationHours > 8760) {
       throw new Error("Duration must be between 1 hour and 1 year.");
     }
@@ -1147,6 +1167,8 @@ export const setShadowban = mutation({
     if (admin?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts).
+    await assertAdminIpVerified(ctx);
     if (standardId !== undefined && !isStandardId(standardId)) {
       throw new Error("That isn't a principle of the PureWire Standard.");
     }
@@ -1269,6 +1291,8 @@ export const reinstateAccount = mutation({
     if (admin?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts).
+    await assertAdminIpVerified(ctx);
     if (standardId !== undefined && !isStandardId(standardId)) {
       throw new Error("That isn't a principle of the PureWire Standard.");
     }

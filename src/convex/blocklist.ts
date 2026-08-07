@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { assertAdminIpVerified } from "./adminIp";
+
 import type {
   BlockedDomainEntry,
   BlockedPatternEntry,
@@ -69,6 +71,9 @@ async function requireAdmin(ctx: QueryCtx | MutationCtx) {
   if (me?.role !== "admin") {
     throw new Error("Admins only");
   }
+  // Backend-verified device gate (see adminIp.ts): blocklist admin power is
+  // refused unless the backend has recently observed this session's IP.
+  await assertAdminIpVerified(ctx);
   return userId;
 }
 

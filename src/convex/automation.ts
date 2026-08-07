@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { assertAdminIpVerified } from "./adminIp";
 import { escalateSilently } from "./security";
 import { mutation, query } from "./_generated/server";
 
@@ -83,6 +84,8 @@ export const getAutomation = query({
     if (meId === null) return null;
     const me = await ctx.db.get(meId);
     if (me?.role !== "admin") return null;
+    // Backend-verified device gate (see adminIp.ts).
+    await assertAdminIpVerified(ctx);
     const target = await ctx.db.get(userId);
     if (target === null) return null;
     return {

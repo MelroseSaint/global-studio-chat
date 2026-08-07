@@ -189,6 +189,68 @@ export const mintAdminSession = mutation({
 });
 
 /**
+ * Simulate the admin's IP CHANGING between verifications — the exact
+ * scenario the backend-verified binding must catch. Rewrites the current
+ * caller's adminIpBindings row (if any) to a sentinel hash that can never
+ * equal the real IP hash the verify endpoint will compute, so the NEXT
+ * /admin/ip/verify call from the real client IP must report revoked and
+ * delete the session. Lets the admin-ip QA prove the cross-IP revoke path
+ * end to end. Gated by the same two env gates as the rest of the module.
+ */
+export const simulateAdminIpChange = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const sessionId = await getAuthSessionId(ctx);
+    if (sessionId === null) {
+      throw new ConvexError("Caller is not authenticated.");
+    }
+    const binding = await ctx.db
+      .query("adminIpBindings")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+    if (binding === null) {
+      return { tampered: false, reason: "no-binding" };
+    }
+    await ctx.db.patch(binding._id, {
+      // A sentinel that no real IP hash can equal (a raw string, not the
+      // salted sha256 the verify endpoint produces).
+      ipHash: "simulated:different-ip",
+      verifiedAt: Date.now(),
+    });
+    return { tampered: true };
+  },
+});
+
+/**
+ * Age the caller's adminIpBindings row to the distant past so the binding
+ * counts as STALE — requireAdmin must then refuse admin power even though
+ * the JWT is valid, proving enforcement isn't just client-side. Gated by
+ * the same two env gates as the rest of the module.
+ */
+export const expireAdminIpBinding = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const sessionId = await getAuthSessionId(ctx);
+    if (sessionId === null) {
+      throw new ConvexError("Caller is not authenticated.");
+    }
+    const binding = await ctx.db
+      .query("adminIpBindings")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+    if (binding === null) {
+      return { expired: false, reason: "no-binding" };
+    }
+    await ctx.db.patch(binding._id, {
+      verifiedAt: 0, // older than any TTL — effectively never verified
+    });
+    return { expired: true };
+  },
+});
+
+/**
  * Mint a real session for any existing account by its stored email, so the
  * QA check can verify the salted-hash pipeline against a real
  * email-bearing record (e.g. a pre-existing test account). Gated by the

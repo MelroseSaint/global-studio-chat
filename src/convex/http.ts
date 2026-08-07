@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { registerStaticRoutes } from "@convex-dev/static-hosting";
 
 import { auth } from "@/convex/auth";
+import { verifyAdminIp } from "./adminIp";
 import { postOg, profileOg } from "./og";
 import { sitemapXml } from "./sitemap";
 import { components } from "./_generated/api";
@@ -40,6 +41,23 @@ http.route({
   path: "/sitemap.xml",
   method: "GET",
   handler: sitemapXml,
+});
+
+// Backend-verified admin IP binding (see adminIp.ts). The admin client
+// POSTs here with its bearer token right after sign-in and on a heartbeat;
+// the action records the IP the edge OBSERVED (not one the client claims),
+// and requireAdmin refuses admin power unless that binding is fresh. POST
+// + OPTIONS (CORS preflight); registered before the static routes so the
+// SPA catch-all can never shadow it.
+http.route({
+  path: "/admin/ip/verify",
+  method: "POST",
+  handler: verifyAdminIp,
+});
+http.route({
+  path: "/admin/ip/verify",
+  method: "OPTIONS",
+  handler: verifyAdminIp,
 });
 
 // Serve the PureWire frontend (dist) from https://outgoing-seal-727.convex.site.

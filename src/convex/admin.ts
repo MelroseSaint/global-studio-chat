@@ -7,6 +7,7 @@ import type { Id } from "./_generated/dataModel";
 
 import { isStandardId } from "@/lib/standard";
 
+import { assertAdminIpVerified } from "./adminIp";
 import { eraseAccount } from "./account";
 import { cleanupMediaItems, sweepPostEngagement } from "./mediaCleanup";
 import { publicUser } from "./privacy";
@@ -42,6 +43,12 @@ export async function requireAdmin(ctx: QueryCtx) {
   if (me?.role !== "admin") {
     throw new Error("Admins only");
   }
+  // Backend-verified device gate (see adminIp.ts): admin power is refused
+  // unless the backend has recently OBSERVED the admin's IP for this
+  // session via the /admin/ip/verify HTTP action. The role check above
+  // proves WHO, this proves WHERE — a stolen session replayed from a
+  // different network cannot act, even with a valid token.
+  await assertAdminIpVerified(ctx);
   return userId;
 }
 
@@ -596,6 +603,10 @@ export const previewMediaEvidence = action({
     if (user === null || user.role !== "admin") {
       throw new Error("Admin access required.");
     }
+    // Backend-verified device gate (see adminIp.ts) — actions can't call
+    // requireAdmin, so enforce the same fresh-IP binding through the
+    // internal query wrapper.
+    await ctx.runQuery(internal.adminIp.assertVerifiedForAction, {});
 
     // ── Image builders (same logic as ai-scan-qa.mjs, inlined for zero deps) ──
     const u32be = (n: number) => {

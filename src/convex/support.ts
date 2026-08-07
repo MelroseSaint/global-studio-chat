@@ -5,6 +5,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { isStandardId } from "@/lib/standard";
 
+import { assertAdminIpVerified } from "./adminIp";
 import { publicUser } from "./privacy";
 import { enforceRateLimit } from "./security";
 
@@ -102,6 +103,8 @@ export const listTickets = query({
     if (me?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts).
+    await assertAdminIpVerified(ctx);
     const result = await ctx.db
       .query("supportTickets")
       .order("desc")
@@ -139,6 +142,8 @@ export const respondToTicket = mutation({
     if (me?.role !== "admin") {
       throw new Error("Admins only");
     }
+    // Backend-verified device gate (see adminIp.ts).
+    await assertAdminIpVerified(ctx);
     const ticket = await ctx.db.get(ticketId);
     if (ticket === null) {
       throw new Error("Ticket not found.");

@@ -1,4 +1,5 @@
 import { useAction, usePaginatedQuery, useQuery } from "convex/react";
+import { useAuthToken } from "@convex-dev/auth/react";
 import { motion } from "framer-motion";
 import {
   Ban,
@@ -36,6 +37,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AdminOfflineBanner } from "@/components/AdminOfflineBanner";
+import { verifyAdminIp } from "@/lib/admin-ip";
 import { cn } from "@/lib/utils";
 import { AiEvidencePanel } from "@/components/AiEvidencePanel";
 import { BlocklistPanel } from "@/components/BlocklistPanel";
@@ -480,6 +482,10 @@ function SuspendAccountDialog({
 export function Admin() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const token = useAuthToken();
+  const ipStatus = useQuery(api.adminIp.adminIpStatus);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   if (user && user.role !== "admin") {
     return (
@@ -497,6 +503,68 @@ export function Admin() {
   }
 
   if (!user) return null;
+
+  const retryVerify = async () => {
+    if (!token) return;
+    setVerifying(true);
+    setVerifyError(null);
+    try {
+      const result = await verifyAdminIp(token);
+      if (!result.ok) {
+        setVerifyError(result.error);
+      } else if (result.revoked) {
+        // The backend deleted this session (IP changed) — sign out.
+        await navigate("/");
+        window.location.reload();
+      }
+      // On success the adminIpStatus query re-runs and flips to verified.
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // Backend-verified device gate (see convex/adminIp.ts): while the first
+  // verify is in flight (or failed), show a focused screen instead of the
+  // dashboard — its queries would otherwise error out the moment they fire.
+  if (ipStatus === undefined) {
+    return (
+      <div className="flex min-h-[60dvh] flex-col items-center justify-center gap-3 p-8 text-center">
+        <Loader2 className="size-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Verifying device…</p>
+      </div>
+    );
+  }
+  if (ipStatus.verified !== true) {
+    return (
+      <div className="flex min-h-[60dvh] flex-col items-center justify-center gap-3 p-8 text-center">
+        <Shield className="size-10 text-primary" />
+        <h1 className="text-xl font-bold">Confirm this device</h1>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          Admin actions are bound to the IP this session signed in from.
+          PureWire is verifying that this browser is that device.
+        </p>
+        {verifyError ? (
+          <p className="text-xs text-destructive">{verifyError}</p>
+        ) : null}
+        <div className="flex gap-2">
+          <Button
+            disabled={verifying}
+            onClick={() => void retryVerify()}
+          >
+            {verifying ? (
+              <Loader2 className="mr-1 size-4 animate-spin" />
+            ) : null}
+            {verifying ? "Verifying…" : "Verify this device"}
+          </Button>
+          <Button variant="outline" onClick={() => navigate("/home")}>
+            Back to home
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return <AdminDashboard meId={user._id} />;
 }

@@ -56,6 +56,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../src/convex/_generated/api.js";
 import { passwordHint, resolveAdminPassword } from "./lib/qa-secrets.mjs";
 import { powProof } from "./lib/qa-pow.mjs";
+import { assertAdminIpVerified } from "./lib/qa-admin-ip.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -219,6 +220,10 @@ async function removeAccountChecks() {
       params: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, flow: "signIn" },
     });
     adminClient.setAuth(adminRes.tokens.token);
+    // Backend-verified device gate (see convex/adminIp.ts): bind the admin
+    // session to the backend-observed IP before calling admin-gated
+    // mutations, or requireAdmin refuses the removal.
+    await assertAdminIpVerified({ convexUrl: CONVEX_URL, token: adminRes.tokens.token });
     await adminClient.mutation(api.admin.removeAccount, {
       userId: created.userId,
       standardId: "no-spam",

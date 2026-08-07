@@ -676,6 +676,21 @@ const schema = defineSchema({
     regionToken: v.optional(v.string()),
     updatedAt: v.number(),
   }).index("by_session", ["sessionId"]),
+  // Backend-verified admin IP binding. Unlike sessionSignals (which the
+  // BROWSER computes and reports), this row is written by the
+  // /admin/ip/verify HTTP action from the IP address Convex's edge actually
+  // observed on the request (cf-connecting-ip / x-forwarded-for) — the
+  // admin can never claim an IP; the backend records what it saw. The raw
+  // address is never stored — only a salted one-way hash, matching the
+  // platform's "no IPs in the clear" posture. Admin power (requireAdmin)
+  // is gated on this binding being fresh, so a stolen session used from a
+  // different network is silently revoked the moment it re-verifies — and
+  // denied once the binding goes stale even if it never re-verifies.
+  adminIpBindings: defineTable({
+    sessionId: v.id("authSessions"),
+    ipHash: v.string(),
+    verifiedAt: v.number(),
+  }).index("by_session", ["sessionId"]),
   // Cache of the last scan verdict per URL. urlHash is an FNV-1a hash of
   // the normalized URL; the row remembers what the platform decided the
   // last time a link appeared, so admins can audit why a link was blocked

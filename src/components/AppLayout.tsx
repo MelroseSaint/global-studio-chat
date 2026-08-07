@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
+import { useAdminIpVerify } from "@/hooks/use-admin-ip-verify";
 import { detectAutomation } from "@/lib/automation-signal";
 import {
   clientRegionToken,
@@ -188,6 +189,26 @@ export function AppLayout() {
     }
   }, [user, sessionRevoked, reportAutomation]);
 
+  // Backend-verified admin device gate (see adminIp.ts): while the admin
+  // is signed in, the backend must keep OBSERVING this session's IP — the
+  // browser proves nothing on its own. Heartbeats every few minutes, and
+  // re-verifies on tab focus / reconnect. If the backend ever sees this
+  // session from a different IP it deletes the session and reports it
+  // revoked — we sign out immediately, so no admin power survives a
+  // cross-network replay.
+  const adminIpState = useAdminIpVerify({
+    enabled: isAdmin && !sessionRevoked,
+    onRevoked: async () => {
+      setSessionRevoked(true);
+      await signOut();
+    },
+  });
+  // The Admin entry (nav + badge) only appears once this device has been
+  // verified against the backend; while the first verify is in flight the
+  // admin simply sees no Admin menu rather than a flashing, half-usable
+  // dashboard. (The page itself also gates on adminIpStatus.)
+  const adminVerified = adminIpState === "verified";
+
   // PWA app-icon badge: the OS shows the pending moderation workload on the
   // installed PureWire icon so admins know there is work waiting even when
   // the app is closed. Only meaningful in a standalone-installed context;
@@ -266,7 +287,7 @@ export function AppLayout() {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="top" className="w-52">
-              {isAdmin ? (
+              {isAdmin && adminVerified ? (
                 <DropdownMenuItem
                   className="cursor-pointer"
                   onSelect={() => navigate("/admin")}
@@ -381,7 +402,7 @@ export function AppLayout() {
               <Settings />
               Settings
             </DropdownMenuItem>
-            {isAdmin ? (
+            {isAdmin && adminVerified ? (
               <DropdownMenuItem
                 className="cursor-pointer"
                 onSelect={() => navigate("/admin")}

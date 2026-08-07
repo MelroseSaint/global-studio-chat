@@ -22,6 +22,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { assertAdminIpVerified } from "./lib/qa-admin-ip.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -54,6 +55,9 @@ async function main() {
   }
   const adminClient = new ConvexHttpClient(CONVEX_URL);
   adminClient.setAuth(admin.token);
+  // Backend-verified device gate: bind the minted admin session to the
+  // backend-observed IP or removeAccount's requireAdmin gate refuses.
+  await assertAdminIpVerified({ convexUrl: CONVEX_URL, token: admin.token });
 
   // Paginate every user, collecting qa_* usernames.
   const targets = [];
