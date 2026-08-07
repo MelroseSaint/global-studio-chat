@@ -4,6 +4,7 @@
  * Rasterizes the brand mark (see scripts/brand.mjs) into PNG icons for the
  * web app manifest:
  *
+ *   public/icon-180.png          — apple-touch-icon 180px (Apple's ideal)
  *   public/icon-192.png          — standard 192px
  *   public/icon-512.png          — standard 512px
  *   public/icon-maskable-192.png — maskable 192px (safe-zone padding)
@@ -67,6 +68,7 @@ function render(size, maskable) {
 
 mkdirSync(OUT, { recursive: true });
 for (const [name, size, maskable] of [
+  ["icon-180.png", 180, false],
   ["icon-192.png", 192, false],
   ["icon-512.png", 512, false],
   ["icon-maskable-192.png", 192, true],
