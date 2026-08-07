@@ -64,6 +64,18 @@ export default async function middleware(
         },
       });
     }
+    if (res.status === 404) {
+      // The post/profile doesn't exist (or is hidden) — forward the backend's
+      // noindex 404 page so crawlers don't index a phantom URL, instead of
+      // serving the SPA shell at 200.
+      return new Response(await res.text(), {
+        status: 404,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "public, max-age=60, s-maxage=300",
+        },
+      });
+    }
   } catch {
     // Backend hiccup — fall through to the SPA rather than failing the fetch.
   }
