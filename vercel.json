@@ -3,7 +3,8 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "rewrites": [
+  "routes": [
+    { "handle": "filesystem" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [
