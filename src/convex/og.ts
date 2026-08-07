@@ -25,8 +25,14 @@ import { httpAction } from "./_generated/server";
 
 import { api } from "./_generated/api";
 
-/** Production frontend origin, overridable via the Convex env var. */
-const SITE_URL = (process.env.VITE_SITE_URL ?? "https://purewire.vercel.app").replace(
+/**
+ * Production frontend origin — repo-owned default, kept in sync with the
+ * siteUrl() plugin in vite.config.ts. Override via the Convex env var
+ * PUREWIRE_SITE_URL when a custom domain lands. The old VITE_SITE_URL name
+ * is deliberately NOT read: a stale value there is exactly what shipped the
+ * Convex static-hosting host in share tags.
+ */
+const SITE_URL = (process.env.PUREWIRE_SITE_URL ?? "https://purewire.vercel.app").replace(
   /\/$/,
   "",
 );

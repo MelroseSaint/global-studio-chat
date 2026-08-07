@@ -23,6 +23,19 @@ const SITE_URL_DEFAULT = "https://purewire.vercel.app";
 function siteUrl(): Plugin {
   return {
     name: "purewire-site-url",
+    configResolved() {
+      // The stale dashboard var is what shipped the Convex host in the
+      // canonical/OG tags. It is deliberately NOT read anymore — but if it
+      // still exists in the Vercel project env (or a local env file), say so
+      // loudly so it gets removed instead of confusing the next operator.
+      if (process.env.VITE_SITE_URL) {
+        console.warn(
+          "[purewire-site-url] VITE_SITE_URL is set but ignored — the canonical " +
+            "host is repo-owned (PUREWIRE_SITE_URL or the default). Remove " +
+            "VITE_SITE_URL from the Vercel project env to avoid confusion.",
+        );
+      }
+    },
     transformIndexHtml(html) {
       // process.env, not loadEnv: the override is an environment variable
       // (CI/Vercel), and hardcoding a mode would misbehave under `vite dev`.

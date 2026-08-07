@@ -71,24 +71,36 @@ jobs:
           name: healthcheck-log
           path: healthcheck.log
 
-      # SEO basics guard: the canonical host must be the production host
-      # (never the Convex static-hosting mirror), the OG locale must be
-      # present, and robots.txt + the XML sitemap must be served. A
-      # regression here is silent, so it fails the job and the alert step
-      # below opens an issue.
-      - name: SEO basics guard (canonical, robots, sitemap)
+      # SEO basics guard: every URL-bearing meta tag on the live homepage
+      # must resolve to the EXPECTED_SITE_URL host (never the Convex
+      # static-hosting mirror or a stale VITE_SITE_URL dashboard var), the
+      # OG locale must be present, and robots.txt + the XML sitemap must be
+      # served. A regression here is silent, so it fails the job and the
+      # alert step below opens an issue.
+      - name: SEO basics guard (canonical host, OG tags, robots, sitemap)
+        env:
+          # The one true host. Bump this here when a custom domain lands
+          # (and the PUREWIRE_SITE_URL default in vite.config.ts).
+          EXPECTED_SITE_URL: https://purewire.vercel.app
         run: |
           set -euo pipefail
-          html="$(curl -fsSL https://purewire.vercel.app/)"
-          echo "$html" | grep -q 'rel="canonical" href="https://purewire.vercel.app' \
-            || { echo "::error::canonical host is not purewire.vercel.app"; exit 1; }
+          html="$(curl -fsSL "$EXPECTED_SITE_URL/")"
+          for tag in \
+            'rel="canonical" href="' \
+            'property="og:url" content="' \
+            'property="og:image" content="' \
+            'name="twitter:image" content="' \
+            '"url": "' ; do
+            echo "$html" | grep -qF "${tag}${EXPECTED_SITE_URL}" \
+              || { echo "::error::tag '${tag}' does not resolve to $EXPECTED_SITE_URL"; exit 1; }
+          done
           echo "$html" | grep -q 'property="og:locale"' \
             || { echo "::error::og:locale meta is missing"; exit 1; }
-          curl -fsSL https://purewire.vercel.app/robots.txt | grep -qi "sitemap:" \
+          curl -fsSL "$EXPECTED_SITE_URL/robots.txt" | grep -qi "sitemap:" \
             || { echo "::error::robots.txt is not served"; exit 1; }
-          curl -fsSL https://purewire.vercel.app/sitemap.xml | grep -q "<urlset" \
+          curl -fsSL "$EXPECTED_SITE_URL/sitemap.xml" | grep -q "<urlset" \
             || { echo "::error::sitemap.xml is not served"; exit 1; }
-          echo "SEO basics OK"
+          echo "SEO basics OK: canonical + OG/twitter tags on $EXPECTED_SITE_URL"
 
       # Alerting: GitHub already emails on failed runs. This also opens a
       # single persistent issue (label prod-healthcheck) so a failing nightly
