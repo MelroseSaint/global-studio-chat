@@ -466,6 +466,13 @@ export function PostCard({
             <span>{formatCount(post.commentCount + localComments)}</span>
           </button>
 
+          <Link
+            to={`/post/${post._id}`}
+            className="rounded-full px-2 py-1 text-xs font-medium text-muted-foreground/80 transition-colors hover:bg-primary/10 hover:text-primary hover:underline"
+          >
+            View comments
+          </Link>
+
           <button
             onClick={() => setShareOpen(true)}
             className="flex items-center gap-1.5 rounded-full px-2 py-1 text-sm transition-colors hover:bg-primary/10 hover:text-primary"
