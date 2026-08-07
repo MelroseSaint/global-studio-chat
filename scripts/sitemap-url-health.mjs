@@ -29,6 +29,20 @@ const CRAWLER_UA =
 
 const SPA_MARKER = '<div id="root">';
 const MAX_PER_CLASS = 8; // newest-first sample from the sitemap
+const siteHost = new URL(SITE).hostname;
+
+// The canonical tag as a normalized absolute URL, or null when missing/
+// malformed. Trailing slashes are stripped so a canonical that matches the
+// sitemap URL modulo a trailing slash does not false-fail.
+const canonicalOf = (body) => {
+  const m = body.match(/<link rel="canonical" href="([^"]+)"/i);
+  if (!m) return null;
+  try {
+    return new URL(m[1].replace(/&amp;/g, "&")).href.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+};
 
 let checks = 0;
 let passed = 0;
@@ -78,19 +92,34 @@ const main = async () => {
       });
       const body = await res.text();
       const isShell = body.includes(SPA_MARKER);
+      const canonical = canonicalOf(body);
+      // No redirect drift: the fetch must land on the exact sitemap URL
+      // (a 301/308 hop to a trailing-slash or host variant is drift).
+      const noRedirect = res.url === url;
       if (expectedLd === null) {
-        // Fixed page: SPA route, the app shell IS its real content.
+        // Fixed page: SPA route, the app shell IS its real content, and the
+        // canonical is the site root by design (per-page canonicals are
+        // applied client-side). So assert the canonical HOST cannot drift —
+        // e.g. to the Convex mirror or a stale dashboard host.
+        const canonicalOk =
+          canonical !== null && new URL(canonical).hostname === siteHost;
         check(
           url,
-          res.status === 200 && isShell,
-          `status ${res.status}, shell=${isShell}`,
+          res.status === 200 && isShell && noRedirect && canonicalOk,
+          `status ${res.status}, shell=${isShell}, canonical=${canonical ?? "MISSING"}`,
         );
       } else {
         const ldOk = body.includes(expectedLd);
+        // Canonicalization guard: the canonical tag must EXACTLY equal the
+        // sitemap URL — no host, path, trailing-slash, or redirect drift —
+        // so a regression surfaces instead of silently self-canonicalizing
+        // to a different URL and wasting crawl equity.
+        const canonicalOk = canonical === url;
         check(
           url,
-          res.status === 200 && !isShell && ldOk,
-          `status ${res.status}, shell=${isShell}, JSON-LD=${ldOk ? "ok" : "MISSING"}`,
+          res.status === 200 && !isShell && ldOk && noRedirect && canonicalOk,
+          `status ${res.status}, shell=${isShell}, JSON-LD=${ldOk ? "ok" : "MISSING"}, ` +
+            `canonical=${canonicalOk ? "MATCH" : `${canonical ?? "MISSING"} != ${url}`}`,
         );
       }
     } catch (err) {
