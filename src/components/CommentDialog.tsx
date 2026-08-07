@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
+import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import type { PostItem } from "@/components/PostCard";
 import { PostMediaGrid, RichText } from "@/components/SharedPostEmbed";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -60,6 +61,8 @@ interface PreviewComment {
   _creationTime: number;
   editedAt?: number;
   likeCount?: number;
+  parentId?: string;
+  replyCount?: number;
   likedByMe: boolean;
 }
 
@@ -92,6 +95,10 @@ function CommentPreview({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [busy, setBusy] = useState(false);
+  // Which preview comment's inline reply composer is open.
+  const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   const comments = results as unknown as PreviewComment[];
 
   if (status === "LoadingFirstPage" || comments.length === 0) return null;
@@ -200,12 +207,27 @@ function CommentPreview({
                       <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
                         {c.content}
                       </p>
-                      <div className="mt-1">
+                      <div className="mt-1 flex items-center gap-3">
                         <CommentLikeButton
                           commentId={c._id as Id<"comments">}
                           likedByMe={c.likedByMe}
                           likeCount={c.likeCount ?? 0}
                         />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setReplyTo({
+                              id: c._id,
+                              name:
+                                c.author?.name ||
+                                c.author?.username ||
+                                "them",
+                            })
+                          }
+                          className="text-xs font-semibold text-muted-foreground transition-colors hover:text-primary"
+                        >
+                          Reply
+                        </button>
                       </div>
                     </div>
                     {isMine && (
@@ -239,6 +261,26 @@ function CommentPreview({
                     )}
                   </div>
                 )}
+                {replyTo?.id === c._id ? (
+                  <div className="mt-2">
+                    <CommentReplyComposer
+                      postId={postId}
+                      parentId={c._id as Id<"comments">}
+                      replyToName={replyTo.name}
+                      powChallenge={powChallenge}
+                      onCancel={() => setReplyTo(null)}
+                      onPosted={() => setReplyTo(null)}
+                      autoFocus
+                    />
+                  </div>
+                ) : null}
+                <CommentReplies
+                  postId={postId}
+                  parentId={c._id as Id<"comments">}
+                  replyCount={c.replyCount ?? 0}
+                  viewerId={viewerId}
+                  powChallenge={powChallenge}
+                />
               </div>
             </div>
           );

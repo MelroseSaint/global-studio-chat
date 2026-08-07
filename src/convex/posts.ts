@@ -1284,12 +1284,16 @@ export const addComment = mutation({
   args: {
     postId: v.id("posts"),
     content: v.string(),
+    // When set, this is a reply to that comment. Replies to a reply are
+    // re-rooted to the top-level comment, so parentId always lands on a
+    // top-level comment and the tree stays one level deep.
+    parentId: v.optional(v.id("comments")),
     // Client-side proof-of-work, same scheme as createPost.
     powChallenge: v.optional(v.string()),
     powNonce: v.optional(v.string()),
     powIssuedAt: v.optional(v.number()),
   },
-  handler: async (ctx, { postId, content, powChallenge, powNonce, powIssuedAt }) => {
+  handler: async (ctx, { postId, content, parentId: parentArg, powChallenge, powNonce, powIssuedAt }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
@@ -1306,6 +1310,20 @@ export const addComment = mutation({
     if (lockPost !== null && lockPost.commentsLocked === true) {
       throw new Error("Comments are disabled on this post.");
     }
+    // Threaded replies: the parent must exist on the same post, and a reply
+    // to a reply is re-rooted to the top-level comment so every reply hangs
+    // directly under one parent. The parent's author gets the "reply"
+    // notification instead of the post author.
+    let parentId: Id<"comments"> | undefined;
+    let parentAuthorId: Id<"users"> | null = null;
+    if (parentArg !== undefined) {
+      const parent = await ctx.db.get(parentArg);
+      if (parent === null || parent.postId !== postId) {
+        throw new Error("That comment isn't on this post.");
+      }
+      parentId = parent.parentId ?? parent._id;
+      parentAuthorId = parent.authorId;
+    }
     // A sandboxed account's comment is silently absorbed — stored for their
     // own UI but invisible to the author and everyone else.
     if (await isSandboxed(ctx, userId)) {
@@ -1315,6 +1333,7 @@ export const addComment = mutation({
           postId,
           authorId: userId,
           content: text,
+          parentId,
         });
       }
       return { ok: true };
@@ -1390,9 +1409,29 @@ export const addComment = mutation({
       postId,
       authorId: userId,
       content: text,
+      parentId,
     });
     await ctx.db.patch(postId, { commentCount: post.commentCount + 1 });
-    if (post.authorId !== userId) {
+    // A reply notifies the comment author they got a reply; a top-level
+    // comment notifies the post author as before. Never self-notify.
+    if (parentId !== undefined) {
+      if (parentAuthorId !== null && parentAuthorId !== userId) {
+        await ctx.db.insert("notifications", {
+          userId: parentAuthorId,
+          type: "reply",
+          actorId: userId,
+          postId,
+          read: false,
+        });
+      }
+      // The reply counter on the top-level comment this hangs under.
+      const root = await ctx.db.get(parentId);
+      if (root !== null) {
+        await ctx.db.patch(parentId, {
+          replyCount: (root.replyCount ?? 0) + 1,
+        });
+      }
+    } else if (post.authorId !== userId) {
       await ctx.db.insert("notifications", {
         userId: post.authorId,
         type: "comment",
@@ -1423,12 +1462,79 @@ export const listComments = query({
       sort === "top"
         ? await ctx.db
             .query("comments")
-            .withIndex("by_post_likes", (q) => q.eq("postId", postId))
+            .withIndex("by_post_parent_likes", (q) =>
+              q.eq("postId", postId).eq("parentId", undefined),
+            )
             .order("desc")
             .paginate(paginationOpts)
         : await ctx.db
             .query("comments")
-            .withIndex("by_post", (q) => q.eq("postId", postId))
+            .withIndex("by_post_parent", (q) =>
+              q.eq("postId", postId).eq("parentId", undefined),
+            )
+            .order("desc")
+            .paginate(paginationOpts);
+    const visible = result.page.filter((c) => !excluded.includes(c.authorId));
+    const page = await Promise.all(
+      visible.map(async (c) => {
+        const author = await ctx.db.get(c.authorId);
+        let likedByMe = false;
+        if (viewerId !== null) {
+          const like = await ctx.db
+            .query("commentLikes")
+            .withIndex("by_pair", (q) =>
+              q.eq("userId", viewerId).eq("commentId", c._id),
+            )
+            .first();
+          likedByMe = like !== null;
+        }
+        return {
+          ...c,
+          author: author ? publicUser(author) : null,
+          likeCount: c.likeCount ?? 0,
+          // Replies only — top-level comments report how many hang under
+          // them so the UI can show the "View N replies" toggle.
+          replyCount: c.replyCount ?? 0,
+          likedByMe,
+        };
+      }),
+    );
+    return { ...result, page };
+  },
+});
+
+/**
+ * The replies hanging under one top-level comment, newest-first. Rendered
+ * inside the comment's expandable "View replies" section on the post page
+ * and in the popup preview. Same enrichment as listComments, so a reply
+ * row behaves exactly like a comment row (author, like, edit, delete).
+ */
+export const listReplies = query({
+  args: {
+    postId: v.id("posts"),
+    parentId: v.id("comments"),
+    paginationOpts: paginationOptsValidator,
+    sort: v.optional(v.union(v.literal("newest"), v.literal("top"))),
+  },
+  handler: async (ctx, { postId, parentId, paginationOpts, sort }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const hidden = await hiddenAuthorIds(ctx, viewerId);
+    const silenced = await silencedAuthorIds(ctx, viewerId);
+    const excluded = [...hidden, ...silenced];
+    const result =
+      sort === "top"
+        ? await ctx.db
+            .query("comments")
+            .withIndex("by_post_parent_likes", (q) =>
+              q.eq("postId", postId).eq("parentId", parentId),
+            )
+            .order("desc")
+            .paginate(paginationOpts)
+        : await ctx.db
+            .query("comments")
+            .withIndex("by_post_parent", (q) =>
+              q.eq("postId", postId).eq("parentId", parentId),
+            )
             .order("desc")
             .paginate(paginationOpts);
     const visible = result.page.filter((c) => !excluded.includes(c.authorId));
@@ -1478,12 +1584,39 @@ export const deleteComment = mutation({
       throw new Error("You can only delete your own comments.");
     }
     const post = await ctx.db.get(comment.postId);
+    // Replies die with their parent — each sweeps its own likes first — and
+    // every removed row is accounted in the post's commentCount below. The
+    // bounded sweep loop (not a collect) matches the erasure path, so a
+    // very long reply thread can't balloon one mutation's memory.
+    let removed = 1;
+    for (;;) {
+      const children = await ctx.db
+        .query("comments")
+        .withIndex("by_parent", (q) => q.eq("parentId", commentId))
+        .take(500);
+      if (children.length === 0) break;
+      removed += children.length;
+      for (const child of children) {
+        await sweepCommentLikes(ctx, child._id);
+        await ctx.db.delete(child._id);
+      }
+    }
+    // If this comment was itself a reply, the parent's replyCount drops by
+    // one (the parent survives; it just lost a reply).
+    if (comment.parentId !== undefined) {
+      const parent = await ctx.db.get(comment.parentId);
+      if (parent !== null) {
+        await ctx.db.patch(parent._id, {
+          replyCount: Math.max(0, (parent.replyCount ?? 0) - 1),
+        });
+      }
+    }
     // A sandboxed author's comment was inserted without ever incrementing
     // the post's commentCount (see addComment's sandbox path), so deleting
     // it must not decrement either — otherwise the count would drift.
     if (post !== null && !(await isSandboxed(ctx, comment.authorId))) {
       await ctx.db.patch(post._id, {
-        commentCount: Math.max(0, post.commentCount - 1),
+        commentCount: Math.max(0, post.commentCount - removed),
       });
     }
     // The comment's likes die with it — no orphan rows keyed to a deleted

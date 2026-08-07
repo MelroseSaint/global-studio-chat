@@ -356,12 +356,25 @@ const schema = defineSchema({
     // like/unlike — the same counter discipline as posts.likeCount. A
     // sandboxed account's absorbed like inserts a row without bumping it.
     likeCount: v.optional(v.number()),
+    // Threaded replies: points at the top-level comment this replies to;
+    // absent = top-level. Replies to a reply are re-rooted to the top-level
+    // comment on insert, so the tree stays one level deep.
+    parentId: v.optional(v.id("comments")),
+    // Denormalized count of the replies hanging under this comment, patched
+    // on reply/delete — the same counter discipline as posts.commentCount.
+    replyCount: v.optional(v.number()),
   })
     .index("by_post", ["postId"])
     .index("by_author", ["authorId"])
-    // Serves the "Top" comment sort: a thread ordered by like count
-    // (highest first) instead of newest-first.
-    .index("by_post_likes", ["postId", "likeCount"]),
+    // Serves the "Top" comment sort (thread ordered by like count, highest
+    // first) and the "Newest" sort, each restricted to top-level comments:
+    // parentId is part of the key so undefined parents can be filtered
+    // inside the index instead of post-paginate.
+    .index("by_post_parent", ["postId", "parentId"])
+    .index("by_post_parent_likes", ["postId", "parentId", "likeCount"])
+    // Reply sweeps: finding every reply hanging under a comment when the
+    // comment dies (user delete, post delete, account erasure).
+    .index("by_parent", ["parentId"]),
   commentLikes: defineTable({
     commentId: v.id("comments"),
     userId: v.id("users"),
@@ -382,6 +395,7 @@ const schema = defineSchema({
       v.literal("follow"),
       v.literal("like"),
       v.literal("comment"),
+      v.literal("reply"),
       v.literal("share"),
       v.literal("mention"),
       v.literal("system"),

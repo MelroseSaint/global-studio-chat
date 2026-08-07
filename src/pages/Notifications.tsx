@@ -11,6 +11,7 @@ import {
   Mail,
   MessageCircle,
   Repeat2,
+  Reply,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const ICONS = {
   follow: UserPlus,
   like: Heart,
   comment: MessageCircle,
+  reply: Reply,
   share: Repeat2,
   mention: AtSign,
   system: Bell,
@@ -101,6 +103,12 @@ export function Notifications() {
         return (
           <>
             <b>{who}</b> commented on your post
+          </>
+        );
+      case "reply":
+        return (
+          <>
+            <b>{who}</b> replied to your comment
           </>
         );
       case "share":

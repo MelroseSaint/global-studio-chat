@@ -92,6 +92,8 @@ export const exportMyData = query({
       comments: comments.map((c) => ({
         id: c._id,
         postId: c.postId,
+        // The top-level comment this replies to, when it's a reply.
+        parentId: c.parentId ?? null,
         createdAt: c._creationTime,
         content: c.content,
       })),

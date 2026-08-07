@@ -155,10 +155,10 @@ export const backfillRemovalLog = internalMutation({
  * One-pass backfill of comments.likeCount to 0.
  *
  * Comments created before the like feature keep likeCount undefined. The
- * "Top" comment sort's by_post_likes index handles that fine (missing
- * values sort last under order("desc")), but an explicit 0 makes ordering
- * fully deterministic and matches the docs-recommended practice of
- * defaulting indexed counters. Idempotent — rows that already carry a
+ * "Top" comment sort's by_post_parent_likes index handles that fine
+ * (missing values sort last under order("desc")), but an explicit 0 makes
+ * ordering fully deterministic and matches the docs-recommended practice
+ * of defaulting indexed counters. Idempotent — rows that already carry a
  * number are skipped. Run it with:
  *
  *   npx convex run internal.migrations.backfillCommentLikeCounts

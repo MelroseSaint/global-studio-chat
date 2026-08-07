@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
+import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
@@ -171,6 +172,10 @@ export function PostDetail() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  // Which comment's inline reply composer is open (its id + display name).
+  const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     if (inView && status === "CanLoadMore") {
@@ -207,6 +212,10 @@ export function PostDetail() {
     _creationTime: number;
     editedAt?: number;
     likeCount?: number;
+    // Replies only: which top-level comment this hangs under, and how many
+    // replies hang under the comment itself.
+    parentId?: string;
+    replyCount?: number;
     likedByMe: boolean;
   }[];
 
@@ -455,15 +464,50 @@ export function PostDetail() {
                           )}
                         </button>
                       ) : null}
-                      <div className="mt-1.5">
+                      <div className="mt-1.5 flex items-center gap-3">
                         <CommentLikeButton
                           commentId={c._id as Id<"comments">}
                           likedByMe={c.likedByMe}
                           likeCount={c.likeCount ?? 0}
                         />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setReplyTo({
+                              id: c._id,
+                              name:
+                                c.author?.name ||
+                                c.author?.username ||
+                                "them",
+                            })
+                          }
+                          className="text-xs font-semibold text-muted-foreground transition-colors hover:text-primary"
+                        >
+                          Reply
+                        </button>
                       </div>
                     </div>
                   )}
+                  {replyTo?.id === c._id ? (
+                    <div className="mt-2">
+                      <CommentReplyComposer
+                        postId={postIdTyped}
+                        parentId={c._id as Id<"comments">}
+                        replyToName={replyTo.name}
+                        powChallenge={powChallenge}
+                        onCancel={() => setReplyTo(null)}
+                        onPosted={() => setReplyTo(null)}
+                        autoFocus
+                      />
+                    </div>
+                  ) : null}
+                  <CommentReplies
+                    postId={postIdTyped}
+                    parentId={c._id as Id<"comments">}
+                    replyCount={c.replyCount ?? 0}
+                    viewerId={user?._id}
+                    powChallenge={powChallenge}
+                  />
                 </div>
             <CommentMenu
               postId={postIdTyped}

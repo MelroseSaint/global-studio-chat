@@ -4,6 +4,7 @@ import { SignJWT, importPKCS8 } from "jose";
 
 import { ADMIN_EMAIL } from "./auth";
 
+import { sweepCommentLikes } from "./mediaCleanup";
 import {
   mutation,
   query,
@@ -559,6 +560,33 @@ async function countByCommentIndex(
 }
 
 /**
+ * Count the replies hanging under one comment — the same bounded cursor
+ * pattern as countByCommentIndex, but over the comments table's by_parent
+ * index. Drives the comments.replyCount reconcile.
+ */
+async function countByParentIndex(
+  ctx: MutationCtx,
+  parentId: Id<"comments">,
+): Promise<number> {
+  let total = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const rows = await ctx.db
+      .query("comments")
+      .withIndex("by_parent", (q) => q.eq("parentId", parentId))
+      .order("asc")
+      .filter((q) =>
+        q.gt(q.field("_id"), (cursor ?? "") as Id<"comments">),
+      )
+      .take(500);
+    if (rows.length === 0) break;
+    total += rows.length;
+    cursor = rows[rows.length - 1]._id;
+  }
+  return total;
+}
+
+/**
  * Sweep orphan engagement rows and reconcile every post's engagement
  * counters against the actual tables. Two jobs:
  *
@@ -633,9 +661,20 @@ export const reconcileEngagementCounts = mutation({
         if (rows.length === 0) break;
         for (const row of rows) {
           commentsSeen++;
-          if ((await ctx.db.get(row.postId)) === null) {
+          const post = await ctx.db.get(row.postId);
+          if (post === null) {
             await ctx.db.delete(row._id);
             orphanComments.push({ rowId: row._id, postId: row.postId });
+          } else if (row.parentId !== undefined) {
+            // Replies: the parent must still exist on the same post (left
+            // behind by interrupted erasures or stale re-roots). Orphans
+            // are deleted — with their likes — like any other orphan.
+            const parent = await ctx.db.get(row.parentId);
+            if (parent === null || parent.postId !== row.postId) {
+              await sweepCommentLikes(ctx, row._id);
+              await ctx.db.delete(row._id);
+              orphanComments.push({ rowId: row._id, postId: row.postId });
+            }
           }
           commentCursor = row._id;
         }
@@ -727,8 +766,8 @@ export const reconcileEngagementCounts = mutation({
       // to the count of its surviving commentLikes rows.
       const fixedComments: Array<{
         commentId: Id<"comments">;
-        was: number;
-        now: number;
+        was: { likeCount: number; replyCount: number };
+        now: { likeCount: number; replyCount: number };
       }> = [];
       let commentsReconciled = 0;
       let postsSeen = 0;
@@ -785,10 +824,12 @@ export const reconcileEngagementCounts = mutation({
         for (const comment of comments) {
           commentsReconciled++;
           const likeCount = await countByCommentIndex(ctx, comment._id);
-          const was = comment.likeCount ?? 0;
-          if (was !== likeCount) {
-            await ctx.db.patch(comment._id, { likeCount });
-            fixedComments.push({ commentId: comment._id, was, now: likeCount });
+          const replyCount = await countByParentIndex(ctx, comment._id);
+          const was = { likeCount: comment.likeCount ?? 0, replyCount: comment.replyCount ?? 0 };
+          const now = { likeCount, replyCount };
+          if (was.likeCount !== now.likeCount || was.replyCount !== now.replyCount) {
+            await ctx.db.patch(comment._id, now);
+            fixedComments.push({ commentId: comment._id, was, now });
           }
           commentReconcileCursor = comment._id;
         }

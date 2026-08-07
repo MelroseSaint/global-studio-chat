@@ -282,6 +282,32 @@ export async function eraseAccount(
         return;
       }
       affectedPosts.add(comment.postId);
+      // If this comment was a reply, its parent's replyCount drops by one
+      // (the parent is someone else's comment and survives erasure).
+      if (comment.parentId !== undefined) {
+        const parent = await c.db.get(comment.parentId);
+        if (parent !== null) {
+          await c.db.patch(parent._id, {
+            replyCount: Math.max(0, (parent.replyCount ?? 0) - 1),
+          });
+        }
+      }
+      // Replies to this comment die with it (each sweeping its own likes),
+      // so no reply ever dangles under a deleted parent — the same cascade
+      // as deleteComment. Post counts are recomputed from surviving rows
+      // below, so no manual bookkeeping here.
+      for (;;) {
+        const children = await c.db
+          .query("comments")
+          .withIndex("by_parent", (q) => q.eq("parentId", comment._id))
+          .take(SWEEP);
+        if (children.length === 0) break;
+        for (const child of children) {
+          affectedPosts.add(child.postId);
+          await sweepCommentLikes(c, child._id);
+          await c.db.delete(child._id);
+        }
+      }
       // The comment's likes die with it.
       await sweepCommentLikes(c, comment._id);
       await c.db.delete(comment._id);

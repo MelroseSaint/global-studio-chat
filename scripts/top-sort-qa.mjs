@@ -309,6 +309,96 @@ async function main() {
       "browser: popup post preview shows the post's comment count (4 comments)",
       (await dialog.getByText("4 comments").count()) >= 1,
     );
+
+    // ── 5. Threaded replies ───────────────────────────────────────────────
+    // Close the popup so the thread behind is interactive again.
+    await dialog.getByRole("button", { name: "Close" }).click();
+    await page.waitForTimeout(400);
+
+    // Reply to c4 ("four") through the same mutation the UI calls. The
+    // reply must stay OUT of the top-level list, bump four's replyCount to
+    // 1, and be returned by listReplies under four.
+    const replyRes = await client.mutation(api.posts.addComment, {
+      postId,
+      parentId: c4._id,
+      content: `reply to four ${ts}`,
+      ...(await powProof(client)),
+    });
+    check("reply to 'four' posted", replyRes.ok === true, replyRes.error);
+    await sleep(400);
+    const topAfter = await client.query(api.posts.listComments, {
+      postId,
+      sort: "top",
+      paginationOpts,
+    });
+    check(
+      "top-level list excludes the reply",
+      topAfter.page.every((c) => c.content.split(" ")[0] !== "reply"),
+      JSON.stringify(topAfter.page.map((c) => c.content.split(" ")[0])),
+    );
+    check(
+      "four's replyCount is 1",
+      topAfter.page[0].replyCount === 1,
+      JSON.stringify(topAfter.page.map((c) => c.replyCount)),
+    );
+    const replies = await client.query(api.posts.listReplies, {
+      postId,
+      parentId: c4._id,
+      sort: "newest",
+      paginationOpts,
+    });
+    check(
+      "listReplies returns the reply under four",
+      replies.page.length === 1 &&
+        replies.page[0].content.startsWith("reply to four"),
+      JSON.stringify(replies.page.map((c) => c.content)),
+    );
+
+    // Browser: the thread shows "View 1 reply" under four; expanding shows
+    // the reply nested beneath it.
+    await page
+      .getByText("View 1 reply")
+      .first()
+      .waitFor({ timeout: NAV_TIMEOUT });
+    check("browser: 'View 1 reply' appears under the comment", true);
+    await page.getByText("View 1 reply").first().click();
+    await page
+      .getByText(`reply to four ${ts}`)
+      .first()
+      .waitFor({ timeout: NAV_TIMEOUT });
+    check("browser: expanding shows the reply nested under four", true);
+
+    // Popup: reopening shows the reply under four too.
+    await page.getByRole("button", { name: "Comment on this post" }).click();
+    await dialog.waitFor({ timeout: NAV_TIMEOUT });
+    await dialog
+      .getByText("View 1 reply")
+      .first()
+      .waitFor({ timeout: NAV_TIMEOUT });
+    check("browser: popup preview shows 'View 1 reply' under four", true);
+    await dialog.getByText("View 1 reply").first().click();
+    await dialog
+      .getByText(`reply to four ${ts}`)
+      .first()
+      .waitFor({ timeout: NAV_TIMEOUT });
+    check("browser: popup reply list shows the reply", true);
+
+    // Deleting the reply drops replyCount back to 0 — count bookkeeping
+    // stays honest end to end.
+    await client.mutation(api.posts.deleteComment, {
+      commentId: replies.page[0]._id,
+    });
+    await sleep(400);
+    const afterDelete = await client.query(api.posts.listComments, {
+      postId,
+      sort: "top",
+      paginationOpts,
+    });
+    check(
+      "replyCount returns to 0 after deleting the reply",
+      afterDelete.page[0].replyCount === 0,
+      String(afterDelete.page[0].replyCount),
+    );
   } finally {
     // ── 5. Cleanup: the throwaway post dies with its comments and likes ────
     if (client !== null && postId !== null) {
