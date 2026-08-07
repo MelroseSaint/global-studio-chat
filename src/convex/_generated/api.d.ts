@@ -39,6 +39,7 @@ import type * as pow from "../pow.js";
 import type * as privacy from "../privacy.js";
 import type * as security from "../security.js";
 import type * as sessionAudit from "../sessionAudit.js";
+import type * as sitemap from "../sitemap.js";
 import type * as staticHosting from "../staticHosting.js";
 import type * as status from "../status.js";
 import type * as stories from "../stories.js";
@@ -85,6 +86,7 @@ declare const fullApi: ApiFromModules<{
   privacy: typeof privacy;
   security: typeof security;
   sessionAudit: typeof sessionAudit;
+  sitemap: typeof sitemap;
   staticHosting: typeof staticHosting;
   status: typeof status;
   stories: typeof stories;
