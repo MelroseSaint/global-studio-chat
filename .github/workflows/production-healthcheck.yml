@@ -969,6 +969,116 @@ jobs:
               console.log(`Closed PWA install-hint alert issue #${issue.number}.`);
             }
 
+  shared-video-autoplay:
+    # Verifies the useDevice()-driven autoplay policy for shared-post
+    # videos on the live site: a real DM-shared video post renders without
+    # autoplay on an emulated iPhone and WITH autoplay on desktop. Guards
+    # the policy (src/lib/shared-video-autoplay.ts) so iOS never burns
+    # cellular data autoplaying videos and desktop never loses autoplay.
+    name: Shared-video autoplay policy (live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the shared-video autoplay QA
+        run: npm run qa:shared-video-autoplay 2>&1 | tee shared-video-autoplay.log
+
+      - name: Upload the shared-video autoplay log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-video-autoplay-log
+          path: shared-video-autoplay.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-shared-video-autoplay";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Shared-video autoplay regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The shared-post video autoplay policy failed its live QA:",
+                "videos autoplay on iOS (burning cellular data) or fail to",
+                "autoplay on desktop.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the shared-video-autoplay-log artifact. This issue is",
+                "closed automatically on the next passing QA.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-shared-video-autoplay";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open shared-video autoplay alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed shared-video autoplay alert issue #${issue.number}.`);
+            }
+
   dm-share-qa:
     # Two-user share-a-post-into-a-DM verification against production
     # (scripts/dm-share-qa.mjs): the backend round trip (keys, post,

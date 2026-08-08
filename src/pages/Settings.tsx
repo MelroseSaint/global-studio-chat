@@ -51,8 +51,10 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
 import { isValidUsername, PLATFORM_OPTIONS } from "@/lib/format";
+import { useSharedVideoAutoplay } from "@/lib/shared-video-autoplay";
 import { cn } from "@/lib/utils";
 
 interface LinkRow {
@@ -72,6 +74,9 @@ export function Settings() {
 }
 
 function SettingsForm({ user }: { user: Profile }) {
+  // Shared-post video autoplay: a user-facing override for the device
+  // policy (off on iOS/cellular by default — see lib/shared-video-autoplay).
+  const { autoplay, preference, setPreference } = useSharedVideoAutoplay();
   const updateProfile = useMutation(api.users.updateProfile);
   const deleteAccount = useMutation(api.account.deleteAccount);
   const currentSession = useQuery(api.account.getCurrentSession);
@@ -304,6 +309,39 @@ function SettingsForm({ user }: { user: Profile }) {
               />
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Media</CardTitle>
+          <CardDescription>
+            Save data and battery when you&apos;re on a phone.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <Label htmlFor="shared-video-autoplay">
+                Play videos in shared posts automatically
+              </Label>
+              <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                Off by default on iPhone/iPad and data-saving connections —
+                shared-post videos then wait for your tap.
+              </p>
+            </div>
+            <Switch
+              id="shared-video-autoplay"
+              aria-label="Play videos in shared posts automatically"
+              checked={autoplay}
+              onCheckedChange={(on) => setPreference(on)}
+            />
+          </div>
+          {preference === "auto" && (
+            <p className="text-xs italic text-muted-foreground">
+              Currently following the device default.
+            </p>
+          )}
         </CardContent>
       </Card>
 

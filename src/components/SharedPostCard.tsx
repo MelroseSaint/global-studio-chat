@@ -5,6 +5,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { PostItem } from "@/components/PostCard";
 import { SharedPostEmbed } from "@/components/SharedPostEmbed";
+import { useSharedVideoAutoplay } from "@/lib/shared-video-autoplay";
 
 /**
  * A post referenced by id, rendered as a preview card. Lives in its own
@@ -16,11 +17,17 @@ import { SharedPostEmbed } from "@/components/SharedPostEmbed";
  *
  * Used by DM threads (Messages.tsx) and comments (post page, popup, and
  * replies) so a shared post renders identically everywhere.
+ *
+ * Video autoplay follows the device policy (see
+ * src/lib/shared-video-autoplay.ts): off by default on iOS (cellular
+ * traffic + Safari's gesture rule), off on data-saving/slow connections
+ * elsewhere, and always overridable in Settings.
  */
 export function SharedPostCard({ postId }: { postId: string }) {
   const post = useQuery(api.posts.getPost, {
     postId: postId as Id<"posts">,
   });
+  const { autoplay } = useSharedVideoAutoplay();
   if (post === undefined) {
     return (
       <div className="mt-1.5 flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-xs opacity-80">
@@ -38,7 +45,7 @@ export function SharedPostCard({ postId }: { postId: string }) {
   }
   return (
     <div className="mt-1.5">
-      <SharedPostEmbed post={post as PostItem} autoPlayMedia />
+      <SharedPostEmbed post={post as PostItem} autoPlayMedia={autoplay} />
     </div>
   );
 }
