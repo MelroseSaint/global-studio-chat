@@ -210,7 +210,7 @@ const standard = [
 ];
 
 export function Landing() {
-  const { isAuthenticated, user, signOut } = useAuth();
+  const { isAuthenticated, user, signOut, isLoading } = useAuth();
   const location = useLocation();
 
   const handleSignOut = () => {
@@ -313,7 +313,17 @@ export function Landing() {
             >
               The Standard
             </Button>
-            {isAuthenticated ? (
+            {/* Session restore on refresh: while the stored token is still
+                resolving, don't render the auth CTAs — a signed-in member
+                would otherwise see "Sign in"/"Get started" flash for a
+                frame before flipping to "Open app". A pulse placeholder
+                keeps the nav from shifting. */}
+            {isLoading ? (
+              <div
+                aria-hidden
+                className="h-9 w-36 animate-pulse rounded-md bg-muted/60"
+              />
+            ) : isAuthenticated ? (
               <>
                 <Button size="sm" asChild>
                   <Link to="/home" onClick={() => setNavigating(true)}>
@@ -379,15 +389,22 @@ export function Landing() {
                 original. No ads. No algorithm. No copycats.
               </p>
               <div className="flex flex-wrap items-center justify-center gap-3">
-                <Button size="lg" asChild>
-                  <Link
-                    to={isAuthenticated ? "/home" : "/auth"}
-                    onClick={() => setNavigating(true)}
-                  >
-                    {isAuthenticated ? "Open your feed" : "Join PureWire"}
-                    <ArrowRight className="size-4" />
-                  </Link>
-                </Button>
+                {isLoading ? (
+                  <div
+                    aria-hidden
+                    className="h-11 w-44 animate-pulse rounded-md bg-muted/60"
+                  />
+                ) : (
+                  <Button size="lg" asChild>
+                    <Link
+                      to={isAuthenticated ? "/home" : "/auth"}
+                      onClick={() => setNavigating(true)}
+                    >
+                      {isAuthenticated ? "Open your feed" : "Join PureWire"}
+                      <ArrowRight className="size-4" />
+                    </Link>
+                  </Button>
+                )}
                 <Button
                   size="lg"
                   variant="outline"
@@ -397,9 +414,11 @@ export function Landing() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                {isAuthenticated
-                  ? "Welcome back — your feed is waiting."
-                  : "Sign up with just an email. Takes less than a minute."}
+                {isLoading
+                  ? ""
+                  : isAuthenticated
+                    ? "Welcome back — your feed is waiting."
+                    : "Sign up with just an email. Takes less than a minute."}
               </p>
             </motion.div>
           </div>

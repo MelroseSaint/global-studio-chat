@@ -1,5 +1,5 @@
 import { useAuthActions, useAuthToken } from "@convex-dev/auth/react";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useEffect } from "react";
 
 import { api } from "@/convex/_generated/api";
@@ -9,13 +9,23 @@ import { api } from "@/convex/_generated/api";
  * @convex-dev/auth/react directly.
  *
  * Returns:
- * - `isLoading`: true while the auth state is being resolved
+ * - `isLoading`: true while the auth state is being resolved (session
+ *   restore on load, or the signed-in user document still loading)
  * - `isAuthenticated`: whether the user has a valid session
  * - `user`: the current user document (null when signed out)
  * - `signIn` / `signOut`: auth actions
  */
 export function useAuth() {
   const { signIn, signOut } = useAuthActions();
+  // The auth client restores the stored session asynchronously: on a fresh
+  // page load it reads the token from storage and confirms it with the
+  // server. During that window `useAuthToken()` is null even for a signed-in
+  // user, so `isAuthenticated` alone would flip false and gate components
+  // (RequireAuth) would bounce to /auth before the session is restored —
+  // the login-page flash on every refresh. `useConvexAuth().isLoading` is
+  // true exactly until the initial auth state resolves; folding it in keeps
+  // isLoading honest during restore.
+  const { isLoading: authResolving } = useConvexAuth();
   const token = useAuthToken();
   const isAuthenticated = token !== null;
   const user = useQuery(
@@ -63,7 +73,12 @@ export function useAuth() {
   }, [isAuthenticated, token, user, signOut]);
 
   return {
-    isLoading: isAuthenticated && user === undefined,
+    // True while the session is still being restored on load OR while the
+    // signed-in user document is loading. Only when this settles do gate
+    // components (RequireAuth, the Auth page's redirect, NotFound) make an
+    // auth decision — so a refresh never flashes the login page before the
+    // stored session is restored.
+    isLoading: authResolving || (isAuthenticated && user === undefined),
     isAuthenticated,
     user,
     signIn,

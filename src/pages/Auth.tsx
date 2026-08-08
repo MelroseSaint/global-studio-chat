@@ -400,7 +400,20 @@ export function Auth() {
     }
   }, [isLoading, isAuthenticated, navigate, returnTo]);
 
-  if (!isLoading && isAuthenticated) {
+  // While the stored session is still being restored, a signed-in user who
+  // lands here directly (typed URL, stale link) would otherwise see the
+  // form flash before the effect above redirects them to returnTo — the
+  // same login-page flicker the RequireAuth fix removes from the app
+  // routes. Hold on a centered spinner until the auth state settles.
+  if (isLoading) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
     return null;
   }
 
