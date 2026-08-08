@@ -4,6 +4,7 @@ import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { auth } from "@/convex/auth";
 import { verifyAdminIp } from "./adminIp";
 import { postOg, profileOg } from "./og";
+import { rateLimitHandler, rateLimitPreflight } from "./rateLimit";
 import { sitemapXml } from "./sitemap";
 import { components } from "./_generated/api";
 
@@ -41,6 +42,28 @@ http.route({
   path: "/sitemap.xml",
   method: "GET",
   handler: sitemapXml,
+});
+
+// Distributed rate limiter (Redis token bucket, see rateLimit.ts and
+// ADR-0007). The write path calls POST /rate-limit BEFORE the Convex
+// mutation; the bucket is consumed atomically in Redis and the response
+// carries X-RateLimit-* headers (or 429 when the budget is spent, 503
+// fail-open when Redis is unavailable). Registered before the static
+// routes so the SPA catch-all can never shadow it.
+http.route({
+  path: "/rate-limit",
+  method: "POST",
+  handler: rateLimitHandler,
+});
+http.route({
+  path: "/rate-limit",
+  method: "GET",
+  handler: rateLimitHandler, // returns 405 — proves the route isn't shadowed
+});
+http.route({
+  path: "/rate-limit",
+  method: "OPTIONS",
+  handler: rateLimitPreflight,
 });
 
 // Backend-verified admin IP binding (see adminIp.ts). The admin client

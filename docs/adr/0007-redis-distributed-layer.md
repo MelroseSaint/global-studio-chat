@@ -55,11 +55,11 @@ cheap to keep:
 
 ### 2. Redis adds the distributed fast path
 
-- **`api/rate-limit.ts`** (Vercel serverless + Upstash Redis): a fixed-window
-  token bucket per `(action, actor)` via a single atomic Lua
-  `INCR + EXPIRE`. One round trip, no read-modify-write race, keys
-  auto-expire (no janitor job). Actor = Convex user id when signed in, IP
-  otherwise.
+- **`src/convex/rateLimit.ts`** (Convex HTTP action + Upstash Redis): a
+  fixed-window token bucket per `(action, actor)` via a single atomic Lua
+  `INCR + EXPIRE`, registered as `POST /rate-limit` on the Convex site.
+  One round trip, no read-modify-write race, keys auto-expire (no janitor
+  job). Actor = Convex user id when signed in, IP otherwise.
 - **Client preflight** (`src/lib/rate-limit.ts`): the write path
   (post, comment, like, follow, share, dm) checks the bucket BEFORE the
   Convex mutation, so an over-budget actor fails fast with the app's normal
@@ -71,6 +71,13 @@ cheap to keep:
   enforces the true budget. **Fail-open semantics:** if Redis or the
   endpoint is down (503), the client passes straight through to Convex —
   a cache outage can never lock out legitimate members.
+
+  Why a Convex HTTP action instead of a Vercel serverless function:
+  Vercel's plain-Vite preset builds only the static frontend (functions
+  require Nitro or the Build Output API), and the HTTP action has the same
+  outbound-network capability with the deployment pipeline the repo
+  already owns (`convex deploy`). It also keeps the rate-limit logic next
+  to the security module whose budgets it mirrors.
 
 ### 3. Where Redis is NOT used (and why)
 
@@ -95,9 +102,9 @@ cheap to keep:
 - One more service to provision (Upstash Redis) and two env vars
   (`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`); dev runs without
   them (preflight fails open).
-- The budget tables exist in three places (Convex `security.ts`, the API
-  route, the client mirror) — they must be kept in sync when tuning (the
-  files cross-reference each other).
+- The budget tables exist in three places (Convex `security.ts`, the
+  rate-limit action, the client mirror) — they must be kept in sync when
+  tuning (the files cross-reference each other).
 - Rate-limit semantics are fixed-window (per-hour), not sliding-window —
   adequate for abuse prevention; the table check is the rolling-window
   authority.
@@ -124,6 +131,7 @@ cheap to keep:
 ## Related
 
 - `src/convex/security.ts` — authoritative per-user table rate limits.
-- `api/rate-limit.ts` — Redis token-bucket endpoint.
+- `src/convex/rateLimit.ts` + `src/convex/http.ts` — Redis token-bucket
+  HTTP action (POST /rate-limit).
 - `src/lib/rate-limit.ts` — client preflight (fail-open).
 - `docs/setup.md` — Redis env vars and local dev.

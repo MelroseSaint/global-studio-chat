@@ -1,12 +1,12 @@
 /**
- * PureWire distributed rate limiter (Vercel serverless + Upstash Redis).
+ * PureWire distributed rate limiter (Convex HTTP action + Upstash Redis).
  *
- * The platform's write path (createPost, addComment, like, follow, share,
- * sendMessage) is protected by per-user table-based limits inside Convex —
- * the authoritative backstop. But at 1M+ users, that table check is one
- * database read+write per action, and abuse traffic that will never pass
- * the limit still pays it. This endpoint is a cheap, O(1) Redis preflight
- * in front of that path:
+ * The write path (createPost, addComment, like, follow, share, sendMessage)
+ * is protected by per-user table-based limits inside Convex — the
+ * authoritative backstop. At 1M+ users that table check is one database
+ * read+write per action, and abuse traffic that will never pass the limit
+ * still pays it. This HTTP action is a cheap, O(1) Redis preflight in
+ * front of that path (see docs/adr/0007-redis-distributed-layer.md):
  *
  *   - Token buckets live in Redis (fixed keys, Lua-atomic, auto-expiring),
  *     so a distributed fleet shares one counter per actor — no per-instance
@@ -14,20 +14,20 @@
  *   - The bucket is consumed BEFORE the Convex mutation runs. Convex's
  *     table-based limits stay in place as the source of truth, so the
  *     Redis layer is an early-exit optimization, never a sole gate.
- *   - If Redis (or this endpoint) is unavailable, the caller falls through
- *     to Convex — graceful degradation, never a false block of a
- *     legitimate user.
+ *   - If Redis is unavailable, the action returns 503 and the client fails
+ *     OPEN (skips the preflight, calls Convex) — a cache outage can never
+ *     block a legitimate user.
  *
- * Rate-limit headers follow the standard shape so the client can surface
- * "slow down" messaging:
- *   X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
- *   429 + X-RateLimit-Reset when the bucket is empty.
+ * The route is registered in http.ts as POST /rate-limit; the client calls
+ * it from src/lib/rate-limit.ts via the Convex site URL (same pattern as
+ * the admin IP binding check).
  *
  * Budgets are intentionally aligned with (slightly tighter than) Convex's
  * per-user budgets in src/convex/security.ts — the Redis bucket is the
  * fast path, the table check the enforcement.
  */
 import { Redis } from "@upstash/redis";
+import { httpAction } from "./_generated/server";
 
 /** One bucket per (action, actor) — actor is userId or IP when signed out. */
 const KEY_PREFIX = "pw:rl:";
@@ -67,43 +67,63 @@ end
 return { limit - current, current, now + window }
 `;
 
-function json(body: unknown, init?: { status?: number; headers?: Record<string, string> }) {
+function json(
+  body: unknown,
+  status = 200,
+  extraHeaders: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify(body), {
-    status: init?.status ?? 200,
+    status,
     headers: {
       "content-type": "application/json",
-      ...(init?.headers ?? {}),
+      // The Convex site is a different origin from the Vercel host — the
+      // browser calls this endpoint directly, so CORS must allow it.
+      "access-control-allow-origin": "*",
+      ...extraHeaders,
     },
   });
 }
 
-export default async function handler(req: Request): Promise<Response> {
-  // POST /api/rate-limit  { action, userId? }
+/** OPTIONS preflight for the browser's cross-origin POST. */
+export const rateLimitPreflight = httpAction(async () => {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "POST, OPTIONS",
+      "access-control-allow-headers": "content-type",
+      "access-control-max-age": "86400",
+    },
+  });
+});
+
+export const rateLimitHandler = httpAction(
+  async (_ctx, req: Request): Promise<Response> => {
   if (req.method !== "POST") {
-    return json({ error: "method not allowed" }, { status: 405 });
+    return json({ error: "method not allowed" }, 405);
+  }
+
+  let body: { action?: string; userId?: string };
+  try {
+    body = (await req.json()) as { action?: string; userId?: string };
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+
+  const { action, userId } = body;
+  const budget = action ? BUDGETS[action] : undefined;
+  if (!budget) {
+    // Validate the action BEFORE the Redis check: a malformed request is a
+    // 400 whether or not Redis is configured (fail-open only applies to
+    // legitimately-formed requests when Redis is absent).
+    return json({ error: "unknown action" }, 400);
   }
 
   const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
   const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!redisUrl || !redisToken) {
     // Redis not configured — fail open (Convex table limits still apply).
-    return json(
-      { ok: true, degraded: true },
-      { status: 503, headers: { "X-PureWire-RL": "degraded" } },
-    );
-  }
-
-  let body: { action?: string; userId?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: "bad json" }, { status: 400 });
-  }
-
-  const { action, userId } = body;
-  const budget = action ? BUDGETS[action] : undefined;
-  if (!budget) {
-    return json({ error: "unknown action" }, { status: 400 });
+    return json({ ok: true, degraded: true }, 503);
   }
 
   // Actor identity: signed-in users are keyed by their Convex user id; the
@@ -128,10 +148,7 @@ export default async function handler(req: Request): Promise<Response> {
     )) as unknown as number[];
   } catch {
     // Redis hiccup — fail open, never block a user because of the cache.
-    return json(
-      { ok: true, degraded: true },
-      { status: 503, headers: { "X-PureWire-RL": "degraded" } },
-    );
+    return json({ ok: true, degraded: true }, 503);
   }
 
   const [remaining, used, reset] = res;
@@ -143,16 +160,12 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (used > budget.limit) {
     return json(
-      {
-        ok: false,
-        retryAfterSec: Math.max(1, reset - now),
-      },
-      {
-        status: 429,
-        headers: { ...headers, "Retry-After": String(Math.max(1, reset - now)) },
-      },
+      { ok: false, retryAfterSec: Math.max(1, reset - now) },
+      429,
+      { ...headers, "Retry-After": String(Math.max(1, reset - now)) },
     );
   }
 
-  return json({ ok: true, remaining, reset }, { headers });
-}
+  return json({ ok: true, remaining, reset }, 200, headers);
+  },
+);

@@ -2,20 +2,23 @@
  * PureWire distributed rate-limit client (Redis-backed).
  *
  * The write path (post, comment, like, follow, share, dm) calls
- * `checkRateLimit` BEFORE firing the Convex mutation. It asks the Vercel
- * serverless endpoint (/api/rate-limit) for a Redis token-bucket token.
+ * `checkRateLimit` BEFORE firing the Convex mutation. It asks the backend
+ * HTTP action (POST {convexSite}/rate-limit, see src/convex/rateLimit.ts)
+ * for a Redis token-bucket token.
  *
  * Semantics — fail OPEN:
- *   - Redis or the endpoint unavailable (503 degraded, 404 in dev with no
- *     API server, network error): pass. Convex's own table-based limits in
- *     src/convex/security.ts remain the authoritative backstop, so the
- *     write still can't exceed budget — it just skips the fast-path gate.
+ *   - Redis or the endpoint unavailable (503 degraded, network error):
+ *     pass. Convex's own table-based limits in src/convex/security.ts
+ *     remain the authoritative backstop, so the write still can't exceed
+ *     budget — it just skips the fast-path gate.
  *   - 429: fail fast with a retry-after hint so the user sees the app's
  *     normal "slow down" messaging instead of paying a database write.
  *
- * The budget table mirrors api/rate-limit.ts (which mirrors Convex) — keep
- * the three in sync when tuning.
+ * The budget table mirrors src/convex/rateLimit.ts (which mirrors Convex)
+ * — keep them in sync when tuning.
  */
+
+import { convexSiteUrl } from "@/lib/admin-ip";
 
 export type RateLimitAction =
   | "post"
@@ -44,7 +47,7 @@ export async function checkRateLimit(
   userId?: string,
 ): Promise<RateLimitResult> {
   try {
-    const res = await fetch("/api/rate-limit", {
+    const res = await fetch(`${convexSiteUrl()}/rate-limit`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action, userId }),

@@ -63,19 +63,19 @@ npx convex env set NAME value   # per variable, on the deployment you use
  so the dashboard self-documents it). `VITE_SITE_URL` is deprecated and
  ignored — a CI guard fails if it is ever re-added.
 
-**Vercel (project env, runtime — optional Redis layer):** the distributed
- rate limiter (`api/rate-limit.ts`, see ADR-0007) needs Upstash Redis:
+**Convex (backend env, optional Redis layer):** the distributed
+ rate limiter (`src/convex/rateLimit.ts`, see ADR-0007) needs Upstash
+ Redis, set with `npx convex env set`:
 
 | Variable | Value |
 | --- | --- |
 | `UPSTASH_REDIS_REST_URL` | `https://<your-db>.upstash.io` |
 | `UPSTASH_REDIS_REST_TOKEN` | the REST token from the Upstash console |
 
- Without them the API route returns 503 and the app **fails open** — the
- Redis preflight is skipped and Convex's own table-based rate limits
+ Without them the HTTP action returns 503 and the app **fails open** —
+ the Redis preflight is skipped and Convex's own table-based rate limits
  (the authoritative backstop) still apply. Local dev also runs without
- Redis; when you want to exercise the layer locally, run `vercel dev`
- (Vite proxies `/api/*` to `localhost:3000`) with the two vars set.
+ Redis (the client's fail-open path just skips the preflight).
 
 ## 3. Run
 

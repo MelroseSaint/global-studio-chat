@@ -103,19 +103,6 @@ function precacheManifest(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), siteUrl(), precacheManifest()],
-  server: {
-    // Dev proxy: the Redis rate-limiter lives behind /api/rate-limit on
-    // Vercel. In local dev there is no Vercel runtime, so forward /api/*
-    // to a local server (e.g. `vercel dev` on :3000) when one is running;
-    // otherwise the client's fail-open path (src/lib/rate-limit.ts) simply
-    // skips the Redis preflight — Convex's table limits still apply.
-    proxy: {
-      "/api": {
-        target: "http://localhost:3000",
-        changeOrigin: true,
-      },
-    },
-  },
   esbuild: {
     // esbuild's CSS minifier warns `"file" is not a known CSS property`
     // (message id `unsupported-css-property`) whenever a dependency's CSS
