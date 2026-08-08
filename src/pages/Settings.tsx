@@ -54,7 +54,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
 import { isValidUsername, PLATFORM_OPTIONS } from "@/lib/format";
-import { useSharedVideoAutoplay } from "@/lib/shared-video-autoplay";
+import { useVideoAutoplay } from "@/lib/video-autoplay";
 import { cn } from "@/lib/utils";
 
 interface LinkRow {
@@ -74,9 +74,10 @@ export function Settings() {
 }
 
 function SettingsForm({ user }: { user: Profile }) {
-  // Shared-post video autoplay: a user-facing override for the device
-  // policy (off on iOS/cellular by default — see lib/shared-video-autoplay).
-  const { autoplay, preference, setPreference } = useSharedVideoAutoplay();
+  // Video autoplay: a user-facing override for the device policy (off on
+  // iOS/cellular by default — see lib/video-autoplay). Applies to every
+  // inline video: the main feed's cards and the shared-post previews.
+  const { autoplay, preference, setPreference } = useVideoAutoplay();
   const updateProfile = useMutation(api.users.updateProfile);
   const deleteAccount = useMutation(api.account.deleteAccount);
   const currentSession = useQuery(api.account.getCurrentSession);
@@ -322,17 +323,18 @@ function SettingsForm({ user }: { user: Profile }) {
         <CardContent className="flex flex-col gap-5">
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <Label htmlFor="shared-video-autoplay">
-                Play videos in shared posts automatically
+              <Label htmlFor="video-autoplay">
+                Play videos automatically
               </Label>
               <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                Off by default on iPhone/iPad and data-saving connections —
-                shared-post videos then wait for your tap.
+                Applies to every video on your feed and in shared-post
+                previews. Off by default on iPhone/iPad and data-saving
+                connections — videos then wait for your tap.
               </p>
             </div>
             <Switch
-              id="shared-video-autoplay"
-              aria-label="Play videos in shared posts automatically"
+              id="video-autoplay"
+              aria-label="Play videos automatically"
               checked={autoplay}
               onCheckedChange={(on) => setPreference(on)}
             />

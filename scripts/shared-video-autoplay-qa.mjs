@@ -3,12 +3,14 @@
  * PureWire shared-post video autoplay QA.
  *
  * Builds a real fixture — two QA users, a post with a video, a DM share —
- * then renders B's thread in an iPhone emulation and a desktop context and
- * asserts the shared-post video's autoplay attribute follows the policy
- * (src/lib/shared-video-autoplay.ts): OFF on iOS (cellular + Safari's
- * gesture rule), ON on desktop. Guards the useDevice()-driven autoplay
- * policy so a regression (autoplaying on iPhone, or never autoplaying on
- * desktop) surfaces on the next push.
+ * then renders B's thread AND the main feed (as the author, so the post is
+ * visible there) in an iPhone emulation and a desktop context and asserts
+ * the video's autoplay attribute follows the platform-wide policy
+ * (src/lib/video-autoplay.ts): OFF on iOS (cellular + Safari's gesture
+ * rule), ON on desktop. Guards the useDevice()-driven autoplay policy on
+ * BOTH surfaces (shared-post previews and the feed's inline cards) so a
+ * regression (autoplaying on iPhone, or never autoplaying on desktop)
+ * surfaces on the next push.
  *
  * Run:
  *   TEST_HARNESS_SECRET=<secret> npm run qa:shared-video-autoplay
@@ -122,6 +124,15 @@ async function main() {
     });
     return { token: m.token, refreshToken: m.refreshToken };
   };
+  // The feed check needs the AUTHOR's session: test-isolation hides other
+  // test accounts' posts from B, but A always sees their own post.
+  const mintA = async () => {
+    const m = await client.mutation(api.testHarness.mintSessionForQaUsername, {
+      username: aName,
+      secret: HARNESS_SECRET,
+    });
+    return { token: m.token, refreshToken: m.refreshToken };
+  };
   const seed = (page, session) =>
     page.addInitScript(
       (s) => {
@@ -173,6 +184,37 @@ async function main() {
       }
       const v = await videoAutoplay(page);
       check("desktop: shared video autoplays", v === true, `autoplay=${v}`);
+      await ctx.close();
+    }
+
+    // The main feed's inline cards follow the SAME policy.
+    // iPhone: feed video must NOT autoplay.
+    {
+      const ctx = await browser.newContext({ ...devices["iPhone 13"] });
+      const page = await ctx.newPage();
+      await seed(page, await mintA());
+      await page.goto(`${SITE_URL}/home`, { waitUntil: "networkidle" });
+      for (let i = 0; i < 30; i++) {
+        if ((await page.evaluate(() => document.querySelector("video"))) != null) break;
+        await page.waitForTimeout(400);
+      }
+      const v = await videoAutoplay(page);
+      check("iPhone: feed video does NOT autoplay", v === false, `autoplay=${v}`);
+      await ctx.close();
+    }
+
+    // Desktop: feed video must autoplay.
+    {
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+      const page = await ctx.newPage();
+      await seed(page, await mintA());
+      await page.goto(`${SITE_URL}/home`, { waitUntil: "networkidle" });
+      for (let i = 0; i < 30; i++) {
+        if ((await page.evaluate(() => document.querySelector("video"))) != null) break;
+        await page.waitForTimeout(400);
+      }
+      const v = await videoAutoplay(page);
+      check("desktop: feed video autoplays", v === true, `autoplay=${v}`);
       await ctx.close();
     }
   } finally {

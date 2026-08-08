@@ -35,6 +35,7 @@ import {
 } from "@/components/SharedPostEmbed";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
+import { useVideoAutoplay } from "@/lib/video-autoplay";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -127,6 +128,10 @@ export function PostCard({
 }) {
   const { user: me } = useAuth();
   const navigate = useNavigate();
+  // Inline feed videos follow the platform-wide device-aware autoplay
+  // policy (same as shared-post previews): muted autoplay on desktop/Wi-Fi,
+  // off by default on iOS/cellular, user-overridable in Settings.
+  const { autoplay } = useVideoAutoplay();
   const likePost = useMutation(api.posts.likePost);
   const unlikePost = useMutation(api.posts.unlikePost);
   const deletePost = useMutation(api.posts.deletePost);
@@ -405,7 +410,7 @@ export function PostCard({
         ) : null}
 
         {post.mediaUrls && post.mediaUrls.length > 0 ? (
-          <PostMediaGrid media={post.mediaUrls} />
+          <PostMediaGrid media={post.mediaUrls} autoPlay={autoplay} />
         ) : linkUrl ? (
           <LinkCard url={linkUrl} />
         ) : null}

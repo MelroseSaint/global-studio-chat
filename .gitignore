@@ -41,3 +41,6 @@ data/
 .vercel/*
 !.vercel/project.json
 skills-lock.json
+
+# TypeScript incremental build artifacts (tsc -b)
+*.tsbuildinfo

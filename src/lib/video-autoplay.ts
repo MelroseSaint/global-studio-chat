@@ -3,9 +3,10 @@ import { useEffect, useState } from "react";
 import { useDevice } from "@/lib/device";
 
 /**
- * Shared-post video autoplay policy.
+ * Video autoplay policy.
  *
- * Shared posts (DMs, comment cards) currently autoplay muted video with
+ * Every inline video on the platform — the main feed's post cards and the
+ * shared-post previews in DMs and comments — autoplays muted video with
  * controls. On cellular connections and low-power devices that traffic is
  * pure cost — the viewer never asked for it. The policy:
  *
@@ -19,18 +20,30 @@ import { useDevice } from "@/lib/device";
  *      slow connection (`saveData`, effectiveType slow-2g/2g/3g) — then
  *      OFF.
  *   3. A persisted user preference overrides both defaults, so anyone can
- *      flip it in Settings ("Play videos in shared posts automatically").
+ *      flip it in Settings ("Play videos automatically").
  *
  * The device detection runs through useDevice(), so the iPadOS
  * Mac-masquerade case lands in the iOS bucket too.
  */
-const AUTOPLAY_KEY = "purewire_shared_video_autoplay";
+const AUTOPLAY_KEY = "purewire_video_autoplay";
+// Pre-feed key, kept only for a one-time migration of existing choices.
+const LEGACY_AUTOPLAY_KEY = "purewire_shared_video_autoplay";
 
 export type AutoplayPreference = boolean | "auto";
 
 /** What the user chose, if anything. "auto" = follow the device policy. */
 export function readAutoplayPreference(): AutoplayPreference {
   try {
+    // One-time migration: the policy used to be shared-posts-only under a
+    // different key. Carry any existing choice forward so a user who opted
+    // out of shared-post autoplay keeps it off on the feed too.
+    if (localStorage.getItem(AUTOPLAY_KEY) === null) {
+      const legacy = localStorage.getItem(LEGACY_AUTOPLAY_KEY);
+      if (legacy !== null) {
+        localStorage.setItem(AUTOPLAY_KEY, legacy);
+        localStorage.removeItem(LEGACY_AUTOPLAY_KEY);
+      }
+    }
     const raw = localStorage.getItem(AUTOPLAY_KEY);
     if (raw === "true") return true;
     if (raw === "false") return false;
@@ -59,10 +72,11 @@ function conservativeDefault(isIOS: boolean): boolean {
 }
 
 /**
- * The resolved autoplay decision for shared-post videos, plus a setter
- * that persists the user's choice.
+ * The resolved autoplay decision for inline videos (feed cards and
+ * shared-post previews alike), plus a setter that persists the user's
+ * choice.
  */
-export function useSharedVideoAutoplay(): {
+export function useVideoAutoplay(): {
   autoplay: boolean;
   /** "auto" (follow device) or an explicit true/false the user chose. */
   preference: AutoplayPreference;
@@ -74,8 +88,7 @@ export function useSharedVideoAutoplay(): {
   );
 
   // Re-evaluate the conservative default when the device detection changes
-  // (e.g. install/uninstall changes isIOS? it doesn't, but the hook stays
-  // honest) or when the user flips the preference.
+  // or when the user flips the preference.
   const autoplay =
     preference === "auto" ? conservativeDefault(isIOS) : preference;
 
@@ -92,7 +105,7 @@ export function useSharedVideoAutoplay(): {
   // Keep the resolved decision live if a tab changes the preference.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key === AUTOPLAY_KEY) {
+      if (e.key === AUTOPLAY_KEY || e.key === LEGACY_AUTOPLAY_KEY) {
         setPreferenceState(readAutoplayPreference());
       }
     };
