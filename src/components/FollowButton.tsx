@@ -6,9 +6,6 @@ import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
-import { useAuth } from "@/hooks/use-auth";
-import { mayProceed } from "@/lib/rate-limit";
-
 export function FollowButton({
   username,
   initialFollowing,
@@ -22,7 +19,6 @@ export function FollowButton({
 }) {
   const follow = useMutation(api.users.follow);
   const unfollow = useMutation(api.users.unfollow);
-  const { user } = useAuth();
   const [following, setFollowing] = useState(initialFollowing);
   const [busy, setBusy] = useState(false);
 
@@ -30,16 +26,6 @@ export function FollowButton({
     if (busy) return;
     setBusy(true);
     const next = !following;
-    // Redis preflight (distributed token bucket) — fail fast before the
-    // backend write when the hourly follow budget is spent. Degrades
-    // open; Convex's table limit is the backstop.
-    if (next && !(await mayProceed("follow", user?._id))) {
-      setBusy(false);
-      toast.error(
-        "You're moving a little too fast. Slow down and try again in a moment.",
-      );
-      return;
-    }
     setFollowing(next);
     try {
       if (next) {

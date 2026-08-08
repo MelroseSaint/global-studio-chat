@@ -14,7 +14,7 @@ from *why* the system is the way it is, not from re-deriving it.
 | [0004](0004-harness-gated-production-qa.md) | Harness-gated production QA | Accepted |
 | [0005](0005-comment-engagement-model.md) | Comment engagement model | Accepted |
 | [0006](0006-backend-verified-admin-ip-binding.md) | Backend-verified admin IP binding | Accepted |
-| [0007](0007-redis-distributed-layer.md) | Redis as a distributed layer for 1M+ user scaling | Accepted |
+| [0007](0007-redis-free-scaling.md) | Redis-free scaling to 1M+ users | Accepted |
 
 ## When to write one
 

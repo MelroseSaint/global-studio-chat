@@ -39,7 +39,6 @@ import type * as placesInternal from "../placesInternal.js";
 import type * as posts from "../posts.js";
 import type * as pow from "../pow.js";
 import type * as privacy from "../privacy.js";
-import type * as rateLimit from "../rateLimit.js";
 import type * as security from "../security.js";
 import type * as sessionAudit from "../sessionAudit.js";
 import type * as sitemap from "../sitemap.js";
@@ -89,7 +88,6 @@ declare const fullApi: ApiFromModules<{
   posts: typeof posts;
   pow: typeof pow;
   privacy: typeof privacy;
-  rateLimit: typeof rateLimit;
   security: typeof security;
   sessionAudit: typeof sessionAudit;
   sitemap: typeof sitemap;

@@ -44,7 +44,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
-import { mayProceed } from "@/lib/rate-limit";
 import { formatLikeLabel, formatPluralLabel, timeAgo } from "@/lib/format";
 import { solveChallenge, type PowChallenge } from "@/lib/pow";
 import { cn } from "@/lib/utils";
@@ -347,15 +346,6 @@ export function CommentDialog({
     if ((!text && !sharingPostId) || submitting || locked) return;
     setSubmitting(true);
     try {
-      // Redis preflight (distributed token bucket) — fail fast before the
-      // PoW solve + backend write when the hourly comment budget is spent.
-      // Degrades open; Convex's table limit is the backstop.
-      if (!(await mayProceed("comment", user?._id))) {
-        toast.error(
-          "You're moving a little too fast. Slow down and try again in a moment.",
-        );
-        return;
-      }
       // Proof-of-work before the write — same scheme as posting/commenting.
       const pow = await solveChallenge(powChallenge);
       const res = await addComment({
