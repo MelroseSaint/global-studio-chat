@@ -184,11 +184,10 @@ async function main() {
       return finish();
     }
 
-    // 5. Dashboard content: feed tabs, composer, and the admin-only nav item
-    //    (which proves the session actually resolved to the admin role).
-    //    These WAIT for the lazy-loaded feed chunk instead of counting
-    //    instantly — the feed page streams in after the shell mounts, and
-    //    instant count() checks race it (flaky failures on the live site).
+    // 5. Dashboard content: feed tabs and composer. These WAIT for the
+    //    lazy-loaded feed chunk instead of counting instantly — the feed
+    //    page streams in after the shell mounts, and instant count() checks
+    //    race it (flaky failures on the live site).
     check(
       "dashboard feed rendered (Global tab)",
       await page
@@ -206,18 +205,22 @@ async function main() {
         .then(() => true)
         .catch(() => false),
     );
+
+    // 6. Sign out (now inside the "More" dropdown) and confirm we land
+    //    back on the landing page. Opening the menu also proves the admin
+    //    session resolved: the admin-only Admin entry lives in the More
+    //    dropdown on desktop (and in the phone bottom-nav More menu), and
+    //    only renders once the device passed the backend IP verification
+    //    (adminVerified), so its presence is the admin-role assertion.
+    await page.getByRole("button", { name: /^More/ }).first().click();
     check(
-      "admin nav item visible",
+      "More menu shows the admin-only Admin entry",
       await page
-        .getByRole("link", { name: "Admin" })
+        .getByRole("menuitem", { name: "Admin" })
         .waitFor({ timeout: NAV_TIMEOUT })
         .then(() => true)
         .catch(() => false),
     );
-
-    // 6. Sign out (now inside the "More" dropdown) and confirm we land
-    //    back on the landing page.
-    await page.getByRole("button", { name: /^More/ }).first().click();
     await page.getByRole("menuitem", { name: "Sign out" }).click();
     try {
       await page.waitForURL(`${SITE_URL}/`, { timeout: NAV_TIMEOUT });

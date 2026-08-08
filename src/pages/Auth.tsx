@@ -94,9 +94,16 @@ const AuthCardHeader = memo(function AuthCardHeader({
 const UsernameField = memo(function UsernameField({
   value,
   onChange,
+  required = true,
 }: {
   value: string;
   onChange: (v: string) => void;
+  /** Only required while VISIBLE (signup step). Chromium's constraint
+   * validation checks hidden required controls too — a `required` username
+   * hidden on the sign-in tab would block every sign-in with the silent
+   * "invalid form control is not focusable" error (regression from the INP
+   * keep-mounted-hidden change). */
+  required?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -105,7 +112,7 @@ const UsernameField = memo(function UsernameField({
         <UserRound className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           id="username"
-          required
+          required={required}
           autoCapitalize="none"
           autoCorrect="off"
           placeholder="yourname"
@@ -749,7 +756,11 @@ export function Auth() {
                         visibility flip costs a few ms. State lives in Auth, so
                         toggling never loses what was typed. */}
                     <div hidden={step !== "signup"}>
-                      <UsernameField value={username} onChange={onUsernameChange} />
+                      <UsernameField
+                        value={username}
+                        onChange={onUsernameChange}
+                        required={step === "signup"}
+                      />
                     </div>
                     <EmailField value={email} onChange={setEmail} />
                     <div hidden={step !== "signup"}>

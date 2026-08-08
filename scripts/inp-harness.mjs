@@ -80,21 +80,41 @@ async function measure(browser, url, label, cond, settleMs, action, opts = {}) {
   for (let i = 0; i < RUNS; i++) {
     const { context, page } = await freshPage(browser, opts);
     try {
-      // Authenticated sections seed a minted session JWT before any page
-      // script runs, so the auth client restores it on boot (the storage key
-      // is namespaced by the Convex URL — see @convex-dev/auth's
-      // useNamespacedStorage: `__convexAuthJWT_<alphanumeric-url>`).
-      if (opts.seedJwt) {
+      // Authenticated sections seed a minted session before any page
+      // script runs, so the auth client restores it on boot. BOTH storage
+      // keys are required — the client attempts a refresh on boot and signs
+      // out if the refresh token is missing (the storage keys are
+      // namespaced by the Convex URL — see @convex-dev/auth's
+      // useNamespacedStorage: `__convexAuthJWT_<alphanumeric-url>` and
+      // `__convexAuthRefreshToken_<alphanumeric-url>`).
+      if (opts.seedAuth) {
         await page.addInitScript(
-          (jwt) => {
+          (seed) => {
             try {
-              localStorage.setItem(`__convexAuthJWT_${jwt.ns}`, jwt.token);
+              localStorage.setItem(`__convexAuthJWT_${seed.ns}`, seed.token);
+              localStorage.setItem(
+                `__convexAuthRefreshToken_${seed.ns}`,
+                seed.refreshToken,
+              );
             } catch (_) {}
           },
-          opts.seedJwt,
+          opts.seedAuth,
         );
       }
       await page.goto(url, { waitUntil: "networkidle", timeout: 90000 });
+      // Vercel's Security Checkpoint intermittently 403s headless browsers
+      // with a "Failed to verify your browser" page. A checkpoint isn't the
+      // app and can't produce a meaningful interaction — treat it as a
+      // skipped run (pushed as maxMs null) instead of a hard timeout that
+      // would flake the gate on bot detection, not on INP.
+      const bootTitle = await page.title();
+      if (bootTitle.includes("Security Checkpoint")) {
+        // Recorded as an error so the summary says "checkpoint" rather
+        // than the generic unmeasured-artifact note.
+        errors.push("Vercel Security Checkpoint (bot-protection 403)");
+        runs.push({ maxMs: null });
+        continue;
+      }
       await page.evaluate(installObservers);
       if (settleMs > 0) await page.waitForTimeout(settleMs);
       await action(page);
@@ -232,13 +252,16 @@ if (HARNESS_SECRET) {
   const mint = new ConvexHttpClient(CONVEX_URL);
   let seed = null;
   try {
-    const { token } = await mint.mutation(api.testHarness.mintAdminSession, {
-      secret: HARNESS_SECRET,
-    });
+    const { token, refreshToken } = await mint.mutation(
+      api.testHarness.mintAdminSession,
+      { secret: HARNESS_SECRET },
+    );
     // Storage namespace = the Convex URL, stripped to alphanumerics
-    // (see useNamespacedStorage in @convex-dev/auth).
+    // (see useNamespacedStorage in @convex-dev/auth). The minted session
+    // carries BOTH a JWT and a refresh token — the auth client requires
+    // both in storage or it signs out on boot.
     const ns = CONVEX_URL.replace(/[^a-zA-Z0-9]/g, "");
-    seed = { token, ns };
+    seed = { token, refreshToken, ns };
     console.log(`authed shell: minted admin session (${CONVEX_URL})`);
   } catch (err) {
     console.log(`authed shell: mint failed — ${String(err).slice(0, 120)}`);
@@ -256,8 +279,12 @@ if (HARNESS_SECRET) {
       async (p) => {
         await p.getByRole("button", { name: /^More/ }).click({ noWaitAfter: true });
       },
-      { seedJwt: seed, viewport: { width: 1280, height: 900 } },
+      { seedAuth: seed, viewport: { width: 1280, height: 900 } },
     );
+    // The dropdown's "Messages" item only exists in the MOBILE More menu
+    // (the desktop sidebar renders Messages as a plain NavItem and its
+    // dropdown only carries Admin + Sign out) — so this navigation step
+    // must measure on the Pixel 5 viewport, not the desktop one.
     await measure(
       browser,
       home,
@@ -268,7 +295,7 @@ if (HARNESS_SECRET) {
         await p.getByRole("button", { name: /^More/ }).click();
         await p.getByRole("menuitem", { name: "Messages" }).click({ noWaitAfter: true });
       },
-      { seedJwt: seed, viewport: { width: 1280, height: 900 } },
+      { seedAuth: seed },
     );
     // Mobile bottom-nav "More" trigger (Pixel 5 viewport from freshPage).
     await measure(
@@ -280,7 +307,7 @@ if (HARNESS_SECRET) {
       async (p) => {
         await p.getByRole("button", { name: /^More/ }).click({ noWaitAfter: true });
       },
-      { seedJwt: seed },
+      { seedAuth: seed },
     );
   }
 } else {

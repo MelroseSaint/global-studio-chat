@@ -108,7 +108,9 @@ async function mintedAdmin() {
   }
   const client = new ConvexHttpClient(CONVEX_URL);
   client.setAuth(minted.token);
-  return { client, token: minted.token };
+  // refreshToken is needed by the browser half: the auth client requires
+  // BOTH the JWT and the refresh token in storage or it signs out on boot.
+  return { client, token: minted.token, refreshToken: minted.refreshToken };
 }
 
 async function main() {
@@ -204,19 +206,31 @@ async function main() {
       // own useAdminIpVerify hook then performs the first verification from
       // THIS browser's IP — exactly like a real admin loading the app — and
       // the shell's workload badge query fires only once verified (the fix
-      // this QA protects). Storage key mirrors @convex-dev/auth's
-      // useNamespacedStorage: `__convexAuthJWT_<alphanumeric-url>`.
-      // Only the token is used; mintedAdmin also returns a client, which
-      // is intentionally discarded here (the browser does its own verify).
+      // this QA protects). Storage keys mirror @convex-dev/auth's
+      // useNamespacedStorage: `__convexAuthJWT_<alphanumeric-url>` and
+      // `__convexAuthRefreshToken_<alphanumeric-url>`. BOTH are required:
+      // the auth client attempts a refresh on boot and signs out if the
+      // refresh token is missing (the harness mints both — see
+      // mintAdminSession). Only the token is used; mintedAdmin also returns
+      // a client, which is intentionally discarded here (the browser does
+      // its own verify).
       const fresh = await mintedAdmin();
       const ns = CONVEX_URL.replace(/[^a-zA-Z0-9]/g, "");
       await page.addInitScript(
-        (jwt) => {
+        (seed) => {
           try {
-            localStorage.setItem(`__convexAuthJWT_${jwt.ns}`, jwt.token);
+            localStorage.setItem(`__convexAuthJWT_${seed.ns}`, seed.token);
+            localStorage.setItem(
+              `__convexAuthRefreshToken_${seed.ns}`,
+              seed.refreshToken,
+            );
           } catch (_) {}
         },
-        { token: fresh.token, ns },
+        {
+          token: fresh.token,
+          refreshToken: fresh.refreshToken,
+          ns,
+        },
       );
       await page.goto(`${SITE_URL}/admin`, {
         waitUntil: "networkidle",

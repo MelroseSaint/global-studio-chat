@@ -169,8 +169,13 @@ export const deleteTestUser = mutation({
 
 /**
  * Mint a real session for the platform's admin (ADMIN_EMAIL), so the QA
- * check can verify silenced content is visible to moderation. Gated by the
- * same two env gates as everything else in this module.
+ * check can verify silenced content is visible to moderation. Also mints
+ * the refresh token for the SAME session: the browser auth client requires
+ * BOTH a JWT and a refresh token in storage — a JWT-only injection makes
+ * it try to refresh, find nothing, and sign out, so browser-driving QAs
+ * (the workload page-up check, the INP harness's authed section) would
+ * silently bounce to /auth without it. Gated by the same two env gates as
+ * everything else in this module.
  */
 export const mintAdminSession = mutation({
   args: { secret: v.string() },
@@ -184,7 +189,23 @@ export const mintAdminSession = mutation({
       throw new Error("Admin account not found on this deployment.");
     }
     const token = await mintSession(ctx, admin._id);
-    return { userId: admin._id, token };
+    const session = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q) => q.eq("userId", admin._id))
+      .order("desc")
+      .first();
+    if (session === null) {
+      throw new ConvexError("Session mint failed.");
+    }
+    const refreshId = await ctx.db.insert("authRefreshTokens", {
+      sessionId: session._id,
+      expirationTime: session.expirationTime,
+    });
+    return {
+      userId: admin._id,
+      token,
+      refreshToken: `${refreshId}|${session._id}`,
+    };
   },
 });
 
