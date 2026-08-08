@@ -40,6 +40,7 @@
     "qa:sitemap-urls": "node scripts/sitemap-url-health.mjs",
     "qa:sitemap-urls:all": "node scripts/sitemap-url-health.mjs --all",
     "qa:seo-audit": "node scripts/seo-audit.mjs",
+    "seo-audit:baseline": "node scripts/seo-audit.mjs --write-baseline",
     "qa:seo-sweep": "node scripts/seo-sweep.mjs",
     "qa:seo-sweep:all": "node scripts/seo-sweep.mjs --all",
     "seo-sweep:baseline": "node scripts/seo-sweep.mjs --write-baseline",

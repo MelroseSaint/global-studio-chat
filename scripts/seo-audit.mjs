@@ -8,7 +8,7 @@
  * `requests` (the CI workflow installs it into a fresh venv); every script
  * here is invoked directly, bypassing the skill's runtime gate.
  *
- * Checks (each is a regression floor — a breach fails the job):
+ * Checks (each is a regression gate — a breach fails the job):
  *   1. fetch_page.py --googlebot on the sitemap → 200, <urlset, and at least
  *      one /post/ + one /u/ entry (user content stays indexable).
  *   2. fetch_page.py --googlebot on the newest post + profile from the live
@@ -18,10 +18,18 @@
  *      deprecated-schema findings (critical/high/medium).
  *   4. content_quality.py --json on the post + profile HTML → overall score
  *      >= CQ_FLOOR (default 70; observed live 78 post / 74 profile).
+ *   5. Baseline regression — a score may sit above the absolute floor yet
+ *      have DROPPED more than CQ_DELTA (default 5) from the committed
+ *      baseline (scripts/seo-audit-baseline.json, recorded from the live
+ *      site with --write-baseline): that drop is a regression too, so the
+ *      run fails even though the floor check passed. The baseline is
+ *      refreshed explicitly (e.g. after an intentional content change),
+ *      the same convention as the SEO sweep's flag baseline.
  *
  * Prints a PASS/FAIL table, writes seo-audit-metrics.md (embedded into the
  * alert issue by the workflow), and exits 1 on any regression with
- * ::error:: lines. Env: SITE_URL, SEO_SCRIPTS_DIR, PYTHON, CQ_FLOOR.
+ * ::error:: lines. Env: SITE_URL, SEO_SCRIPTS_DIR, PYTHON, CQ_FLOOR,
+ * CQ_DELTA. Flag: --write-baseline (record current scores, skip delta).
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -31,6 +39,27 @@ import { join, resolve } from "node:path";
 const SITE = (process.env.SITE_URL ?? "https://purewire.vercel.app").replace(/\/+$/, "");
 const rawFloor = Number(process.env.CQ_FLOOR ?? 70);
 const CQ_FLOOR = Number.isFinite(rawFloor) ? rawFloor : 70;
+const rawDelta = Number(process.env.CQ_DELTA ?? 5);
+const CQ_DELTA = Number.isFinite(rawDelta) ? rawDelta : 5;
+const WRITE_BASELINE = process.argv.includes("--write-baseline");
+const BASELINE_PATH = join(resolve("."), "scripts", "seo-audit-baseline.json");
+// Committed baseline of the last known-good run's content-quality scores.
+// Missing file / key = no comparison for that kind (never a failure on its
+// own); --write-baseline records the current run as the new reference.
+let baseline = {};
+try {
+  baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
+} catch {
+  baseline = {};
+  // A missing file is a first-run (no comparison, never a failure), but a
+  // file that EXISTS and fails to parse silently disables the delta guard —
+  // say so so an operator notices instead of losing the protection.
+  if (existsSync(BASELINE_PATH)) {
+    console.warn(
+      `WARNING: ${BASELINE_PATH} exists but could not be parsed — the baseline-delta guard is OFF until it's fixed.`,
+    );
+  }
+}
 const CRAWLER_UA =
   "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
 const SPA_MARKER = '<div id="root">';
@@ -160,7 +189,7 @@ const main = async () => {
     );
   }
 
-  // 4) Content quality on the fetched pages.
+  // 4) Content quality on the fetched pages (absolute floor).
   const scores = {};
   for (const t of targets) {
     if (!t.body) continue;
@@ -179,8 +208,74 @@ const main = async () => {
     );
   }
 
+  // 5) Baseline regression: a score above the absolute floor can still be a
+  //    regression if it dropped more than CQ_DELTA from the committed
+  //    baseline (the last known-good run). Comparing catches slow decay that
+  //    the absolute floor would miss.
+  const deltaNote = (kind) => {
+    const base = baseline.scores?.[kind];
+    const score = scores[kind];
+    if (typeof base !== "number" || typeof score !== "number") {
+      return {
+        ok: true,
+        note: `no comparison (baseline=${base ?? "none"}, score=${score ?? "n/a"})`,
+      };
+    }
+    const drop = base - score;
+    const breached = drop > CQ_DELTA;
+    const sign = drop >= 0 ? "-" : "+";
+    return {
+      ok: !breached,
+      note: breached
+        ? `overall=${score} dropped ${drop} below baseline ${base} (max Δ ${CQ_DELTA})`
+        : `overall=${score} vs baseline ${base} (Δ ${sign}${Math.abs(drop)}, max Δ ${CQ_DELTA})`,
+    };
+  };
+  for (const kind of Object.keys(scores)) {
+    const d = deltaNote(kind);
+    check(
+      `baseline ${kind}`,
+      WRITE_BASELINE ? true : d.ok,
+      WRITE_BASELINE ? "recorded as new baseline" : d.note,
+    );
+  }
+
   // --- metrics file for the alert issue ---------------------------------------
   const now = new Date().toISOString();
+
+  // --write-baseline: record this run as the new reference (call it after an
+  // intentional content change). Refused in CI and on an unhealthy run, so a
+  // broken job can never bless a regression or overwrite the committed
+  // baseline with null scores.
+  if (WRITE_BASELINE) {
+    const healthy =
+      failures.length === 0 &&
+      typeof scores.post === "number" &&
+      typeof scores.profile === "number";
+    if (process.env.CI) {
+      console.error(
+        "::error::--write-baseline refuses to run in CI — record baselines locally and commit the file.",
+      );
+      process.exitCode = 1;
+    } else if (!healthy) {
+      console.error(
+        `::error::not writing baseline — run had ${failures.length} failure(s) or unparsable scores (post=${scores.post ?? "n/a"}, profile=${scores.profile ?? "n/a"}). Fix the regressions first, then re-record.`,
+      );
+      process.exitCode = 1;
+    } else {
+      const out = {
+        scores: { post: scores.post, profile: scores.profile },
+        updatedAt: now,
+      };
+      try {
+        writeFileSync(BASELINE_PATH, `${JSON.stringify(out, null, 2)}\n`);
+        console.log(`\nWrote baseline to ${BASELINE_PATH}`);
+      } catch {
+        console.error(`::error::could not write ${BASELINE_PATH}`);
+        process.exitCode = 1;
+      }
+    }
+  }
   const metrics = [
     `## SEO audit metrics — ${now}`,
     "",
@@ -191,10 +286,12 @@ const main = async () => {
     `| Sitemap profiles | ${profiles.length} |`,
     ...targets.flatMap((t) => {
       const body = t.body ?? "";
+      const base = baseline.scores?.[t.kind];
       return [
         `| Fetch ${t.kind} (Googlebot) | HTTP ${t.status ?? "n/a"}, shell=${body.includes(SPA_MARKER)}, JSON-LD=${body.includes(t.ld)} |`,
         `| GBP lint ${t.kind} | ${scores[t.kind] === undefined ? "n/a (unfetched)" : "see log"} |`,
         `| Content quality ${t.kind} | ${scores[t.kind] ?? "n/a"} (floor ${CQ_FLOOR}) |`,
+        `| Baseline ${t.kind} (max Δ ${CQ_DELTA}) | baseline=${base ?? "none"}, score=${scores[t.kind] ?? "n/a"} |`,
       ];
     }),
     "",
