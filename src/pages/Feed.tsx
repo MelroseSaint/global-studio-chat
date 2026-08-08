@@ -1,6 +1,6 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { motion } from "framer-motion";
-import { Bell, Inbox, LocateFixed, MapPin, X } from "lucide-react";
+import { Bell, Inbox, LocateFixed, MapPin, Share2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
 
@@ -166,6 +166,7 @@ export function Feed() {
       <StoriesBar />
       <AnnouncementBanner />
       <Composer />
+      <SharingTip />
 
       {status === "LoadingFirstPage" && (
         <div className="flex flex-col gap-4 p-4">
@@ -274,6 +275,58 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 /** A thin, dismissible banner that shows active admin announcements.
  *  Each user can dismiss each announcement once — it won't return. */
+// One-per-device onboarding nudge for the sharing flows: the Share dialog's
+// "Send via message" opens the DM composer as a popup (no redirect), and
+// pasting a post link into a comment auto-detects and offers it as a card.
+// localStorage-gated so it appears once and stays dismissed after the ×.
+const SHARE_TIP_KEY = "purewire_share_tip_dismissed";
+
+function SharingTip() {
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(SHARE_TIP_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  if (dismissed) return null;
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      className="relative mx-4 mt-2 flex items-start gap-2.5 rounded-lg border border-l-[3px] border-l-primary bg-muted/40 px-3 py-2.5 text-sm sm:mx-5"
+    >
+      <Share2 className="mt-0.5 size-3.5 shrink-0 text-primary" />
+      <div className="min-w-0 flex-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Tip
+        </span>
+        <p className="mt-0.5 leading-snug text-muted-foreground">
+          Share posts anywhere: a post&apos;s Share dialog opens the message
+          composer as a popup — no redirect — and pasting a post link into a
+          comment auto-detects it as a card.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          try {
+            localStorage.setItem(SHARE_TIP_KEY, "1");
+          } catch {
+            /* private mode — fine, it just re-shows */
+          }
+          setDismissed(true);
+        }}
+        className="-mr-1 -mt-1 shrink-0 rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        aria-label="Dismiss"
+      >
+        <X className="size-3.5" />
+      </button>
+    </motion.div>
+  );
+}
+
 function AnnouncementBanner() {
   const announcements = useQuery(api.announcements.activeForUser);
   const dismiss = useMutation(api.announcements.dismiss);

@@ -617,7 +617,7 @@ export function Messages() {
               <Empty
                 icon={MessageSquare}
                 title="No conversations yet"
-                description="Message someone from their profile, or start a new one here."
+                description="Message someone from their profile, or start a new one here — you can also share any post into a chat: its Share dialog's 'Send via message' opens this popup for you."
               />
             </div>
           ) : (
