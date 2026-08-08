@@ -234,6 +234,42 @@ export function setDeviceKeypair(
   safeSetItem(PUB_PREFIX + userId, keypair.publicJwk);
 }
 
+/**
+ * True when WebCrypto is available (all of E2E messaging depends on it).
+ */
+export const DM_CRYPTO_AVAILABLE =
+  typeof globalThis.crypto !== "undefined" &&
+  typeof globalThis.crypto.subtle !== "undefined";
+
+/**
+ * One shared bootstrap per page load: StrictMode mounts effects twice, and
+ * both mounts must end up with the SAME device keypair, or the stored
+ * public key could disagree with the private key. A module-level promise
+ * serializes the runs so only one pair is ever generated. The Messages
+ * page and the compose popup both call this so a session never ends up
+ * with two keypairs on one device.
+ */
+let keyBootstrap: Promise<{ pub: string; priv: string }> | null = null;
+
+export async function bootstrapDeviceKeys(
+  userId: string,
+): Promise<{ pub: string; priv: string }> {
+  if (keyBootstrap === null) {
+    keyBootstrap = (async () => {
+      let pub = getDevicePublicKey(userId);
+      let priv = getDevicePrivateKey(userId);
+      if (!pub || !priv) {
+        const pair = await generateDmKeyPair();
+        pub = pair.publicJwk;
+        priv = pair.privateJwk;
+        setDeviceKeypair(userId, pair);
+      }
+      return { pub, priv };
+    })();
+  }
+  return keyBootstrap;
+}
+
 /* ---- small guarded helpers ---- */
 
 function safeGetItem(key: string): string | null {

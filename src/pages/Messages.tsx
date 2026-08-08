@@ -35,15 +35,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import {
+  bootstrapDeviceKeys,
   decryptBytes,
   decryptText,
+  DM_CRYPTO_AVAILABLE,
   encryptBytes,
   encryptText,
-  generateDmKeyPair,
-  getDevicePrivateKey,
-  getDevicePublicKey,
   getOrCreateConversationKey,
-  setDeviceKeypair,
 } from "@/lib/dm-crypto";
 import { timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -95,39 +93,6 @@ function kindFromMime(type: string): MediaKind {
   if (type.startsWith("video/")) return "video";
   if (type.startsWith("audio/")) return "audio";
   return "image";
-}
-
-/**
- * One shared bootstrap per page load: StrictMode mounts the effect twice,
- * and both mounts must end up with the SAME device keypair, or the stored
- * public key could disagree with the private key. A module-level promise
- * serializes the two runs so only one pair is ever generated.
- */
-// WebCrypto is what powers all of this; a sandboxed frame without it gets a
-// clear notice instead of a silent dead page.
-const CRYPTO_AVAILABLE =
-  typeof globalThis.crypto !== "undefined" &&
-  typeof globalThis.crypto.subtle !== "undefined";
-
-let keyBootstrap: Promise<{ pub: string; priv: string }> | null = null;
-
-async function bootstrapDeviceKeys(
-  userId: string,
-): Promise<{ pub: string; priv: string }> {
-  if (keyBootstrap === null) {
-    keyBootstrap = (async () => {
-      let pub = getDevicePublicKey(userId);
-      let priv = getDevicePrivateKey(userId);
-      if (!pub || !priv) {
-        const pair = await generateDmKeyPair();
-        pub = pair.publicJwk;
-        priv = pair.privateJwk;
-        setDeviceKeypair(userId, pair);
-      }
-      return { pub, priv };
-    })();
-  }
-  return keyBootstrap;
 }
 
 export function Messages() {
@@ -195,7 +160,7 @@ export function Messages() {
   // device, and that the public half is registered so others can encrypt to
   // us. The private half never leaves the browser.
   useEffect(() => {
-    if (!user?._id || !CRYPTO_AVAILABLE) return;
+    if (!user?._id || !DM_CRYPTO_AVAILABLE) return;
     let cancelled = false;
     void bootstrapDeviceKeys(user._id)
       .then(async ({ pub, priv }) => {
@@ -588,7 +553,7 @@ export function Messages() {
   // have no header bar (icon rail instead), so they get full height.
   return (
     <div className="flex h-[calc(100dvh-3.5rem)] flex-col pb-16 sm:h-dvh sm:pb-0">
-      {!CRYPTO_AVAILABLE ? (
+      {!DM_CRYPTO_AVAILABLE ? (
         <div className="border-b border-oxide/30 bg-oxide/10 px-4 py-3 text-sm text-oxide dark:text-oxide-light">
           <Lock className="mr-2 inline size-4" />
           Encrypted messaging isn&apos;t available in this browser. Try a

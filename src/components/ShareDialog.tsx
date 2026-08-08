@@ -47,11 +47,15 @@ export function ShareDialog({
   open,
   onOpenChange,
   onShared,
+  onSendViaMessage,
 }: {
   post: PostItem;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onShared?: () => void;
+  // When provided, "Send via message" pops up a compose dialog instead of
+  // redirecting to /messages (the owner renders MessageDialog).
+  onSendViaMessage?: (postId: string) => void;
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -153,13 +157,17 @@ export function ShareDialog({
     }
   };
 
-  // Send the post privately: the Messages page picks up ?share=<postId>,
-  // shows a live preview in the composer, and the message carries the post
-  // reference (only a text caption would be encrypted).
+  // Send the post privately: the popup composer (MessageDialog) opens with
+  // the post attached — no redirect. Without the popup owner (fallback),
+  // the Messages page picks up ?share=<postId> as before.
   const sendViaMessage = () => {
     onOpenChange(false);
     setMode("share");
-    navigate(`/messages?share=${post._id}`);
+    if (onSendViaMessage) {
+      onSendViaMessage(post._id);
+    } else {
+      navigate(`/messages?share=${post._id}`);
+    }
   };
 
   // Drop this post into another post's comments: the destination post page

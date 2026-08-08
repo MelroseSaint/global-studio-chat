@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import { canonicalBase, seoExcerpt, usePageMeta } from "@/lib/seo";
 import { FollowButton } from "@/components/FollowButton";
+import { MessageDialog } from "@/components/MessageDialog";
 import { FollowsList, type FollowsTab } from "@/components/FollowsList";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -25,6 +26,8 @@ export function Profile() {
   const unblockUser = useMutation(api.security.unblockUser);
   const blocked = useQuery(api.security.isBlocked, { username });
   const [blocking, setBlocking] = useState(false);
+  // The popup DM composer (opened by the Message button — no redirect).
+  const [messageOpen, setMessageOpen] = useState(false);
   // Which follow list is open (if any): the Followers/Following counts open
   // a searchable dialog, and each row links through to that person's profile.
   const [followsTab, setFollowsTab] = useState<FollowsTab | null>(null);
@@ -159,7 +162,7 @@ export function Profile() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigate(`/messages?user=${profile._id}`)}
+                  onClick={() => setMessageOpen(true)}
                   className="gap-1.5"
                 >
                   <MessageSquare className="size-4" />
@@ -315,6 +318,12 @@ export function Profile() {
           )}
         </div>
       </div>
+
+      <MessageDialog
+        open={messageOpen}
+        onOpenChange={setMessageOpen}
+        initialUserId={profile?._id}
+      />
     </div>
   );
 }

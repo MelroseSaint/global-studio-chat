@@ -25,6 +25,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { CommentDialog } from "@/components/CommentDialog";
 import { LinkCard } from "@/components/LinkCard";
+import { MessageDialog } from "@/components/MessageDialog";
 import { ReportDialog } from "@/components/ReportDialog";
 import { ShareDialog } from "@/components/ShareDialog";
 import {
@@ -153,6 +154,10 @@ export function PostCard({
   }
   const [reportOpen, setReportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  // The popup DM composer: opened by ShareDialog's "Send via message" so
+  // sharing a post privately never redirects to /messages.
+  const [messageOpen, setMessageOpen] = useState(false);
+  const [messageShareId, setMessageShareId] = useState<string | null>(null);
   const [reportingPhish, setReportingPhish] = useState(false);
   const [reportingAi, setReportingAi] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -533,6 +538,17 @@ export function PostCard({
         open={shareOpen}
         onOpenChange={setShareOpen}
         onShared={() => setShareCount((c) => c + 1)}
+        onSendViaMessage={(postId) => {
+          setMessageShareId(postId);
+          setMessageOpen(true);
+        }}
+      />
+
+      <MessageDialog
+        open={messageOpen}
+        onOpenChange={setMessageOpen}
+        sharePostId={messageShareId}
+        onSent={() => setMessageShareId(null)}
       />
     </article>
   );
