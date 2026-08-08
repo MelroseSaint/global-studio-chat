@@ -1,4 +1,5 @@
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { useRouteError } from "react-router";
 
 import { Button } from "@/components/ui/button";
 
@@ -28,6 +29,61 @@ const CHUNK_ERROR_PATTERNS = [
 
 function isStaleChunkError(error: Error): boolean {
   return CHUNK_ERROR_PATTERNS.some((re) => re.test(error.message));
+}
+
+/**
+ * The calm, reloadable fallback shared by the class ErrorBoundary (catches
+ * errors inside its subtree) and the router's route-level errorElement
+ * (catches errors thrown by a route element during a data-router render —
+ * which the outer boundary CANNOT see, because the router handles them
+ * itself).
+ */
+export function FallbackScreen() {
+  return (
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
+      <img
+        src="/logo.svg"
+        alt="PureWire"
+        className="size-12 rounded-xl"
+      />
+      <h1 className="text-lg font-bold tracking-tight">
+        Something went wrong
+      </h1>
+      <p className="max-w-sm text-sm text-muted-foreground">
+        An unexpected error interrupted this screen. Your account, posts,
+        and files are safe — reloading fixes it.
+      </p>
+      <Button onClick={() => window.location.reload()}>
+        Reload PureWire
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Route-level errorElement. A data router catches errors thrown while
+ * rendering a route element and renders the nearest errorElement (or its
+ * own default error page) — it does NOT propagate to the ErrorBoundary
+ * wrapping the RouterProvider. Without this, a single failing query would
+ * replace the app with React Router's bare "Unexpected Application Error!"
+ * screen instead of the app's own fallback.
+ */
+export function RouteError() {
+  const error = useRouteError();
+  useEffect(() => {
+    // Parity with the class boundary's componentDidCatch: a route error
+    // must be visible in the console, not silently swallowed.
+    console.error("PureWire route crashed:", error);
+    if (
+      error instanceof Error &&
+      isStaleChunkError(error) &&
+      !sessionStorage.getItem(CHUNK_RELOAD_KEY)
+    ) {
+      sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
+      window.location.reload();
+    }
+  }, [error]);
+  return <FallbackScreen />;
 }
 
 /**
@@ -61,25 +117,7 @@ export class ErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.error) {
-      return (
-        <div className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
-          <img
-            src="/logo.svg"
-            alt="PureWire"
-            className="size-12 rounded-xl"
-          />
-          <h1 className="text-lg font-bold tracking-tight">
-            Something went wrong
-          </h1>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            An unexpected error interrupted this screen. Your account, posts,
-            and files are safe — reloading fixes it.
-          </p>
-          <Button onClick={() => window.location.reload()}>
-            Reload PureWire
-          </Button>
-        </div>
-      );
+      return <FallbackScreen />;
     }
     return this.props.children;
   }

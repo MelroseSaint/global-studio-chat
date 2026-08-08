@@ -11,7 +11,7 @@ import {
   Shield,
   User,
 } from "lucide-react";
-import { Suspense, useEffect, useState } from "react";
+import { Component, Suspense, useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 
 import { api } from "@/convex/_generated/api";
@@ -91,6 +91,53 @@ function NavItem({
   );
 }
 
+/**
+ * Catches a query error so the workload badge can degrade to "nothing"
+ * instead of crashing the shell. useQuery in this Convex version THROWS
+ * query errors during render (there is no error-as-value path), so the
+ * only way to keep a failure local is an error boundary around the
+ * component that runs the query. Keyed on `enabled` by the caller, so the
+ * boundary resets (and the query re-subscribes) whenever the admin's
+ * verification state changes — a failure is only ever "no badge for this
+ * window", never a permanent blank.
+ */
+class WorkloadBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+/**
+ * Runs the moderation workload query and reports its data upward via
+ * onData. Lives inside WorkloadBoundary, so a failing query renders
+ * nothing (no badge, no title) until the backend recovers — the shell
+ * never crashes over a badge count.
+ */
+function WorkloadQuery({
+  enabled,
+  onData,
+}: {
+  enabled: boolean;
+  onData: (w: { openTickets: number; aiReview: number } | undefined) => void;
+}) {
+  const workload = useQuery(
+    api.admin.moderationWorkload,
+    enabled ? undefined : "skip",
+  );
+  useEffect(() => {
+    onData(
+      workload !== undefined && typeof workload === "object"
+        ? workload
+        : undefined,
+    );
+  }, [workload, onData]);
+  return null;
+}
+
 export function AppLayout() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
@@ -108,22 +155,43 @@ export function AppLayout() {
   // getting a single user-facing rejection.
   const reportAutomation = useMutation(api.automation.report);
   const [sessionRevoked, setSessionRevoked] = useState(false);
-  // Moderation workload for admins: open tickets + posts waiting on AI
-  // review. Skipped for non-admins (the query itself is admin-gated).
   const isAdmin = user?.role === "admin";
-  const workload = useQuery(
-    api.admin.moderationWorkload,
-    isAdmin ? undefined : "skip",
-  );
-  // A workload failure must never crash the shell (the root error boundary
-  // catches it either way) — and when the query reports an error instead of
-  // data, the badge simply shows no pending work until the backend recovers.
-  const workloadData =
-    workload !== undefined &&
-    typeof workload === "object" &&
-    !(workload instanceof Error)
-      ? workload
-      : undefined;
+
+  // Backend-verified admin device gate (see adminIp.ts): while the admin
+  // is signed in, the backend must keep OBSERVING this session's IP — the
+  // browser proves nothing on its own. Heartbeats every few minutes, and
+  // re-verifies on tab focus / reconnect. If the backend ever sees this
+  // session from a different IP it deletes the session and reports it
+  // revoked — we sign out immediately, so no admin power survives a
+  // cross-network replay. Declared before the workload query because that
+  // query is gated on its result.
+  const adminIpState = useAdminIpVerify({
+    enabled: isAdmin && !sessionRevoked,
+    onRevoked: async () => {
+      setSessionRevoked(true);
+      await signOut();
+    },
+  });
+  // The Admin entry (nav + badge) only appears once this device has been
+  // verified against the backend; while the first verify is in flight the
+  // admin simply sees no Admin menu rather than a flashing, half-usable
+  // dashboard. (The page itself also gates on adminIpStatus.)
+  const adminVerified = adminIpState === "verified";
+
+  // Moderation workload for admins: open tickets + posts waiting on AI
+  // review. FIRES ONLY AFTER the device is IP-verified: requireAdmin →
+  // assertAdminIpVerified throws a ConvexError when the binding is
+  // missing or stale, and useQuery THROWS query errors during render in
+  // this Convex version (there is no error-as-value path), so firing
+  // before verification would crash the whole shell with a route error.
+  // Gating mirrors the Admin page, which refuses to fire its data queries
+  // until adminIpStatus reports verified.
+  // The workload badge: open tickets + posts waiting on AI review. Runs in
+  // a boundary-isolated child so a query failure shows no badge instead of
+  // crashing the shell, and only fires once the device is IP-verified.
+  const [workloadData, setWorkloadData] = useState<
+    { openTickets: number; aiReview: number } | undefined
+  >(undefined);
   const moderationTotal =
     workloadData === undefined
       ? 0
@@ -189,26 +257,6 @@ export function AppLayout() {
     }
   }, [user, sessionRevoked, reportAutomation]);
 
-  // Backend-verified admin device gate (see adminIp.ts): while the admin
-  // is signed in, the backend must keep OBSERVING this session's IP — the
-  // browser proves nothing on its own. Heartbeats every few minutes, and
-  // re-verifies on tab focus / reconnect. If the backend ever sees this
-  // session from a different IP it deletes the session and reports it
-  // revoked — we sign out immediately, so no admin power survives a
-  // cross-network replay.
-  const adminIpState = useAdminIpVerify({
-    enabled: isAdmin && !sessionRevoked,
-    onRevoked: async () => {
-      setSessionRevoked(true);
-      await signOut();
-    },
-  });
-  // The Admin entry (nav + badge) only appears once this device has been
-  // verified against the backend; while the first verify is in flight the
-  // admin simply sees no Admin menu rather than a flashing, half-usable
-  // dashboard. (The page itself also gates on adminIpStatus.)
-  const adminVerified = adminIpState === "verified";
-
   // PWA app-icon badge: the OS shows the pending moderation workload on the
   // installed PureWire icon so admins know there is work waiting even when
   // the app is closed. Only meaningful in a standalone-installed context;
@@ -235,6 +283,15 @@ export function AppLayout() {
 
   return (
     <div className="flex min-h-dvh">
+      <WorkloadBoundary
+        key={isAdmin && adminVerified && !sessionRevoked ? "on" : "off"}
+      >
+        <WorkloadQuery
+          enabled={isAdmin && adminVerified && !sessionRevoked}
+          onData={setWorkloadData}
+        />
+      </WorkloadBoundary>
+
       {/* Sidebar — icon-only w-20 rail at sm–lg (tablets), full w-64 with
           labels at lg+. Below sm the bottom nav takes over. */}
       <aside className="sticky top-0 hidden h-dvh w-20 shrink-0 flex-col border-r bg-sidebar sm:flex lg:w-64">

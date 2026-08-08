@@ -6,7 +6,7 @@ import { ConvexReactClient } from "convex/react";
 import { UpdateBanner } from "@convex-dev/static-hosting/react";
 
 import { AppLayout } from "@/components/AppLayout";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ErrorBoundary, RouteError } from "@/components/ErrorBoundary";
 import { PageLoader } from "@/components/PageLoader";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Toaster } from "@/components/ui/sonner";
@@ -70,27 +70,40 @@ const PUBLIC_ELEMENTS: Record<(typeof PUBLIC_ROUTES)[number], ReactNode> = {
 // Suspense shows the loader only while a lazy chunk streams in). Tap-to-
 // navigate INP stays low even when the destination page (e.g. /auth) mounts
 // heavy content, instead of the click waiting out the full mount.
+//
+// The pathless root carries the route-level errorElement: when a route
+// element throws during render (a failing Convex query, a data-shape
+// mismatch), the data router renders the nearest errorElement itself — it
+// does NOT propagate to the ErrorBoundary wrapping the RouterProvider, so
+// without this a single bad query would replace the app with React Router's
+// bare "Unexpected Application Error!" screen. RouteError shows the app's
+// own calm, reloadable fallback instead.
 const router = createBrowserRouter([
-  ...PUBLIC_ROUTES.map((path) => ({ path, element: PUBLIC_ELEMENTS[path] })),
   {
-    element: (
-      <RequireAuth>
-        <AppLayout />
-      </RequireAuth>
-    ),
+    errorElement: <RouteError />,
     children: [
-      { path: "/home", element: <Feed /> },
-      { path: "/messages", element: <Messages /> },
-      { path: "/explore", element: <Explore /> },
-      { path: "/notifications", element: <Notifications /> },
-      { path: "/u/:username", element: <Profile /> },
-      { path: "/post/:postId", element: <PostDetail /> },
-      { path: "/settings", element: <Settings /> },
-      { path: "/support", element: <Support /> },
-      { path: "/admin", element: <Admin /> },
+      ...PUBLIC_ROUTES.map((path) => ({ path, element: PUBLIC_ELEMENTS[path] })),
+      {
+        element: (
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        ),
+        children: [
+          { path: "/home", element: <Feed /> },
+          { path: "/messages", element: <Messages /> },
+          { path: "/explore", element: <Explore /> },
+          { path: "/notifications", element: <Notifications /> },
+          { path: "/u/:username", element: <Profile /> },
+          { path: "/post/:postId", element: <PostDetail /> },
+          { path: "/settings", element: <Settings /> },
+          { path: "/support", element: <Support /> },
+          { path: "/admin", element: <Admin /> },
+        ],
+      },
+      { path: "*", element: <NotFound /> },
     ],
   },
-  { path: "*", element: <NotFound /> },
 ]);
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
