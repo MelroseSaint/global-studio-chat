@@ -6,7 +6,10 @@
  * actually render. This script fetches the live sitemap, samples the newest
  * posts (/post/:id) and profiles (/u/:handle) plus all fixed pages, and
  * fetches each with a CRAWLER user-agent — the same path a search engine
- * takes, which is the only one that proves real content:
+ * takes, which is the only one that proves real content. It also guards the
+ * sitemap at the source: every <loc> (on the main host AND the Convex
+ * static mirror) must carry the expected canonical host — a wrong-host
+ * sitemap fails before any URL is even sampled.
  *
  *   - posts/profiles must return 200 with the server-rendered OG page
  *     (Article / ProfilePage JSON-LD) — never a 404 and never the SPA
@@ -26,6 +29,27 @@ const SITE = (
   process.env.SITEMAP_SITE_URL ?? "https://purewire.vercel.app"
 ).replace(/\/+$/, "");
 
+// The canonical host every sitemap <loc> must carry — the repo-owned
+// production host (vite.config.ts SITE_URL_DEFAULT / PUREWIRE_SITE_URL),
+// the same one the healthcheck's SEO-basics guard asserts. The dynamic
+// sitemap is also served by the Convex static mirror and by previews, but
+// its URLs must ALWAYS point here: a wrong-host loc is cross-host duplicate
+// content, caught at the source instead of being submitted to search
+// engines. Override only for deliberate tests.
+const EXPECTED_HOST = (
+  process.env.EXPECTED_SITEMAP_HOST ?? "https://purewire.vercel.app"
+).replace(/\/+$/, "");
+// Origin (scheme + host), not hostname alone: an http:// loc on the same
+// host is still wrong — the site canonicalizes to https — and the script's
+// canonical/og:url checks are full-URL strict, so this matches that bar.
+const expectedOrigin = new URL(EXPECTED_HOST).origin;
+
+// The Convex static-hosting mirror serves the same dynamic sitemap (the
+// http.ts /sitemap.xml action), so its locs must be guarded too.
+const MIRROR = (
+  process.env.SITEMAP_MIRROR_URL ?? "https://outgoing-seal-727.convex.site"
+).replace(/\/+$/, "");
+
 // Matches the middleware's CRAWLER_UA list, so the request actually hits
 // the server-rendered OG path instead of the SPA.
 const CRAWLER_UA =
@@ -39,6 +63,17 @@ const rawSample = Number(process.env.SITEMAP_SAMPLE ?? 8);
 const SAMPLE_PER_CLASS =
   Number.isFinite(rawSample) && rawSample >= 1 ? Math.floor(rawSample) : 8;
 const siteHost = new URL(SITE).hostname;
+
+// Locs that do NOT carry the expected canonical origin (scheme + host), or
+// that fail to parse as URLs at all — the wrong-host sitemap signal.
+const locsOffHost = (locs) =>
+  locs.filter((u) => {
+    try {
+      return new URL(u).origin !== expectedOrigin;
+    } catch {
+      return true;
+    }
+  });
 
 // The canonical tag as a normalized absolute URL, or null when missing/
 // malformed. Trailing slashes are stripped so a canonical that matches the
@@ -110,6 +145,40 @@ const main = async () => {
   const xml = await sitemapRes.text();
   const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
   check("sitemap fetched with URLs", locs.length > 0, `${locs.length} URLs`);
+
+  // Wrong-host guard on the primary sitemap: every submitted URL must be on
+  // the canonical origin — no mirror host, no preview host, no stale var, no
+  // downgraded scheme. Requires at least one loc so an empty urlset cannot
+  // pass vacuously.
+  const badLocs = locsOffHost(locs);
+  check(
+    "all sitemap locs carry the canonical host",
+    locs.length > 0 && badLocs.length === 0,
+    badLocs.length > 0
+      ? `${badLocs.slice(0, 3).join(", ")}${badLocs.length > 3 ? ` +${badLocs.length - 3} more` : ""}`
+      : `${locs.length} locs on ${EXPECTED_HOST}`,
+  );
+
+  // The Convex static mirror serves the same sitemap — assert it fetches AND
+  // that its locs carry the canonical host, catching a wrong-host sitemap at
+  // the source rather than only on the main host.
+  const mirrorRes = await fetchWithRetry(`${MIRROR}/sitemap.xml`, {
+    headers: { "user-agent": CRAWLER_UA },
+  });
+  const mirrorOk = mirrorRes.ok;
+  const mirrorXml = mirrorOk ? await mirrorRes.text() : "";
+  const mirrorLocs = [...mirrorXml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+  const badMirrorLocs = locsOffHost(mirrorLocs);
+  check("mirror serves the sitemap", mirrorOk, `HTTP ${mirrorRes.status}`);
+  check(
+    "mirror sitemap locs carry the canonical host",
+    mirrorOk && mirrorLocs.length > 0 && badMirrorLocs.length === 0,
+    !mirrorOk
+      ? `HTTP ${mirrorRes.status}`
+      : mirrorLocs.length === 0
+        ? "no locs parsed"
+        : `${badMirrorLocs.slice(0, 3).join(", ")}${badMirrorLocs.length > 3 ? ` +${badMirrorLocs.length - 3} more` : ""}`,
+  );
 
   const fixed = locs.filter((u) => !/\/post\/|\/u\//.test(u));
   const posts = locs.filter((u) => u.includes("/post/"));
