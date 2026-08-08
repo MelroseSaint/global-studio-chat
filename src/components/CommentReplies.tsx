@@ -131,6 +131,8 @@ export function CommentReplyComposer({
       <SharedPostComposer
         value={sharingPostId}
         onChange={setSharingPostId}
+        text={text}
+        onTextChange={setText}
       />
       {onCancel ? (
         <Button

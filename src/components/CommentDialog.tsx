@@ -426,6 +426,8 @@ export function CommentDialog({
               <SharedPostComposer
                 value={sharingPostId}
                 onChange={setSharingPostId}
+                text={comment}
+                onTextChange={setComment}
               />
             </div>
           </div>

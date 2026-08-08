@@ -1,6 +1,6 @@
 import { useQuery } from "convex/react";
 import { Link2, Loader2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -9,15 +9,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 /**
- * Extract a Convex post id from a PureWire post link — accepts a bare
- * `/post/<id>` path, a full URL, or a link with an extra fragment/query.
- * Convex ids are lowercase-alphanumeric, so the capture is constrained to
- * word characters and the leading `/post/` is required (a bare id can't be
- * told apart from random text).
+ * Extract a PureWire post link from arbitrary text. Accepts a bare
+ * `/post/<id>` path or a full `https://…/post/<id>` URL, and returns the
+ * id plus the raw matched span so the caller can strip the link out of a
+ * draft. Convex ids are lowercase-alphanumeric, so the capture is
+ * constrained to word characters and the leading `/post/` is required (a
+ * bare id can't be told apart from random text).
  */
+export function extractSharedPostLink(
+  input: string,
+): { id: string; raw: string } | null {
+  const match = input.match(
+    /https?:\/\/[^\s/]+\/post\/([A-Za-z0-9]+)|\/post\/([A-Za-z0-9]+)/,
+  );
+  if (!match) return null;
+  return { id: match[1] ?? match[2], raw: match[0] };
+}
+
 export function extractSharedPostId(input: string): string | null {
-  const match = input.trim().match(/\/post\/([A-Za-z0-9]+)/);
-  return match ? match[1] : null;
+  return extractSharedPostLink(input)?.id ?? null;
 }
 
 /**
@@ -27,21 +37,59 @@ export function extractSharedPostId(input: string): string | null {
  * exactly what the recipient will see. The parent owns the value so the
  * composer can require it alongside (or instead of) text and send it with
  * addComment.
+ *
+ * When `text` is provided (the composer's draft), a PureWire post link
+ * pasted straight into the comment is auto-detected and offered as a card
+ * ("Attach as card"), with the link stripped from the draft on attach —
+ * no need to open the picker.
  */
 export function SharedPostComposer({
   value,
   onChange,
+  text,
+  onTextChange,
 }: {
   value: string | null;
   onChange: (postId: string | null) => void;
+  text?: string;
+  onTextChange?: (next: string) => void;
 }) {
   const [picking, setPicking] = useState(false);
   const [draft, setDraft] = useState("");
-  const parsedId = useMemo(() => extractSharedPostId(draft), [draft]);
+  // A dismissed auto-offer stays gone until the link leaves the draft, so
+  // pasting the same link again (or editing) re-offers instead of nagging.
+  const [dismissedId, setDismissedId] = useState<string | null>(null);
+
+  // A link pasted into the comment text (nothing attached yet) — offer it.
+  const pasted = useMemo(
+    () => (value === null && text ? extractSharedPostLink(text) : null),
+    [text, value],
+  );
+  useEffect(() => {
+    if (pasted === null && dismissedId !== null) setDismissedId(null);
+  }, [pasted, dismissedId]);
+  const offer = pasted !== null && pasted.id !== dismissedId ? pasted : null;
+
+  const parsedId = useMemo(() => {
+    if (offer) return offer.id;
+    return extractSharedPostId(draft);
+  }, [offer, draft]);
   const resolved = useQuery(
     api.posts.getPost,
     parsedId ? { postId: parsedId as Id<"posts"> } : "skip",
   );
+
+  // Attach: hand the id to the parent and, for a pasted-in-text link, strip
+  // the raw URL from the draft so the comment reads cleanly next to the card.
+  const attach = (id: string, raw?: string) => {
+    onChange(id);
+    if (raw && onTextChange && text !== undefined) {
+      onTextChange(text.replace(raw, "").replace(/\s+/g, " ").trim());
+    }
+    setDismissedId(null);
+    setPicking(false);
+    setDraft("");
+  };
 
   // Attached: the live preview (loading / no-longer-available / card) with
   // a remove button, like the DM composer preview.
@@ -57,6 +105,57 @@ export function SharedPostComposer({
           <X className="size-3.5" />
         </button>
         <SharedPostCard postId={value} />
+      </div>
+    );
+  }
+
+  // Auto-detected: a post link pasted into the comment text.
+  if (offer) {
+    return (
+      <div className="mt-2 rounded-xl border bg-muted/30 p-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+            <Link2 className="size-3.5" />
+            Post link detected
+          </span>
+          <button
+            type="button"
+            onClick={() => setDismissedId(offer.id)}
+            className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Dismiss
+          </button>
+        </div>
+        {resolved === undefined ? (
+          <div className="mt-1.5 flex items-center gap-2 text-xs opacity-80">
+            <Loader2 className="size-3.5 animate-spin" />
+            Checking post…
+          </div>
+        ) : resolved === null ? (
+          <p className="mt-1.5 text-xs italic text-muted-foreground">
+            That post isn&apos;t available (deleted, blocked, or not visible
+            to you).
+          </p>
+        ) : (
+          <div className="mt-1.5 flex items-center justify-between gap-2">
+            <span className="min-w-0 flex-1 truncate text-xs">
+              <span className="font-semibold">
+                {resolved.author?.name ?? resolved.author?.username ?? "Post"}
+              </span>
+              &nbsp;·&nbsp;
+              {resolved.content
+                ? resolved.content.slice(0, 40).trim()
+                : "media post"}
+            </span>
+            <Button
+              size="sm"
+              className="h-7 shrink-0 px-3 text-xs"
+              onClick={() => attach(offer.id, offer.raw)}
+            >
+              Attach as card
+            </Button>
+          </div>
+        )}
       </div>
     );
   }
@@ -134,11 +233,7 @@ export function SharedPostComposer({
             <Button
               size="sm"
               className="h-7 shrink-0 px-3 text-xs"
-              onClick={() => {
-                onChange(parsedId);
-                setPicking(false);
-                setDraft("");
-              }}
+              onClick={() => attach(parsedId)}
             >
               Attach
             </Button>
