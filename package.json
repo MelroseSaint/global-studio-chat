@@ -67,7 +67,8 @@
     "qa:dm-share": "node scripts/dm-share-qa.mjs",
     "qa:comment-share": "node scripts/comment-share-qa.mjs",
     "qa:ios-layout": "node scripts/qa-ios-layout.mjs",
-    "qa:redis-rate-limit": "node scripts/qa-redis-rate-limit.mjs"
+    "qa:redis-rate-limit": "node scripts/qa-redis-rate-limit.mjs",
+    "qa:pwa-install-hint": "node scripts/pwa-install-hint-qa.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"

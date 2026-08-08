@@ -7,6 +7,7 @@ import { useInView } from "react-intersection-observer";
 import { api } from "@/convex/_generated/api";
 import { Composer } from "@/components/Composer";
 import { PostCard, type PostItem } from "@/components/PostCard";
+import { PwaInstallHint } from "@/components/PwaInstallHint";
 import { StoriesBar } from "@/components/StoriesBar";
 import { Empty } from "@/components/ui/empty";
 import {
@@ -167,6 +168,8 @@ export function Feed() {
       <AnnouncementBanner />
       <Composer />
       <SharingTip />
+      {/* iOS-only, non-standalone, dismissible — see PwaInstallHint.tsx */}
+      <PwaInstallHint />
 
       {status === "LoadingFirstPage" && (
         <div className="flex flex-col gap-4 p-4">
