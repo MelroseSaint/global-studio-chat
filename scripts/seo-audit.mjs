@@ -4,16 +4,25 @@
  * toolkit (AgriciDaniel/claude-seo @ v2.2.4 — the same scripts used for
  * manual sweeps of purewire.vercel.app).
  *
- * Zero npm dependencies. The subset's only third-party Python dependency is
- * `requests` (the CI workflow installs it into a fresh venv); every script
- * here is invoked directly, bypassing the skill's runtime gate.
+ * Zero npm dependencies. The subset's only third-party Python dependencies
+ * are `requests`, `beautifulsoup4` (parse_html's HTML tree) and `lxml`
+ * (sitemap_discovery's XML parser) — the CI workflow installs all three into
+ * a fresh venv; every script here is invoked directly, bypassing the skill's
+ * runtime gate.
  *
  * Checks (each is a regression gate — a breach fails the job):
  *   1. fetch_page.py --googlebot on the sitemap → 200, <urlset, and at least
  *      one /post/ + one /u/ entry (user content stays indexable).
+ *   1b. sitemap_discovery.py on the site root → runs clean and surfaces
+ *      /sitemap.xml via robots.txt / common locations — a sitemap that is
+ *      published but undiscoverable is a crawlability regression.
  *   2. fetch_page.py --googlebot on the newest post + profile from the live
  *      sitemap → 200 AND the server-rendered OG page (Article / ProfilePage
  *      JSON-LD), never the SPA shell (dynamic rendering works for crawlers).
+ *   2b. parse_html.py --json on the fetched post + profile HTML → the same
+ *      structural lints the sitemap-wide sweep enforces (title 10..70,
+ *      meta description ≤160, canonical on the site host, ≥1 h1, ≥1 schema
+ *      block), so the nightly audit measures what the manual sweep measures.
  *   3. gbp_deprecation_lint.py on the fetched post + profile HTML → zero
  *      deprecated-schema findings (critical/high/medium).
  *   4. content_quality.py --json on the post + profile HTML → overall score
@@ -145,6 +154,37 @@ const main = async () => {
   check("sitemap lists posts", posts.length > 0, `${posts.length} post(s)`);
   check("sitemap lists profiles", profiles.length > 0, `${profiles.length} profile(s)`);
 
+  // 1b) Sitemap discovery: robots.txt + common locations must surface the
+  // same sitemap the audit validates above — a sitemap that's published but
+  // undiscoverable wastes crawl budget no matter how valid its URLs are.
+  const disc = runPy("sitemap_discovery.py", [SITE, "--json"]);
+  let discovered = null;
+  try {
+    discovered = JSON.parse(disc.stdout);
+  } catch {
+    /* unparsable */
+  }
+  const found = Array.isArray(discovered?.found) ? discovered.found : [];
+  // new URL(f.url, SITE): tolerant of a scheme-relative or bare-path URL the
+  // discovery script might surface, while still failing on a missing sitemap.
+  const foundPaths = found.map((f) => {
+    try {
+      return new URL(f.url, SITE).pathname;
+    } catch {
+      return "";
+    }
+  });
+  check(
+    "sitemap discovery runs clean",
+    discovered !== null && !discovered.error,
+    discovered?.error ?? `${found.length} candidate(s)`,
+  );
+  check(
+    "sitemap discovery finds /sitemap.xml",
+    foundPaths.includes("/sitemap.xml"),
+    foundPaths.join(", ") || "none",
+  );
+
   // 2) Fetch the newest post + profile exactly like a search engine would.
   const targets = [
     { kind: "post", url: posts[0], ld: '"@type":"Article"', file: join(tmp, "post.html") },
@@ -173,6 +213,58 @@ const main = async () => {
       `HTTP ${status}, shell=${isShell}, JSON-LD=${ldOk ? "ok" : "MISSING"}`,
     );
     t.body = body;
+  }
+
+  // 2b) Structural lints on the fetched pages (parse_html) — the same
+  // title/meta/canonical/h1/schema gates the sitemap-wide sweep enforces,
+  // closing the gap between the manual sweep and the nightly audit.
+  const structural = {};
+  for (const t of targets) {
+    if (!t.body) continue;
+    const ph = runPy("parse_html.py", [t.file, "--json"]);
+    let parsed = null;
+    try {
+      parsed = JSON.parse(ph.stdout);
+    } catch {
+      /* unparsable */
+    }
+    const title = (parsed?.title ?? "").trim();
+    const metaDesc = (parsed?.meta_description ?? "").trim();
+    const canonical = parsed?.canonical ?? "";
+    const h1Count = Array.isArray(parsed?.h1) ? parsed.h1.length : 0;
+    const schemaCount = Array.isArray(parsed?.schema) ? parsed.schema.length : 0;
+    structural[t.kind] = {
+      title: title.length,
+      meta: metaDesc.length,
+      canonical,
+      h1: h1Count,
+      schema: schemaCount,
+    };
+    check(
+      `parse_html title ${t.kind}`,
+      parsed !== null && title.length >= 10 && title.length <= 70,
+      parsed !== null ? `${title.length} chars` : "unparsable",
+    );
+    check(
+      `parse_html meta ≤160 ${t.kind}`,
+      parsed !== null && metaDesc.length > 0 && metaDesc.length <= 160,
+      parsed !== null ? `${metaDesc.length} chars` : "missing/unparsable",
+    );
+    check(
+      `parse_html canonical ${t.kind}`,
+      parsed !== null && canonical.startsWith(SITE),
+      canonical ? canonical : "missing",
+    );
+    check(
+      `parse_html h1 ${t.kind}`,
+      parsed !== null && h1Count >= 1,
+      parsed !== null ? `${h1Count} h1` : "unparsable",
+    );
+    check(
+      `parse_html schema ${t.kind}`,
+      parsed !== null && schemaCount >= 1,
+      parsed !== null ? `${schemaCount} schema block(s)` : "unparsable",
+    );
   }
 
   // 3) Schema lint on the fetched pages.
@@ -282,13 +374,16 @@ const main = async () => {
     `| Check | Result |`,
     `|---|---|`,
     `| Sitemap fetch (Googlebot) | ${smStatus === 200 ? "ok" : `HTTP ${smStatus}`} |`,
+    `| Sitemap discovery | ${discovered === null ? "unparsable output" : (discovered?.error ?? `${foundPaths.join(", ") || "none"}`)} |`,
     `| Sitemap posts | ${posts.length} |`,
     `| Sitemap profiles | ${profiles.length} |`,
     ...targets.flatMap((t) => {
       const body = t.body ?? "";
       const base = baseline.scores?.[t.kind];
+      const s = structural[t.kind];
       return [
         `| Fetch ${t.kind} (Googlebot) | HTTP ${t.status ?? "n/a"}, shell=${body.includes(SPA_MARKER)}, JSON-LD=${body.includes(t.ld)} |`,
+        `| Parse_html ${t.kind} | ${s ? `title=${s.title} meta=${s.meta} h1=${s.h1} schema=${s.schema}` : "n/a (unfetched)"} |`,
         `| GBP lint ${t.kind} | ${scores[t.kind] === undefined ? "n/a (unfetched)" : "see log"} |`,
         `| Content quality ${t.kind} | ${scores[t.kind] ?? "n/a"} (floor ${CQ_FLOOR}) |`,
         `| Baseline ${t.kind} (max Δ ${CQ_DELTA}) | baseline=${base ?? "none"}, score=${scores[t.kind] ?? "n/a"} |`,

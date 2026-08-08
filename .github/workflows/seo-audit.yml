@@ -59,12 +59,13 @@ jobs:
             https://github.com/AgriciDaniel/claude-seo.git /tmp/claude-seo
 
       # The audit/sweep subset (fetch_page, gbp_deprecation_lint,
-      # content_quality, parse_html) needs `requests` (HTTP) and
-      # `beautifulsoup4` (parse_html's HTML tree) — nothing heavier.
-      - name: Minimal Python venv (requests + beautifulsoup4)
+      # content_quality, parse_html, sitemap_discovery) needs `requests`
+      # (HTTP), `beautifulsoup4` (parse_html's HTML tree) and `lxml`
+      # (sitemap_discovery's XML parser) — nothing heavier.
+      - name: Minimal Python venv (requests + beautifulsoup4 + lxml)
         run: |
           python -m venv /tmp/seo-venv
-          /tmp/seo-venv/bin/python -m pip install --quiet requests beautifulsoup4
+          /tmp/seo-venv/bin/python -m pip install --quiet requests beautifulsoup4 lxml
 
       - name: Run the SEO audit against the live site
         id: audit
