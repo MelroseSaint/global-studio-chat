@@ -112,9 +112,18 @@ export const activateScheduled = internalMutation({
 //  Queries
 // ────────────────────────────────────────────────────────────
 
-/** All announcements (active + scheduled + inactive) for the admin panel. */
+/**
+ * All announcements (active + scheduled + inactive) for the admin panel.
+ * Admin-only: it exposes scheduled (not-yet-live) and inactive items that
+ * the public `activeForUser` query deliberately filters out, so it carries
+ * the same requireAdmin -> assertAdminIpVerified gate as the create/
+ * update/remove mutations. The AnnouncementsPanel consumer renders only
+ * inside the Admin page's verified-device gate, so this never fires before
+ * the IP binding is fresh.
+ */
 export const listAll = query({
   handler: async (ctx) => {
+    await requireAdmin(ctx);
     const all = await ctx.db.query("announcements").order("desc").collect();
     return all.map((a) => ({
       ...a,
