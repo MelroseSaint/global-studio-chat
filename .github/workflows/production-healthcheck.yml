@@ -67,9 +67,7 @@ jobs:
           # Overridable via repository variables; default to production.
           SITE_URL: ${{ vars.SITE_URL || 'https://outgoing-seal-727.convex.site' }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:signup-e2e 2>&1 | tee healthcheck.log
+        run: bash scripts/retry-once.sh healthcheck.log npm run qa:signup-e2e
 
       - name: Upload the E2E log
         if: failure()
@@ -454,9 +452,7 @@ jobs:
           CLOUDINARY_UPLOAD_PRESET: ${{ vars.CLOUDINARY_UPLOAD_PRESET || secrets.CLOUDINARY_UPLOAD_PRESET || 'purewire_unsigned' }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-        run: |
-          set -o pipefail
-          npm run qa:cloudinary-health 2>&1 | tee cloudinary-health.log
+        run: bash scripts/retry-once.sh cloudinary-health.log npm run qa:cloudinary-health
 
       - name: Upload the probe log
         if: failure()
@@ -577,9 +573,7 @@ jobs:
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:phishing 2>&1 | tee phishing.log
+        run: bash scripts/retry-once.sh phishing.log npm run qa:phishing
 
       - name: Upload the phishing QA log
         if: failure()
@@ -816,9 +810,7 @@ jobs:
           # secret under Settings > Secrets > Actions.
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:reinstate 2>&1 | tee reinstate.log
+        run: bash scripts/retry-once.sh reinstate.log npm run qa:reinstate
 
       - name: Upload the reinstate QA log
         if: failure()
@@ -937,9 +929,7 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:admin-ip 2>&1 | tee admin-ip.log
+        run: bash scripts/retry-once.sh admin-ip.log npm run qa:admin-ip
 
       - name: Upload the admin-ip QA log
         if: failure()
@@ -1061,9 +1051,7 @@ jobs:
           # with TEST_HARNESS_ENABLED=1 set on the Convex deployment.
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:story-views 2>&1 | tee story-views-qa.log
+        run: bash scripts/retry-once.sh story-views-qa.log npm run qa:story-views
 
       - name: Upload the story-viewer QA log
         if: failure()
@@ -1190,9 +1178,7 @@ jobs:
           # with TEST_HARNESS_ENABLED=1 set on the Convex deployment.
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:blocklist 2>&1 | tee blocklist-qa.log
+        run: bash scripts/retry-once.sh blocklist-qa.log npm run qa:blocklist
 
       - name: Upload the blocklist QA log
         if: failure()
@@ -1315,9 +1301,7 @@ jobs:
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
-        run: |
-          set -o pipefail
-          npm run qa:cleanup-test-users 2>&1 | tee sweep-traces.log
+        run: bash scripts/retry-once.sh sweep-traces.log npm run qa:cleanup-test-users
 
       - name: Upload the sweep log
         if: failure()

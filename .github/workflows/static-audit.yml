@@ -114,7 +114,7 @@ jobs:
       - name: Run DQS audit against production
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-        run: npm run qa:count-drift
+        run: bash scripts/retry-once.sh count-drift.log npm run qa:count-drift
 
   racism-qa:
     name: Racism prevention QA
@@ -199,7 +199,7 @@ jobs:
         if: env.TEST_HARNESS_SECRET != ''
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-        run: npm run qa:ai-scan-integration
+        run: bash scripts/retry-once.sh ai-scan-integration.log npm run qa:ai-scan-integration
 
   salt-qa:
     name: Salt rotation QA
@@ -273,7 +273,7 @@ jobs:
       - name: Test shadowban lifecycle against production
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-        run: npm run qa:shadowban
+        run: bash scripts/retry-once.sh shadowban.log npm run qa:shadowban
 
   reinstate-qa:
     name: Admin reinstatement QA
@@ -289,7 +289,7 @@ jobs:
       - name: Test admin reinstatement workflow against production
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-        run: npm run qa:reinstate
+        run: bash scripts/retry-once.sh reinstate.log npm run qa:reinstate
 
   cloudinary-health:
     name: Cloudinary health probe
@@ -308,7 +308,7 @@ jobs:
           CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-        run: npm run qa:cloudinary-health
+        run: bash scripts/retry-once.sh cloudinary-health.log npm run qa:cloudinary-health
 
   session-audit:
     name: Session lifetime audit
@@ -324,7 +324,7 @@ jobs:
       - name: Audit session lifetimes
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-        run: npm run qa:session-audit
+        run: bash scripts/retry-once.sh session-audit.log npm run qa:session-audit
 
   cleanup-test-users:
     name: Sweep leftover QA users
@@ -349,7 +349,7 @@ jobs:
       - name: Erase leftover QA test users from production
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-        run: npm run qa:cleanup-test-users
+        run: bash scripts/retry-once.sh cleanup-users.log npm run qa:cleanup-test-users
 
   cleanup-test-domains:
     name: Sweep leftover QA blocklist domains
@@ -368,4 +368,4 @@ jobs:
       - name: Erase leftover QA domains/patterns/sources from production
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
-        run: npm run qa:cleanup-test-domains
+        run: bash scripts/retry-once.sh cleanup-domains.log npm run qa:cleanup-test-domains

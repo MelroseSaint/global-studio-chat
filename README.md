@@ -344,6 +344,17 @@ annotated reference.
 
 All scripts runnable locally against the live site:
 
+The production-facing harness QAs (`qa:signup-e2e`, `qa:phishing`,
+`qa:blocklist`, `qa:reinstate`, `qa:admin-ip`, `qa:story-views`,
+`qa:shadowban`, `qa:session-audit`, `qa:count-drift`,
+`qa:ai-scan-integration`, `qa:cloudinary-health`, `qa:cleanup-*`) are
+invoked in CI through `scripts/retry-once.sh`, which retries **once** when a
+run fails with exit 1 — a flaky external feed or network blip can't red the
+nightly gate on its own, while a genuine regression still fails and still
+opens its alert issue. Harness misconfigurations (exit 2) are deterministic
+and never retried. `qa:blocklist-sync` retries internally in the script
+for the same reason.
+
 | Command | What it verifies |
 | --- | --- |
 | `npm run typecheck` | TypeScript across all source |
@@ -355,7 +366,7 @@ All scripts runnable locally against the live site:
 | `npm run qa:racism` | Racism prevention engine (72 adversarial test cases) |
 | `npm run qa:phishing` | Phishing scan tiers across all surfaces |
 | `npm run qa:blocklist` | Domain blocklist engine (49 checks, harness-gated) |
-| `npm run qa:blocklist-sync` | External source synchronization |
+| `npm run qa:blocklist-sync` | External source synchronization (retries once on transient feed/transport failures) |
 | `npm run qa:shadowban` | Silent-moderation escalation paths |
 | `npm run qa:reinstate` | Admin reinstatement with audit trail |
 | `npm run qa:suspend-story` | Story suspension + admin evidence (harness-gated) |
