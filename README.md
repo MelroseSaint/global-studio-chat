@@ -384,7 +384,7 @@ All scripts runnable locally against the live site:
 
 | Command | What it verifies |
 | --- | --- |
-| `npm run qa:sitemap-urls` (add `:all` for a full sweep) | Live sitemap URLs return HTTP 200 with real content (not the SPA shell), a same-host canonical, and no redirect drift; sample size via `SITEMAP_SAMPLE` |
+| `npm run qa:sitemap-urls` (add `:all` for a full sweep) | Live sitemap URLs return HTTP 200 with real content (not the SPA shell), a same-host canonical **and** an `og:url` matching the exact sitemap URL, and no redirect drift; sample size via `SITEMAP_SAMPLE` |
 | `npm run qa:seo-audit` | SEO audit of the newest post + profile (claude-seo linters): sitemap discovery, structural parse_html lints (title/meta/canonical/h1/schema), absolute floor **and** a committed-score baseline — any drop > Δ (`CQ_DELTA`, default 5) fails even above the floor |
 | `seo-audit:baseline` | Re-record the audit score baseline (after intentional content changes) |
 | `npm run qa:seo-sweep` (add `:all`) | Sitemap-wide SEO sweep with a committed flag baseline — new issues fail CI |

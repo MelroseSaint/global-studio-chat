@@ -11,7 +11,8 @@
  *   - posts/profiles must return 200 with the server-rendered OG page
  *     (Article / ProfilePage JSON-LD) — never a 404 and never the SPA
  *     shell, which would mean a visibility regression silently submitted a
- *     dead or unfetchable URL.
+ *     dead or unfetchable URL. Both link surfaces must point at the exact
+ *     sitemap URL: the <link rel=canonical> AND the og:url meta tag.
  *   - fixed pages are SPA routes, so 200 + the app shell is their real
  *     content.
  *
@@ -44,6 +45,18 @@ const siteHost = new URL(SITE).hostname;
 // sitemap URL modulo a trailing slash does not false-fail.
 const canonicalOf = (body) => {
   const m = body.match(/<link rel="canonical" href="([^"]+)"/i);
+  if (!m) return null;
+  try {
+    return new URL(m[1].replace(/&amp;/g, "&")).href.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+};
+
+// The og:url tag, normalized exactly like the canonical — the other link
+// surface on the same server-rendered OG page. Null when missing/malformed.
+const ogUrlOf = (body) => {
+  const m = body.match(/<meta property="og:url" content="([^"]+)"/i);
   if (!m) return null;
   try {
     return new URL(m[1].replace(/&amp;/g, "&")).href.replace(/\/$/, "");
@@ -146,11 +159,17 @@ const main = async () => {
         // so a regression surfaces instead of silently self-canonicalizing
         // to a different URL and wasting crawl equity.
         const canonicalOk = canonical === url;
+        // og:url guard, mirroring the canonical on the other link surface:
+        // the share/open-graph URL must point at the exact sitemap URL too,
+        // so social unfurlers and the crawler agree on which page this is.
+        const ogUrl = ogUrlOf(body);
+        const ogUrlOk = ogUrl === url;
         check(
           url,
-          res.status === 200 && !isShell && ldOk && noRedirect && canonicalOk,
+          res.status === 200 && !isShell && ldOk && noRedirect && canonicalOk && ogUrlOk,
           `status ${res.status}, shell=${isShell}, JSON-LD=${ldOk ? "ok" : "MISSING"}, ` +
-            `canonical=${canonicalOk ? "MATCH" : `${canonical ?? "MISSING"} != ${url}`}`,
+            `canonical=${canonicalOk ? "MATCH" : `${canonical ?? "MISSING"} != ${url}`}, ` +
+            `og:url=${ogUrlOk ? "MATCH" : `${ogUrl ?? "MISSING"} != ${url}`}`,
         );
       }
     } catch (err) {
