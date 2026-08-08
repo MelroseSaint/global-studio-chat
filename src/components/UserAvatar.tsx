@@ -1,6 +1,6 @@
-import { cn } from "@/lib/utils";
-
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { cloudinaryImageUrl } from "@/lib/cloudinary-media";
+import { cn } from "@/lib/utils";
 
 export interface UserAvatarUser {
   _id?: string;
@@ -19,7 +19,13 @@ export function UserAvatar({
   className?: string;
   ring?: boolean;
 }) {
-  const src = user?.avatarUrl ?? user?.image ?? undefined;
+  // Avatars are small everywhere, so a Cloudinary avatar is fetched at a
+  // capped width with auto format/quality (WebP/AVIF) instead of shipping
+  // the original upload. Convex-storage URLs pass through untouched.
+  const src =
+    user?.avatarUrl !== undefined && user?.avatarUrl !== null
+      ? (cloudinaryImageUrl(user.avatarUrl, 128) ?? user.avatarUrl)
+      : (user?.image ?? undefined);
   const label = user?.name ?? user?.username ?? "?";
   return (
     <Avatar

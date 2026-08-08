@@ -25,6 +25,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  cloudinaryVideoUrl,
+  responsiveImageAttrs,
+} from "@/lib/cloudinary-media";
 import { timeAgo } from "@/lib/format";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -264,14 +268,14 @@ export function StoriesBar() {
               ) : null}
               {current.mediaKind === "image" && (
                 <img
-                  src={current.mediaUrl ?? ""}
+                  {...responsiveImageAttrs(current.mediaUrl ?? "")}
                   alt={current.caption ?? "Story"}
                   className="max-h-[70vh] w-full object-contain"
                 />
               )}
               {current.mediaKind === "video" && (
                 <video
-                  src={current.mediaUrl ?? ""}
+                  src={cloudinaryVideoUrl(current.mediaUrl ?? "") ?? ""}
                   controls
                   autoPlay
                   className="max-h-[70vh] w-full"

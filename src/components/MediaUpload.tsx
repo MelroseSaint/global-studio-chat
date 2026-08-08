@@ -140,12 +140,21 @@ export function MediaUpload({
             stripped: stripped || undefined,
           });
         } else {
-          // Cloudinary mode: POST the file + unsigned preset straight to the
-          // upload API. The bytes never pass through Convex — only the tiny
-          // secure_url + public_id are stored.
+          // Cloudinary mode: POST the file straight to the upload API. The
+          // bytes never pass through Convex — only the tiny secure_url +
+          // public_id are stored. Signed when the server minted credentials
+          // (primary — no dashboard-created unsigned preset required),
+          // falling back to the legacy unsigned-preset path otherwise.
           const form = new FormData();
           form.append("file", uploadFile);
-          form.append("upload_preset", ticket.uploadPreset);
+          if (ticket.apiKey && ticket.timestamp && ticket.signature) {
+            form.append("api_key", ticket.apiKey);
+            form.append("timestamp", ticket.timestamp);
+            form.append("signature", ticket.signature);
+            if (ticket.folder) form.append("folder", ticket.folder);
+          } else if (ticket.uploadPreset) {
+            form.append("upload_preset", ticket.uploadPreset);
+          }
           const response = await fetch(ticket.uploadUrl, {
             method: "POST",
             body: form,

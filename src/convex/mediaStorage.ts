@@ -272,6 +272,33 @@ function cloudinarySignature(
 }
 
 /**
+ * Credentials for a SIGNED browser upload (no unsigned preset required).
+ * The server mints a timestamp + signature over the upload params with its
+ * api_secret; the browser sends api_key + timestamp + signature alongside
+ * the file and Cloudinary accepts it. This is the primary path — it works
+ * with just the API key/secret (no dashboard-created preset), and it's
+ * more secure than an unsigned preset. Returns null when the secret isn't
+ * configured, in which case the caller falls back to the unsigned-preset
+ * path.
+ */
+export function cloudinaryUploadCredentials(
+  cfg: CloudinaryConfig,
+): {
+  apiKey: string;
+  timestamp: string;
+  signature: string;
+  folder: string;
+} | null {
+  if (cfg.apiKey === undefined || cfg.apiSecret === undefined) {
+    return null;
+  }
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const folder = "purewire";
+  const signature = cloudinarySignature(cfg.apiSecret, { folder, timestamp });
+  return { apiKey: cfg.apiKey, timestamp, signature, folder };
+}
+
+/**
  * Fire-and-forget delete of Cloudinary assets. Scheduled after documents
  * are removed so the row write never depends on Cloudinary availability; a
  * failed delete simply leaves an orphan asset (cheap, and re-runnable).

@@ -7,6 +7,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import { responsiveImageAttrs } from "@/lib/cloudinary-media";
 import { canonicalBase, seoExcerpt, usePageMeta } from "@/lib/seo";
 import { FollowButton } from "@/components/FollowButton";
 import { MessageDialog } from "@/components/MessageDialog";
@@ -133,7 +134,7 @@ export function Profile() {
       <div className="h-40 w-full overflow-hidden bg-gradient-to-br from-primary/40 via-accent/40 to-primary/30 sm:h-52">
         {profile.bannerUrl ? (
           <img
-            src={profile.bannerUrl}
+            {...responsiveImageAttrs(profile.bannerUrl)}
             alt=""
             className="size-full object-cover"
           />

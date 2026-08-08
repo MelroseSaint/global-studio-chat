@@ -22,6 +22,10 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { scanWithBlocklist } from "@/convex/phishing";
+import {
+  cloudinaryVideoUrl,
+  responsiveImageAttrs,
+} from "@/lib/cloudinary-media";
 import { solveChallenge } from "@/lib/pow";
 import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -444,7 +448,16 @@ export function Messages() {
             }),
             "dm.enc",
           );
-          form.append("upload_preset", ticket.uploadPreset);
+          // Signed upload when the server minted credentials (primary),
+          // else the legacy unsigned preset.
+          if (ticket.apiKey && ticket.timestamp && ticket.signature) {
+            form.append("api_key", ticket.apiKey);
+            form.append("timestamp", ticket.timestamp);
+            form.append("signature", ticket.signature);
+            if (ticket.folder) form.append("folder", ticket.folder);
+          } else if (ticket.uploadPreset) {
+            form.append("upload_preset", ticket.uploadPreset);
+          }
           const res = await fetch(ticket.uploadUrl, { method: "POST", body: form });
           if (res.ok) {
             const parsed = (await res.json()) as {
@@ -830,7 +843,7 @@ export function Messages() {
                                   </div>
                                 ) : m.media.kind === "image" ? (
                                   <img
-                                    src={mediaUrl}
+                                    {...responsiveImageAttrs(mediaUrl)}
                                     alt=""
                                     className="max-h-72 rounded-lg object-cover"
                                   />
@@ -839,7 +852,7 @@ export function Messages() {
                                   // shared-post previews — inline video that
                                   // starts playing, user keeps the controls.
                                   <video
-                                    src={mediaUrl}
+                                    src={cloudinaryVideoUrl(mediaUrl) ?? mediaUrl}
                                     controls
                                     autoPlay
                                     muted
@@ -848,7 +861,7 @@ export function Messages() {
                                   />
                                 ) : (
                                   <audio
-                                    src={mediaUrl}
+                                    src={cloudinaryVideoUrl(mediaUrl) ?? mediaUrl}
                                     controls
                                     className="h-10 w-56 max-w-full"
                                   />

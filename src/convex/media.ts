@@ -6,6 +6,7 @@ import { stripMp4Metadata } from "@/lib/mp4-strip";
 
 import {
   cloudinaryConfig,
+  cloudinaryUploadCredentials,
   resourceTypeFor,
   resourceTypeForContentType,
   uploadOverwriteBytes,
@@ -62,13 +63,22 @@ type PreparedUpload =
   | {
       mode: "cloudinary";
       uploadUrl: string;
-      uploadPreset: string;
       resourceType: string;
       // The Convex upload URL, minted alongside every Cloudinary ticket so
       // the client can fall back to Convex storage the instant a Cloudinary
       // upload fails (missing/renamed unsigned preset, restricted key,
       // quota) instead of breaking uploads for users.
       fallbackUrl: string;
+      // Signed upload (primary when the API secret is configured): the
+      // browser sends api_key + timestamp + signature instead of an
+      // unsigned preset — no dashboard-created preset required.
+      apiKey?: string;
+      timestamp?: string;
+      signature?: string;
+      folder?: string;
+      // Unsigned-preset upload (legacy path, used when no API secret is
+      // configured). Exactly one of (signed creds, uploadPreset) is set.
+      uploadPreset?: string;
     };
 
 /**
@@ -100,9 +110,13 @@ export const prepareUpload = action({
     v.object({
       mode: v.literal("cloudinary"),
       uploadUrl: v.string(),
-      uploadPreset: v.string(),
+      uploadPreset: v.optional(v.string()),
       resourceType: v.string(),
       fallbackUrl: v.string(),
+      apiKey: v.optional(v.string()),
+      timestamp: v.optional(v.string()),
+      signature: v.optional(v.string()),
+      folder: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, { contentType }): Promise<PreparedUpload> => {
@@ -123,15 +137,25 @@ export const prepareUpload = action({
       return { mode: "convex", uploadUrl: slot.convexUrl };
     }
     const resourceType = resourceTypeForContentType(contentType);
+    // Signed upload when the API secret is configured (primary — no
+    // dashboard-created preset needed); unsigned preset otherwise.
+    const creds = cloudinaryUploadCredentials(cfg);
     return {
       mode: "cloudinary",
       uploadUrl: uploadUrlFor(cfg, resourceType),
-      uploadPreset: cfg.uploadPreset,
       resourceType,
       // The Convex URL is already minted by the internal mutation (it's the
       // fallback path when Cloudinary isn't configured) — hand it along so
       // the client can retry into Convex storage without a second ticket.
       fallbackUrl: slot.convexUrl,
+      ...(creds !== null
+        ? {
+            apiKey: creds.apiKey,
+            timestamp: creds.timestamp,
+            signature: creds.signature,
+            folder: creds.folder,
+          }
+        : { uploadPreset: cfg.uploadPreset }),
     };
   },
 });

@@ -12,6 +12,10 @@ import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
+import {
+  cloudinaryVideoUrl,
+  responsiveImageAttrs,
+} from "@/lib/cloudinary-media";
 import { formatCount, timeAgo } from "@/lib/format";
 
 import type { PostItem, PostMedia } from "./PostCard";
@@ -116,8 +120,11 @@ export function PostMediaGrid({
     return (
       <div className="relative mt-3 overflow-hidden rounded-xl border bg-muted/40">
         {m.kind === "image" && m.url && (
+          // Cloudinary images render responsively (srcSet of widths, auto
+          // format/quality) — the CDN serves the right size per screen
+          // instead of the original file; Convex-storage URLs pass through.
           <img
-            src={m.url}
+            {...responsiveImageAttrs(m.url)}
             alt=""
             className="max-h-[480px] w-full object-cover"
             loading="lazy"
@@ -128,7 +135,7 @@ export function PostMediaGrid({
           // parent card's click-to-open navigation.
           <div onClick={(e) => e.stopPropagation()}>
             <video
-              src={m.url}
+              src={cloudinaryVideoUrl(m.url) ?? m.url}
               controls
               autoPlay={autoPlay}
               muted={autoPlay}
@@ -160,11 +167,16 @@ export function PostMediaGrid({
             className="aspect-square overflow-hidden rounded-xl border bg-muted/40"
           >
             {m.kind === "image" && m.url ? (
-              <img src={m.url} alt="" className="size-full object-cover" loading="lazy" />
+              <img
+                {...responsiveImageAttrs(m.url)}
+                alt=""
+                className="size-full object-cover"
+                loading="lazy"
+              />
             ) : m.kind === "video" && m.url ? (
               <div onClick={(e) => e.stopPropagation()} className="size-full">
                 <video
-                  src={m.url}
+                  src={cloudinaryVideoUrl(m.url) ?? m.url}
                   controls
                   autoPlay={autoPlay}
                   muted={autoPlay}
