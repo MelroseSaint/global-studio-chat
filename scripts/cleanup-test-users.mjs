@@ -2,17 +2,19 @@
 /**
  * Clean up leftover QA test users from the production deployment.
  *
- * The QA suite creates throwaway accounts under the reserved `qa_` prefix
- * (testHarness.createTestUser enforces it) and normally erases them in a
- * finally block. A run that crashes hard — or a script bug — can leave one
- * behind. This script finds every remaining `qa_*` account and erases it
- * with the same full sweep the admin uses (removeAccount: posts, comments,
- * follows, files, auth sessions, notifications — everything), so nothing
- * QA-generated lingers in a real deployment.
+ * The QA suite creates throwaway accounts under reserved prefixes — `qa_`
+ * (the harness; testHarness.createTestUser enforces it) and `pw_e2e_`
+ * (the signup e2e, whose accounts can outlive a crashed run when the
+ * session can't be recovered for self-deletion) — and normally erases
+ * them itself. A run that crashes hard — or a script bug — can leave one
+ * behind. This script finds every remaining account under either prefix
+ * and erases it with the same full sweep the admin uses (removeAccount:
+ * posts, comments, follows, files, auth sessions, notifications —
+ * everything), so nothing test-generated lingers in a real deployment.
  *
  * Safety: the harness gate (TEST_HARNESS_ENABLED=1 + TEST_HARNESS_SECRET)
  * must be on, exactly like every other QA script. Only usernames matching
- * the reserved `qa_` prefix are ever touched — a real account can never
+ * the reserved test prefixes are ever touched — a real account can never
  * be matched. The owner/admin accounts are protected server-side too.
  *
  * Run:
@@ -68,7 +70,9 @@ async function main() {
     });
     for (const u of res.page) {
       const username = (u.username ?? "").toLowerCase();
-      if (username.startsWith("qa_")) {
+      // The reserved test prefixes every QA script uses: qa_ (harness) and
+      // pw_e2e_ (signup e2e). A real account can never match these.
+      if (username.startsWith("qa_") || username.startsWith("pw_e2e_")) {
         targets.push(u);
       }
     }
@@ -77,7 +81,7 @@ async function main() {
   }
 
   if (targets.length > 0) {
-    console.log(`Found ${targets.length} QA test user(s) to erase:`);
+    console.log(`Found ${targets.length} test user(s) to erase:`);
     for (const u of targets) {
       console.log(`  - @${u.username} (${u.name ?? "no name"}, joined ${new Date(u._creationTime).toISOString()})`);
     }

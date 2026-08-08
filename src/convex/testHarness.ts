@@ -1062,13 +1062,15 @@ export const reconcileFollowCounts = mutation({
 /**
  * Purge QA traces so no test data ever lingers on a real deployment.
  *
- * The QA suite creates reserved-prefix accounts (`qa_*`, `pwtest*`) and
- * normally erases them with the full admin sweep, but the one-way removal
- * log keeps an audit row for every erasure — including test sweeps — so
- * the log fills up with test-user entries the moment any QA runs.
+ * The QA suite creates reserved-prefix accounts (`qa_*`, `pwtest*`, and
+ * the signup e2e's `pw_e2e_*` — deliberately assignable so the real-flow
+ * test can register it) and normally erases them with the full admin
+ * sweep, but the one-way removal log keeps an audit row for every erasure
+ * — including test sweeps — so the log fills up with test-user entries
+ * the moment any QA runs.
  *
  * This harness-gated mutation deletes removalLog rows whose username
- * carries the reserved test prefix, and reports what it swept so a QA gate
+ * carries a reserved test prefix, and reports what it swept so a QA gate
  * can assert the site is test-free. Only the removal log is touched: real
  * moderation entries (real usernames) are one-way and never deleted.
  * Gated by the same two env gates as the rest of the module.
@@ -1078,7 +1080,7 @@ export const purgeTestTraces = mutation({
   handler: async (ctx, { secret }) => {
     requireHarness(secret);
     const entries = await ctx.db.query("removalLog").collect();
-    const testUsername = /^(qa_|pwtest)/i;
+    const testUsername = /^(qa_|pwtest|pw_e2e_)/i;
     const purged: Array<{ username: string | null; createdAt: number }> = [];
     for (const entry of entries) {
       if (entry.username && testUsername.test(entry.username)) {
@@ -1101,7 +1103,7 @@ export const getTestTraceCounts = query({
   args: { secret: v.string() },
   handler: async (ctx, { secret }) => {
     requireHarness(secret);
-    const testUsername = /^(qa_|pwtest)/i;
+    const testUsername = /^(qa_|pwtest|pw_e2e_)/i;
     const [users, removals] = await Promise.all([
       ctx.db.query("users").collect(),
       ctx.db.query("removalLog").collect(),

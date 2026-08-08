@@ -832,7 +832,7 @@ async function main() {
         "    ⚠ the account exists but no usable session could be recovered.",
       );
       console.log(
-        `      Manual removal may be needed for ${username} <${email}>.`,
+        `      Manual removal may be needed for ${username} <${email}> — or the nightly test-trace sweep (qa:cleanup-test-users) will erase it.`,
       );
     }
     await browser.close();
