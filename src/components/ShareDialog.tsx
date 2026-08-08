@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "convex/react";
-import { Link2, Loader2, Repeat2 } from "lucide-react";
+import { Link2, Loader2, MessageSquare, Repeat2 } from "lucide-react";
 import { useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
@@ -42,6 +43,7 @@ export function ShareDialog({
   onOpenChange: (open: boolean) => void;
   onShared?: () => void;
 }) {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const createShare = useMutation(api.posts.createShare);
   // A fresh proof-of-work challenge, cached for the session (see Composer).
@@ -125,6 +127,14 @@ export function ShareDialog({
     }
   };
 
+  // Send the post privately: the Messages page picks up ?share=<postId>,
+  // shows a live preview in the composer, and the message carries the post
+  // reference (only a text caption would be encrypted).
+  const sendViaMessage = () => {
+    onOpenChange(false);
+    navigate(`/messages?share=${post._id}`);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
@@ -134,7 +144,8 @@ export function ShareDialog({
             Share this post
           </DialogTitle>
           <DialogDescription>
-            Add a thought or tag people with @ — or share it as-is.
+            Add a thought or tag people with @ — share it publicly, or send
+            it privately via message.
           </DialogDescription>
         </DialogHeader>
 
@@ -169,6 +180,14 @@ export function ShareDialog({
         <SharedPostEmbed post={original} />
 
         <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={sendViaMessage}
+            disabled={submitting}
+          >
+            <MessageSquare className="size-4" />
+            Send via message
+          </Button>
           <Button
             variant="outline"
             onClick={() => void copyLink()}

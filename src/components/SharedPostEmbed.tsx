@@ -57,7 +57,14 @@ export function RichText({ text }: { text: string }) {
 }
 
 /** The media grid of a post, shown inside the post and inside shares. */
-export function PostMediaGrid({ media }: { media: PostMedia[] }) {
+export function PostMediaGrid({
+  media,
+  autoPlay = false,
+}: {
+  media: PostMedia[];
+  /** Autoplay muted video (used inside DM shared-post previews). */
+  autoPlay?: boolean;
+}) {
   if (media.length === 0) return null;
   // Any attached photo/video had GPS/device metadata removed before
   // upload — a tiny chip on the media tells viewers it was scrubbed.
@@ -81,7 +88,14 @@ export function PostMediaGrid({ media }: { media: PostMedia[] }) {
           // Stop propagation so the player's own controls never trigger the
           // parent card's click-to-open navigation.
           <div onClick={(e) => e.stopPropagation()}>
-            <video src={m.url} controls className="max-h-[480px] w-full" />
+            <video
+              src={m.url}
+              controls
+              autoPlay={autoPlay}
+              muted={autoPlay}
+              playsInline={autoPlay}
+              className="max-h-[480px] w-full"
+            />
           </div>
         )}
         {m.kind === "audio" && m.url && (
@@ -109,7 +123,14 @@ export function PostMediaGrid({ media }: { media: PostMedia[] }) {
               <img src={m.url} alt="" className="size-full object-cover" loading="lazy" />
             ) : m.kind === "video" && m.url ? (
               <div onClick={(e) => e.stopPropagation()} className="size-full">
-                <video src={m.url} controls className="size-full object-cover" />
+                <video
+                  src={m.url}
+                  controls
+                  autoPlay={autoPlay}
+                  muted={autoPlay}
+                  playsInline={autoPlay}
+                  className="size-full object-cover"
+                />
               </div>
             ) : (
               <div className="flex size-full items-center justify-center">
@@ -129,7 +150,14 @@ export function PostMediaGrid({ media }: { media: PostMedia[] }) {
  * share: author header, text, the full media, and engagement counts.
  * Clicking the card opens the original post.
  */
-export function SharedPostEmbed({ post }: { post: PostItem }) {
+export function SharedPostEmbed({
+  post,
+  autoPlayMedia = false,
+}: {
+  post: PostItem;
+  /** Autoplay muted video in the embedded media (DM previews). */
+  autoPlayMedia?: boolean;
+}) {
   const navigate = useNavigate();
   const author = post.author;
   const authorUsername = author?.username;
@@ -192,7 +220,7 @@ export function SharedPostEmbed({ post }: { post: PostItem }) {
       ) : null}
 
       {post.mediaUrls && post.mediaUrls.length > 0 ? (
-        <PostMediaGrid media={post.mediaUrls} />
+        <PostMediaGrid media={post.mediaUrls} autoPlay={autoPlayMedia} />
       ) : null}
 
       <div className="mt-2 flex items-center gap-4 border-t px-3 py-2 text-xs text-muted-foreground">

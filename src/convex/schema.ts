@@ -559,6 +559,13 @@ const schema = defineSchema({
         ),
       }),
     ),
+    // Optional reference to a post shared into the thread. Post ids are
+    // public metadata (not message content), so the reference travels in
+    // the clear like the sender/timestamp — the recipient's client fetches
+    // the post through the normal visibility rules and renders a preview
+    // card (media included). The text caption stays E2E-encrypted in
+    // `ciphertext` like any other message.
+    sharedPostId: v.optional(v.id("posts")),
   }).index("by_conversation", ["conversationId"]),
   // Per-device "read up to here" watermark for one conversation, so the
   // unread badge is accurate without ever touching message bodies.

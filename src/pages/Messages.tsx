@@ -26,6 +26,8 @@ import { solveChallenge } from "@/lib/pow";
 import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
+import { SharedPostEmbed } from "@/components/SharedPostEmbed";
+import type { PostItem } from "@/components/PostCard";
 import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -81,6 +83,9 @@ interface MessageRow {
     mime: string | null;
     kind: "image" | "video" | "audio";
   };
+  // A post shared into the thread — rendered as a preview card (the post
+  // id is public metadata; only a text caption would be encrypted).
+  sharedPostId?: string;
 }
 
 type MediaKind = "image" | "video" | "audio";
@@ -124,6 +129,40 @@ async function bootstrapDeviceKeys(
   return keyBootstrap;
 }
 
+/**
+ * A post shared into a thread, rendered as a preview card. Lives in its
+ * own component because useQuery can't run in the message map loop. The
+ * post is fetched through the normal visibility rules (api.posts.getPost),
+ * so a deleted, blocked, or silenced post degrades to "no longer
+ * available" for the viewer — never a broken link. Video media autoplays
+ * muted with controls, like the composer preview.
+ */
+function SharedPostCard({ postId }: { postId: string }) {
+  const post = useQuery(api.posts.getPost, {
+    postId: postId as Id<"posts">,
+  });
+  if (post === undefined) {
+    return (
+      <div className="mt-1.5 flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-xs opacity-80">
+        <Loader2 className="size-3.5 animate-spin" />
+        Loading post…
+      </div>
+    );
+  }
+  if (post === null) {
+    return (
+      <div className="mt-1.5 rounded-xl border bg-muted/40 px-3 py-2 text-xs italic opacity-80">
+        This post is no longer available
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1.5">
+      <SharedPostEmbed post={post as PostItem} autoPlayMedia />
+    </div>
+  );
+}
+
 export function Messages() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -148,6 +187,23 @@ export function Messages() {
   } | null>(null);
   const [decrypted, setDecrypted] = useState<Record<string, string>>({});
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+  // A post being shared into a conversation: set from the ?share=<postId>
+  // deep link (PostCard's "Send via message") or the Share dialog. The
+  // composer shows a live preview of it and the message carries the post id.
+  const [sharingPostId, setSharingPostId] = useState<string | null>(
+    searchParams.get("share"),
+  );
+  const sharedPost = useQuery(
+    api.posts.getPost,
+    sharingPostId ? { postId: sharingPostId as Id<"posts"> } : "skip",
+  );
+  // Keep the share target in sync with the URL: the deep link may arrive
+  // while the page is already mounted (Share dialog → navigate), and
+  // re-navigating with a fresh ?share= should re-arm the composer.
+  useEffect(() => {
+    const share = searchParams.get("share");
+    if (share) setSharingPostId(share);
+  }, [searchParams]);
 
   const setDmPublicKey = useMutation(api.dms.setDmPublicKey);
   const openConversation = useMutation(api.dms.openConversation);
@@ -387,7 +443,13 @@ export function Messages() {
 
   const send = async (force = false) => {
     const text = draft.trim();
-    if ((!text && !pendingMedia) || !convKey || !activeId || sending) return;
+    if (
+      (!text && !pendingMedia && !sharingPostId) ||
+      !convKey ||
+      !activeId ||
+      sending
+    )
+      return;
     // The phishing gate runs HERE, on this device, before anything is
     // encrypted — PureWire never sees plaintext, so the check has to
     // happen before the first byte leaves the browser. Hard scam signals
@@ -508,12 +570,19 @@ export function Messages() {
         ciphertext,
         iv,
         ...(media !== undefined ? { media } : {}),
+        ...(sharingPostId !== null ? { sharedPostId: sharingPostId as Id<"posts"> } : {}),
         powChallenge: pow.powChallenge,
         powNonce: pow.powNonce,
         powIssuedAt: pow.powIssuedAt,
       });
       setDraft("");
       setPendingMedia(null);
+      // The share was sent — drop it from the composer and the URL so a
+      // reload doesn't re-arm it.
+      if (sharingPostId !== null) {
+        setSharingPostId(null);
+        navigate(`/messages?convo=${activeId}`, { replace: true });
+      }
     } catch {
       // The attachment made it to storage but the message didn't — release
       // the orphaned file (best-effort), then tell the user.
@@ -586,6 +655,24 @@ export function Messages() {
               <Plus className="size-4" />
             </Button>
           </div>
+
+          {sharingPostId ? (
+            <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+              <MessageSquare className="size-3.5 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1">
+                Sharing a post — pick a conversation (or start a new one) to
+                send it.
+              </span>
+              <button
+                type="button"
+                aria-label="Cancel sharing"
+                className="shrink-0 font-medium text-foreground/80 hover:underline"
+                onClick={() => setSharingPostId(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : null}
 
           {conversations === undefined ? (
             <div className="space-y-2 p-3">
@@ -816,9 +903,15 @@ export function Messages() {
                                     className="max-h-72 rounded-lg object-cover"
                                   />
                                 ) : m.media.kind === "video" ? (
+                                  // Autoplay muted with controls, like the
+                                  // shared-post previews — inline video that
+                                  // starts playing, user keeps the controls.
                                   <video
                                     src={mediaUrl}
                                     controls
+                                    autoPlay
+                                    muted
+                                    playsInline
                                     className="max-h-72 rounded-lg"
                                   />
                                 ) : (
@@ -829,6 +922,9 @@ export function Messages() {
                                   />
                                 )}
                               </div>
+                            ) : null}
+                            {m.sharedPostId ? (
+                              <SharedPostCard postId={m.sharedPostId} />
                             ) : null}
                           </>
                         )}
@@ -870,6 +966,44 @@ export function Messages() {
                         Keep editing
                       </Button>
                     </span>
+                  </div>
+                ) : null}
+                {sharingPostId ? (
+                  <div className="mb-2 rounded-xl border bg-muted/40">
+                    <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5">
+                      <span className="flex items-center gap-1.5 text-xs font-medium">
+                        <MessageSquare className="size-3.5" />
+                        Sharing a post
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Remove shared post"
+                        className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        onClick={() => setSharingPostId(null)}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                    {sharedPost === undefined ? (
+                      <div className="flex items-center gap-2 px-3 py-2 text-xs opacity-80">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        Loading post…
+                      </div>
+                    ) : sharedPost === null ? (
+                      <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs italic opacity-80">
+                        This post is no longer available
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => setSharingPostId(null)}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ) : (
+                      <SharedPostEmbed post={sharedPost as PostItem} autoPlayMedia />
+                    )}
                   </div>
                 ) : null}
                 {pendingMedia ? (
@@ -936,7 +1070,9 @@ export function Messages() {
                       !convKey ||
                       keyIssue !== null ||
                       sending ||
-                      (draft.trim() === "" && pendingMedia === null)
+                      (draft.trim() === "" &&
+                        pendingMedia === null &&
+                        sharingPostId === null)
                     }
                     aria-label="Send"
                     onClick={() => void send()}

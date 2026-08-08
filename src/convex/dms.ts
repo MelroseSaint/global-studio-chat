@@ -367,6 +367,9 @@ export const sendMessage = mutation({
     ciphertext: v.string(),
     iv: v.string(),
     media: v.optional(dmMediaValidator),
+    // The id of a post being shared into the thread (see schema.ts — the
+    // reference is public metadata; only a text caption would be encrypted).
+    sharedPostId: v.optional(v.id("posts")),
     // Client-side proof-of-work, same scheme as createPost. DM spam is the
     // classic bot attack vector — a puzzle per message multiplies with the
     // per-action rate limit.
@@ -376,7 +379,16 @@ export const sendMessage = mutation({
   },
   handler: async (
     ctx,
-    { conversationId, ciphertext, iv, media, powChallenge, powNonce, powIssuedAt },
+    {
+      conversationId,
+      ciphertext,
+      iv,
+      media,
+      sharedPostId,
+      powChallenge,
+      powNonce,
+      powIssuedAt,
+    },
   ) => {
     const me = await getAuthUserId(ctx);
     if (me === null) {
@@ -401,13 +413,24 @@ export const sendMessage = mutation({
     if (
       recipientId === undefined ||
       hidden.includes(recipientId) ||
-      // No empty husks: every message carries either encrypted text or an
-      // encrypted attachment (or both).
-      (ciphertext.length === 0 && media === undefined) ||
+      // No empty husks: every message carries encrypted text, an encrypted
+      // attachment, or a shared post reference (or any combination).
+      (ciphertext.length === 0 &&
+        media === undefined &&
+        sharedPostId === undefined) ||
       ciphertext.length > 200_000 ||
       iv.length > 64
     ) {
       throw new Error("Message could not be sent");
+    }
+    // A shared post must exist at send time — a preview that instantly
+    // breaks is worse than a rejection. (It can still be deleted later;
+    // the recipient's preview then degrades to "no longer available".)
+    if (
+      sharedPostId !== undefined &&
+      (await ctx.db.get(sharedPostId)) === null
+    ) {
+      throw new Error("That post is no longer available");
     }
     await enforceRateLimit(ctx, me, "dm");
     const now = Date.now();
@@ -417,6 +440,7 @@ export const sendMessage = mutation({
       ciphertext,
       iv,
       ...(media !== undefined ? { media } : {}),
+      ...(sharedPostId !== undefined ? { sharedPostId } : {}),
     });
     await ctx.db.patch(conversationId, {
       lastMessageAt: now,
