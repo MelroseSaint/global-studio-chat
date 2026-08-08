@@ -1312,20 +1312,41 @@ export const addComment = mutation({
     // re-rooted to the top-level comment, so parentId always lands on a
     // top-level comment and the tree stays one level deep.
     parentId: v.optional(v.id("comments")),
+    // The id of a post being shared into this comment (see schema.ts — the
+    // reference is public metadata, rendered as a preview card).
+    sharedPostId: v.optional(v.id("posts")),
     // Client-side proof-of-work, same scheme as createPost.
     powChallenge: v.optional(v.string()),
     powNonce: v.optional(v.string()),
     powIssuedAt: v.optional(v.number()),
   },
-  handler: async (ctx, { postId, content, parentId: parentArg, powChallenge, powNonce, powIssuedAt }) => {
+  handler: async (ctx, { postId, content, parentId: parentArg, sharedPostId, powChallenge, powNonce, powIssuedAt }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
     }
     await requireProof(powChallenge, powNonce, powIssuedAt);
     const text = content.trim();
-    if (text.length === 0 || text.length > 500) {
-      throw new Error("Comment must be between 1 and 500 characters.");
+    // No empty husks: a comment carries text, a shared post reference, or
+    // both — mirroring the DM message rule.
+    if (
+      (text.length === 0 && sharedPostId === undefined) ||
+      text.length > 500
+    ) {
+      throw new Error(
+        sharedPostId === undefined
+          ? "Comment must be between 1 and 500 characters."
+          : "Comment text must be 500 characters or fewer.",
+      );
+    }
+    // A shared post must exist at comment time — a preview that instantly
+    // breaks is worse than a rejection. (It can still be deleted later;
+    // the viewer's preview then degrades to "no longer available".)
+    if (
+      sharedPostId !== undefined &&
+      (await ctx.db.get(sharedPostId)) === null
+    ) {
+      throw new Error("That post is no longer available");
     }
     // Comment control: a locked post stops ALL new comments (top-level and
     // replies). The author or an admin turned it off; the thread stays
@@ -1358,6 +1379,7 @@ export const addComment = mutation({
           authorId: userId,
           content: text,
           parentId,
+          ...(sharedPostId !== undefined ? { sharedPostId } : {}),
         });
       }
       return { ok: true };
@@ -1434,6 +1456,7 @@ export const addComment = mutation({
       authorId: userId,
       content: text,
       parentId,
+      ...(sharedPostId !== undefined ? { sharedPostId } : {}),
     });
     await ctx.db.patch(postId, { commentCount: post.commentCount + 1 });
     // A reply notifies the comment author they got a reply; a top-level
@@ -1675,12 +1698,18 @@ export const editComment = mutation({
     }
     await requireProof(powChallenge, powNonce, powIssuedAt);
     const text = content.trim();
-    if (text.length === 0 || text.length > 500) {
-      throw new Error("Comment must be between 1 and 500 characters.");
-    }
     const comment = await ctx.db.get(commentId);
     if (comment === null) {
       throw new Error("Comment not found");
+    }
+    // A comment that carries a shared post may drop its caption entirely
+    // (the card stands alone) — but the edit UI only ever edits text, so
+    // this mirrors addComment's empty-husk rule.
+    if (
+      (text.length === 0 && comment.sharedPostId === undefined) ||
+      text.length > 500
+    ) {
+      throw new Error("Comment must be between 1 and 500 characters.");
     }
     if (comment.authorId !== userId) {
       throw new Error("You can only edit your own comments.");

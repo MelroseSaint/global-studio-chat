@@ -363,6 +363,12 @@ const schema = defineSchema({
     // Denormalized count of the replies hanging under this comment, patched
     // on reply/delete — the same counter discipline as posts.commentCount.
     replyCount: v.optional(v.number()),
+    // Optional reference to a post shared into this comment, mirroring the
+    // DM share flow: the comment renders the post as a preview card (media
+    // included). Post ids are public metadata, so the reference travels in
+    // the clear like the author/timestamp — the viewer's client fetches the
+    // post through the normal visibility rules.
+    sharedPostId: v.optional(v.id("posts")),
   })
     .index("by_post", ["postId"])
     .index("by_author", ["authorId"])

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useInView } from "react-intersection-observer";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
@@ -22,6 +22,8 @@ import { canonicalBase, seoExcerpt, usePageMeta } from "@/lib/seo";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import { PostCard, type PostItem } from "@/components/PostCard";
+import { SharedPostCard } from "@/components/SharedPostCard";
+import { SharedPostComposer } from "@/components/SharedPostComposer";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -149,6 +151,7 @@ function CommentMenu({
 
 export function PostDetail() {
   const { postId = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const postIdTyped = postId as Id<"posts">;
   const post = useQuery(api.posts.getPost, { postId: postIdTyped });
@@ -165,6 +168,20 @@ export function PostDetail() {
   const { ref, inView } = useInView();
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // A post being shared into this post's comments, mirroring the DM share
+  // flow: set from the ?share=<postId> deep link (Share dialog's "Share in
+  // a comment") or the composer's Attach-a-post picker. The composer shows
+  // a live preview and the comment carries the post reference.
+  const [sharingPostId, setSharingPostId] = useState<string | null>(
+    searchParams.get("share"),
+  );
+  // Keep the share target in sync with the URL: the deep link may arrive
+  // while the page is already mounted, and re-navigating with a fresh
+  // ?share= should re-arm the composer.
+  useEffect(() => {
+    const share = searchParams.get("share");
+    if (share) setSharingPostId(share);
+  }, [searchParams]);
   // Per-comment expand state for the Show more/less clamp so a single
   // long comment never inflates the list on a tablet.
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
@@ -253,12 +270,15 @@ export function PostDetail() {
     // replies hang under the comment itself.
     parentId?: string;
     replyCount?: number;
+    // A post shared into the comment — rendered as a preview card below
+    // the text (the id is public metadata; see schema.ts).
+    sharedPostId?: string;
     likedByMe: boolean;
   }[];
 
   const submit = async () => {
     const text = comment.trim();
-    if (!text || submitting) return;
+    if ((!text && !sharingPostId) || submitting) return;
     setSubmitting(true);
     try {
       // Proof-of-work before the write — same scheme as posting.
@@ -266,6 +286,9 @@ export function PostDetail() {
       const res = await addComment({
         postId: postIdTyped,
         content: text,
+        ...(sharingPostId !== null
+          ? { sharedPostId: sharingPostId as Id<"posts"> }
+          : {}),
         powChallenge: pow.powChallenge,
         powNonce: pow.powNonce,
         powIssuedAt: pow.powIssuedAt,
@@ -275,6 +298,12 @@ export function PostDetail() {
         return;
       }
       setComment("");
+      // The share was sent — drop it from the composer and the URL so a
+      // reload doesn't re-arm it.
+      if (sharingPostId !== null) {
+        setSharingPostId(null);
+        setSearchParams({}, { replace: true });
+      }
       // In "Top" sort a brand-new (0-like) comment sinks to the bottom, so
       // flip to "Newest" so the author sees their comment appear at the
       // top instead of thinking it failed.
@@ -353,7 +382,7 @@ export function PostDetail() {
           <Button
             size="icon"
             className="shrink-0 rounded-full"
-            disabled={!comment.trim() || submitting}
+            disabled={(!comment.trim() && !sharingPostId) || submitting}
             onClick={() => void submit()}
             aria-label="Send comment"
           >
@@ -364,6 +393,15 @@ export function PostDetail() {
             )}
           </Button>
         </div>
+      </div>
+
+      {/* Attach a post to the comment (or show the live preview of one
+          being shared in from the Share dialog's ?share= deep link). */}
+      <div className="px-4 sm:px-5">
+        <SharedPostComposer
+          value={sharingPostId}
+          onChange={setSharingPostId}
+        />
       </div>
 
       <div className="flex items-center justify-between gap-2 px-5 py-3">
@@ -475,7 +513,10 @@ export function PostDetail() {
                     )}
                   >
                     {c.content}
-                  </p>                      {isLong ? (
+                  </p>
+                  {c.sharedPostId ? (
+                    <SharedPostCard postId={c.sharedPostId} />
+                  ) : null}                      {isLong ? (
                         <button
                           type="button"
                           onClick={() => {

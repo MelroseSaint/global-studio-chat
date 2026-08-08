@@ -22,6 +22,8 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import type { PostItem } from "@/components/PostCard";
+import { SharedPostCard } from "@/components/SharedPostCard";
+import { SharedPostComposer } from "@/components/SharedPostComposer";
 import { PostMediaGrid, RichText } from "@/components/SharedPostEmbed";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -63,6 +65,9 @@ interface PreviewComment {
   likeCount?: number;
   parentId?: string;
   replyCount?: number;
+  // A post shared into the comment — rendered as a preview card below
+  // the text (the id is public metadata; see schema.ts).
+  sharedPostId?: string;
   likedByMe: boolean;
 }
 
@@ -207,6 +212,9 @@ function CommentPreview({
                       <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
                         {c.content}
                       </p>
+                      {c.sharedPostId ? (
+                        <SharedPostCard postId={c.sharedPostId} />
+                      ) : null}
                       <div className="mt-1 flex items-center gap-3">
                         <CommentLikeButton
                           commentId={c._id as Id<"comments">}
@@ -315,6 +323,9 @@ export function CommentDialog({
   const navigate = useNavigate();
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // A post attached to the comment, mirroring the DM share flow: the
+  // composer shows a live preview and the comment carries the reference.
+  const [sharingPostId, setSharingPostId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const locked = !!post.commentsLocked;
@@ -332,7 +343,7 @@ export function CommentDialog({
 
   const submit = async () => {
     const text = comment.trim();
-    if (!text || submitting || locked) return;
+    if ((!text && !sharingPostId) || submitting || locked) return;
     setSubmitting(true);
     try {
       // Proof-of-work before the write — same scheme as posting/commenting.
@@ -340,6 +351,9 @@ export function CommentDialog({
       const res = await addComment({
         postId: post._id,
         content: text,
+        ...(sharingPostId !== null
+          ? { sharedPostId: sharingPostId as Id<"posts"> }
+          : {}),
         powChallenge: pow.powChallenge,
         powNonce: pow.powNonce,
         powIssuedAt: pow.powIssuedAt,
@@ -349,6 +363,7 @@ export function CommentDialog({
         return;
       }
       setComment("");
+      setSharingPostId(null);
       onCommented?.();
       onOpenChange(false);
       toast.success("Comment posted.");
@@ -406,6 +421,12 @@ export function CommentDialog({
               >
                 {comment.length}/{MAX_LENGTH}
               </span>
+              {/* Attach a post to the comment — same live preview + send
+                  flow as the DM composer, without leaving the popup. */}
+              <SharedPostComposer
+                value={sharingPostId}
+                onChange={setSharingPostId}
+              />
             </div>
           </div>
         )}
@@ -476,7 +497,9 @@ export function CommentDialog({
           </Button>
           <Button
             onClick={() => void submit()}
-            disabled={submitting || locked || !comment.trim()}
+            disabled={
+              submitting || locked || (!comment.trim() && !sharingPostId)
+            }
           >
             {submitting ? (
               <Loader2 className="size-4 animate-spin" />

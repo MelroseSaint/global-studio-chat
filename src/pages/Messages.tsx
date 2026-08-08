@@ -26,6 +26,7 @@ import { solveChallenge } from "@/lib/pow";
 import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
+import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostEmbed } from "@/components/SharedPostEmbed";
 import type { PostItem } from "@/components/PostCard";
 import { Button } from "@/components/ui/button";
@@ -127,40 +128,6 @@ async function bootstrapDeviceKeys(
     })();
   }
   return keyBootstrap;
-}
-
-/**
- * A post shared into a thread, rendered as a preview card. Lives in its
- * own component because useQuery can't run in the message map loop. The
- * post is fetched through the normal visibility rules (api.posts.getPost),
- * so a deleted, blocked, or silenced post degrades to "no longer
- * available" for the viewer — never a broken link. Video media autoplays
- * muted with controls, like the composer preview.
- */
-function SharedPostCard({ postId }: { postId: string }) {
-  const post = useQuery(api.posts.getPost, {
-    postId: postId as Id<"posts">,
-  });
-  if (post === undefined) {
-    return (
-      <div className="mt-1.5 flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-xs opacity-80">
-        <Loader2 className="size-3.5 animate-spin" />
-        Loading post…
-      </div>
-    );
-  }
-  if (post === null) {
-    return (
-      <div className="mt-1.5 rounded-xl border bg-muted/40 px-3 py-2 text-xs italic opacity-80">
-        This post is no longer available
-      </div>
-    );
-  }
-  return (
-    <div className="mt-1.5">
-      <SharedPostEmbed post={post as PostItem} autoPlayMedia />
-    </div>
-  );
 }
 
 export function Messages() {

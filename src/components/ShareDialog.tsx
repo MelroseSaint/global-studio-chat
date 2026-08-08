@@ -1,15 +1,25 @@
 import { useMutation, useQuery } from "convex/react";
-import { Link2, Loader2, MessageSquare, Repeat2 } from "lucide-react";
-import { useRef, useState } from "react";
+import {
+  ArrowLeft,
+  Link2,
+  Loader2,
+  MessageCircle,
+  MessageSquare,
+  Repeat2,
+} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { MentionPicker } from "@/components/MentionPicker";
 import type { PostItem } from "@/components/PostCard";
 import { SharedPostEmbed } from "@/components/SharedPostEmbed";
+import { extractSharedPostId } from "@/components/SharedPostComposer";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -51,6 +61,22 @@ export function ShareDialog({
   const [caption, setCaption] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Two-step flow: "share" is the public share form, "comment" picks a
+  // destination post to drop this one into as a comment link card
+  // (mirroring the DM flow's pick-a-conversation step).
+  const [mode, setMode] = useState<"share" | "comment">("share");
+  const [destDraft, setDestDraft] = useState("");
+  const destId = useMemo(() => extractSharedPostId(destDraft), [destDraft]);
+  const destPost = useQuery(
+    api.posts.getPost,
+    destId ? { postId: destId as Id<"posts"> } : "skip",
+  );
+  // Recent posts as quick-pick destinations (a shallow global feed slice).
+  const quickPicks = useQuery(api.posts.feed, {
+    filter: "global",
+    paginationOpts: { numItems: 5, cursor: null },
+  });
+  const quickPosts = (quickPicks?.page ?? []) as unknown as PostItem[];
 
   // The post that will be embedded: for a share-of-a-share the server
   // flattens to the original, so preview the same original here.
@@ -132,7 +158,18 @@ export function ShareDialog({
   // reference (only a text caption would be encrypted).
   const sendViaMessage = () => {
     onOpenChange(false);
+    setMode("share");
     navigate(`/messages?share=${post._id}`);
+  };
+
+  // Drop this post into another post's comments: the destination post page
+  // picks up ?share=<postId>, shows the live preview in its comment
+  // composer, and the comment carries the reference as a link card.
+  const shareInComment = (destPostId: string) => {
+    onOpenChange(false);
+    setMode("share");
+    setDestDraft("");
+    navigate(`/post/${destPostId}?share=${post._id}`);
   };
 
   return (
@@ -140,12 +177,19 @@ export function ShareDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Repeat2 className="size-5 text-primary" />
-            Share this post
+            {mode === "comment" ? (
+              <MessageCircle className="size-5 text-primary" />
+            ) : (
+              <Repeat2 className="size-5 text-primary" />
+            )}
+            {mode === "comment"
+              ? "Share in a comment"
+              : "Share this post"}
           </DialogTitle>
           <DialogDescription>
-            Add a thought or tag people with @ — share it publicly, or send
-            it privately via message.
+            {mode === "comment"
+              ? "Pick a post to drop this one into as a comment link card — or paste its link below."
+              : "Add a thought or tag people with @ — share it publicly, or send it privately via message."}
           </DialogDescription>
         </DialogHeader>
 
@@ -177,16 +221,118 @@ export function ShareDialog({
           </div>
         </div>
 
-        <SharedPostEmbed post={original} />
+        {mode === "comment" ? (
+          <div className="space-y-4">
+            {/* Paste-a-link destination */}
+            <div>
+              <Input
+                value={destDraft}
+                onChange={(e) => setDestDraft(e.target.value)}
+                placeholder="Paste a PureWire post link…"
+                className="h-9"
+              />
+              {destId === null && destDraft.trim() !== "" ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Paste a post link like{" "}
+                  <span className="font-medium">/post/&lt;id&gt;</span>.
+                </p>
+              ) : null}
+              {destId !== null ? (
+                destPost === undefined ? (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs opacity-80">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    Checking post…
+                  </p>
+                ) : destPost === null ? (
+                  <p className="mt-1.5 text-xs italic text-muted-foreground">
+                    That post isn&apos;t available (deleted, blocked, or not
+                    visible to you).
+                  </p>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="mt-2 h-8"
+                    onClick={() => shareInComment(destId)}
+                  >
+                    <MessageCircle className="size-3.5" />
+                    Comment on this post
+                  </Button>
+                )
+              ) : null}
+            </div>
+            {/* Recent posts as quick destinations */}
+            <div>
+              <p className="mb-1.5 text-xs font-semibold text-muted-foreground">
+                Recent posts
+              </p>
+              {quickPosts.length === 0 ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  Loading…
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {quickPosts.map((p) => (
+                    <button
+                      key={p._id}
+                      type="button"
+                      onClick={() => shareInComment(p._id)}
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted/70"
+                    >
+                      <UserAvatar user={p.author} className="size-6" />
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="font-semibold">
+                          {p.author?.name ??
+                            p.author?.username ??
+                            "Unknown"}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {" "}
+                          ·{" "}
+                          {p.content
+                            ? p.content.slice(0, 36).trim()
+                            : "media post"}
+                        </span>
+                      </span>
+                      <MessageCircle className="size-3.5 shrink-0 text-muted-foreground" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <SharedPostEmbed post={original} />
+        )}
 
         <DialogFooter>
+          {mode === "comment" ? (
+            <Button
+              variant="ghost"
+              className="mr-auto"
+              onClick={() => setMode("share")}
+              disabled={submitting}
+            >
+              <ArrowLeft className="size-4" />
+              Back
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={sendViaMessage}
+              disabled={submitting}
+            >
+              <MessageSquare className="size-4" />
+              Send via message
+            </Button>
+          )}
           <Button
             variant="outline"
-            onClick={sendViaMessage}
+            onClick={() => setMode("comment")}
             disabled={submitting}
           >
-            <MessageSquare className="size-4" />
-            Send via message
+            <MessageCircle className="size-4" />
+            Share in a comment
           </Button>
           <Button
             variant="outline"
