@@ -411,12 +411,21 @@ const schema = defineSchema({
       // the bell can say "shared a post with you" and deep-link to the
       // exact conversation (see dms.sendMessage).
       v.literal("dm-share"),
+      // A post shared into one of your post's comments — distinct from a
+      // plain comment so the bell can say "shared a post in your post's
+      // comments" and preview the shared post (see posts.addComment).
+      v.literal("comment-share"),
     ),
     actorId: v.optional(v.id("users")),
     postId: v.optional(v.id("posts")),
     // The DM conversation a "dm-share" notification points at, so the
     // bell entry opens the thread (with the shared card) directly.
     conversationId: v.optional(v.id("dmConversations")),
+    // The post shared into the host post's comments (a "comment-share"
+    // notification). postId stays the host post, so Open/View lands on the
+    // thread where the share landed; this field carries the shared post for
+    // the preview.
+    sharedPostId: v.optional(v.id("posts")),
     message: v.optional(v.string()),
     read: v.boolean(),
   }).index("by_user", ["userId"]),

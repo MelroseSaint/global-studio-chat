@@ -30,10 +30,14 @@ export const listNotifications = query({
       visible.map(async (n) => {
         const actor = n.actorId ? await ctx.db.get(n.actorId) : null;
         const post = n.postId ? await ctx.db.get(n.postId) : null;
+        // The post shared into the host post's comments ("comment-share")
+        // — the bell previews this instead of the host post's text.
+        const sharedPost = n.sharedPostId ? await ctx.db.get(n.sharedPostId) : null;
         return {
           ...n,
           actor: actor ? publicUser(actor) : null,
           post,
+          sharedPost,
         };
       }),
     );

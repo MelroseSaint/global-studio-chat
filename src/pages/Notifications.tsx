@@ -41,6 +41,7 @@ const ICONS = {
   ticket: Flag,
   dm: Mail,
   "dm-share": Share2,
+  "comment-share": Share2,
 } as const;
 
 export function Notifications() {
@@ -80,6 +81,9 @@ export function Notifications() {
     // The conversation a "dm-share" notification points at, so Open lands
     // on the exact thread (with the shared card) instead of a user picker.
     conversationId?: string | null;
+    // The post shared into the host post's comments ("comment-share") —
+    // previewed instead of the host post's text.
+    sharedPost?: { _id: string; content?: string } | null;
     actor: {
       _id: string;
       name?: string | null;
@@ -138,6 +142,12 @@ export function Notifications() {
         return (
           <>
             <b>{who}</b> shared a post with you
+          </>
+        );
+      case "comment-share":
+        return (
+          <>
+            <b>{who}</b> shared a post in your post&apos;s comments
           </>
         );
       case "ticket":
@@ -252,11 +262,17 @@ export function Notifications() {
                   )}
                 </button>
               ) : null}
-              {n.post && n.post.content ? (
-                <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                  “{n.post.content.slice(0, 100)}”
-                </p>
-              ) : null}
+              {/* A "comment-share" previews the SHARED post (the interesting
+                  part); every other type previews the referenced post. */}
+              {(() => {
+                const previewPost =
+                  n.type === "comment-share" ? n.sharedPost : n.post;
+                return previewPost?.content ? (
+                  <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                    “{previewPost.content.slice(0, 100)}”
+                  </p>
+                ) : null;
+              })()}
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {timeAgo(n._creationTime)}
               </p>

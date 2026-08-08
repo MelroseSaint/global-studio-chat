@@ -1460,7 +1460,13 @@ export const addComment = mutation({
     });
     await ctx.db.patch(postId, { commentCount: post.commentCount + 1 });
     // A reply notifies the comment author they got a reply; a top-level
-    // comment notifies the post author as before. Never self-notify.
+    // comment notifies the post author as before. Never self-notify. A
+    // comment that carries a shared post swaps the post author's ping for
+    // a distinct "comment-share" row (the bell says "shared a post in
+    // your post's comments" and previews the shared post) — mirroring
+    // dm-share. postId stays the host post so View opens the thread where
+    // the share landed; the shared post rides in sharedPostId.
+    const hasShare = sharedPostId !== undefined;
     if (parentId !== undefined) {
       if (parentAuthorId !== null && parentAuthorId !== userId) {
         await ctx.db.insert("notifications", {
@@ -1478,12 +1484,25 @@ export const addComment = mutation({
           replyCount: (root.replyCount ?? 0) + 1,
         });
       }
+      // A share arriving via a reply still lands on the post author's bell
+      // when they aren't the parent author (who already got the reply ping).
+      if (hasShare && post.authorId !== userId && post.authorId !== parentAuthorId) {
+        await ctx.db.insert("notifications", {
+          userId: post.authorId,
+          type: "comment-share",
+          actorId: userId,
+          postId,
+          sharedPostId,
+          read: false,
+        });
+      }
     } else if (post.authorId !== userId) {
       await ctx.db.insert("notifications", {
         userId: post.authorId,
-        type: "comment",
+        type: hasShare ? "comment-share" : "comment",
         actorId: userId,
         postId,
+        ...(hasShare ? { sharedPostId } : {}),
         read: false,
       });
     }
