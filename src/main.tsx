@@ -1,6 +1,6 @@
 import { StrictMode, Suspense, lazy, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Route, Routes } from "react-router";
+import { createBrowserRouter, RouterProvider } from "react-router";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
 import { UpdateBanner } from "@convex-dev/static-hosting/react";
@@ -64,6 +64,35 @@ const PUBLIC_ELEMENTS: Record<(typeof PUBLIC_ROUTES)[number], ReactNode> = {
   "/status": <Status />,
 };
 
+// Data router: every navigation state update runs inside React's
+// startTransition, so a route change never blocks the next paint — the
+// previous UI stays visible until the destination's render commits (and
+// Suspense shows the loader only while a lazy chunk streams in). Tap-to-
+// navigate INP stays low even when the destination page (e.g. /auth) mounts
+// heavy content, instead of the click waiting out the full mount.
+const router = createBrowserRouter([
+  ...PUBLIC_ROUTES.map((path) => ({ path, element: PUBLIC_ELEMENTS[path] })),
+  {
+    element: (
+      <RequireAuth>
+        <AppLayout />
+      </RequireAuth>
+    ),
+    children: [
+      { path: "/home", element: <Feed /> },
+      { path: "/messages", element: <Messages /> },
+      { path: "/explore", element: <Explore /> },
+      { path: "/notifications", element: <Notifications /> },
+      { path: "/u/:username", element: <Profile /> },
+      { path: "/post/:postId", element: <PostDetail /> },
+      { path: "/settings", element: <Settings /> },
+      { path: "/support", element: <Support /> },
+      { path: "/admin", element: <Admin /> },
+    ],
+  },
+  { path: "*", element: <NotFound /> },
+]);
+
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
 // PWA: register the offline-capable service worker in production only (in
@@ -84,31 +113,8 @@ createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       <ConvexAuthProvider client={convex}>
         <TooltipProvider delayDuration={200}>
-          <BrowserRouter>
           <Suspense fallback={<PageLoader />}>
-            <Routes>
-              {PUBLIC_ROUTES.map((path) => (
-                <Route key={path} path={path} element={PUBLIC_ELEMENTS[path]} />
-              ))}
-              <Route
-                element={
-                  <RequireAuth>
-                    <AppLayout />
-                  </RequireAuth>
-                }
-              >
-                <Route path="/home" element={<Feed />} />
-                <Route path="/messages" element={<Messages />} />
-                <Route path="/explore" element={<Explore />} />
-                <Route path="/notifications" element={<Notifications />} />
-                <Route path="/u/:username" element={<Profile />} />
-                <Route path="/post/:postId" element={<PostDetail />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/support" element={<Support />} />
-                <Route path="/admin" element={<Admin />} />
-              </Route>
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <RouterProvider router={router} />
           </Suspense>
           {/* Live-reload prompt when a new deployment ships. */}
           <UpdateBanner
@@ -123,8 +129,7 @@ createRoot(document.getElementById("root")!).render(
             }}
           />
           <Toaster />
-        </BrowserRouter>
-      </TooltipProvider>
+        </TooltipProvider>
       </ConvexAuthProvider>
     </ErrorBoundary>
   </StrictMode>,

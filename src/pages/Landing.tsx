@@ -16,7 +16,7 @@ import {
   Sparkles,
   UserPlus,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
 import { UserAvatar } from "@/components/UserAvatar";
@@ -243,8 +243,53 @@ export function Landing() {
     return () => window.clearTimeout(timer);
   }, [location.hash]);
 
+  // Warm the /auth chunk while the landing page is idle (requestIdleCallback
+  // runs when the main thread is free), so the first "Get started"/"Sign in"
+  // tap never pays chunk fetch + parse on the interaction's critical path.
+  useEffect(() => {
+    const idle = window.requestIdleCallback?.(
+      () => {
+        void import("@/pages/Auth").catch(() => {
+          // Warming is progressive — a failure changes nothing.
+        });
+      },
+      // Cap the idle wait at 300ms so the chunk is warm before a real human
+      // can tap a CTA (which keeps even the first nav tap out of the >200ms
+      // INP zone); on a busy main thread the browser just queues it.
+      { timeout: 300 },
+    );
+    return () => {
+      if (idle !== undefined) window.cancelIdleCallback?.(idle);
+    };
+  }, []);
+
+  // INP: tapping a nav link must paint something within the interaction's
+  // window. The router transition defers the destination render, so nothing
+  // repaints until the new page commits (~500ms on throttled mobile) and the
+  // tap's INP eats the whole mount. Showing a thin loading bar via a plain
+  // (non-transitioned) state update paints immediately — the tap responds
+  // fast, and the bar disappears when the new page commits (this page
+  // unmounts).
+  const [navigating, setNavigating] = useState(false);
+
+  // Safety net: a successful navigation unmounts this page (which clears the
+  // bar with it), but an interrupted navigation (e.g. the user hits Back
+  // before the destination commits) or a failed lazy chunk would otherwise
+  // leave the bar stuck. Time out so it can never linger.
+  useEffect(() => {
+    if (!navigating) return;
+    const timer = window.setTimeout(() => setNavigating(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [navigating]);
+
   return (
     <div className="flex min-h-dvh flex-col">
+      {navigating ? (
+        <div
+          aria-hidden
+          className="fixed inset-x-0 top-0 z-[60] h-0.5 animate-pulse bg-primary"
+        />
+      ) : null}
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4">
           <Link to="/" className="flex items-center gap-2">
@@ -271,7 +316,7 @@ export function Landing() {
             {isAuthenticated ? (
               <>
                 <Button size="sm" asChild>
-                  <Link to="/home">
+                  <Link to="/home" onClick={() => setNavigating(true)}>
                     Open app
                     <ArrowRight className="size-4" />
                   </Link>
@@ -283,10 +328,12 @@ export function Landing() {
             ) : (
               <>
                 <Button variant="ghost" size="sm" asChild>
-                  <Link to="/auth">Sign in</Link>
+                  <Link to="/auth" onClick={() => setNavigating(true)}>
+                    Sign in
+                  </Link>
                 </Button>
                 <Button size="sm" asChild>
-                  <Link to="/auth">
+                  <Link to="/auth" onClick={() => setNavigating(true)}>
                     Get started
                     <ArrowRight className="size-4" />
                   </Link>
@@ -333,7 +380,10 @@ export function Landing() {
               </p>
               <div className="flex flex-wrap items-center justify-center gap-3">
                 <Button size="lg" asChild>
-                  <Link to={isAuthenticated ? "/home" : "/auth"}>
+                  <Link
+                    to={isAuthenticated ? "/home" : "/auth"}
+                    onClick={() => setNavigating(true)}
+                  >
                     {isAuthenticated ? "Open your feed" : "Join PureWire"}
                     <ArrowRight className="size-4" />
                   </Link>
@@ -514,7 +564,7 @@ export function Landing() {
             </div>
             <div className="mt-10 flex justify-center">
               <Button variant="outline" size="lg" asChild>
-                <Link to="/support">
+                <Link to="/support" onClick={() => setNavigating(true)}>
                   Read the full Standard in Support
                   <ArrowRight className="size-4" />
                 </Link>
@@ -553,7 +603,10 @@ export function Landing() {
             </div>
             <div className="mt-10 flex justify-center">
               <Button size="lg" asChild>
-                <Link to={isAuthenticated ? "/home" : "/auth"}>
+                <Link
+                  to={isAuthenticated ? "/home" : "/auth"}
+                  onClick={() => setNavigating(true)}
+                >
                   {isAuthenticated ? "Back to your feed" : "Create your account"}
                   <ArrowRight className="size-4" />
                 </Link>
@@ -580,7 +633,10 @@ export function Landing() {
               advertisers.
             </p>
             <Button size="lg" asChild>
-              <Link to={isAuthenticated ? "/home" : "/auth"}>
+              <Link
+                to={isAuthenticated ? "/home" : "/auth"}
+                onClick={() => setNavigating(true)}
+              >
                 {isAuthenticated ? "Open PureWire" : "Get started free"}
                 <ArrowRight className="size-4" />
               </Link>
@@ -599,13 +655,25 @@ export function Landing() {
             © {new Date().getFullYear()} PureWire. Say it anyway — no ads, ever.
           </p>
           <div className="flex items-center gap-4">
-            <Link to="/privacy" className="hover:text-foreground hover:underline">
+            <Link
+              to="/privacy"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
               Privacy
             </Link>
-            <Link to="/terms" className="hover:text-foreground hover:underline">
+            <Link
+              to="/terms"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
               Terms
             </Link>
-            <Link to="/status" className="hover:text-foreground hover:underline">
+            <Link
+              to="/status"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
               Status
             </Link>
             {isAuthenticated ? (
@@ -617,11 +685,19 @@ export function Landing() {
                 Sign out
               </button>
             ) : (
-              <Link to="/auth" className="hover:text-foreground hover:underline">
+              <Link
+                to="/auth"
+                onClick={() => setNavigating(true)}
+                className="hover:text-foreground hover:underline"
+              >
                 Sign in
               </Link>
             )}
-            <Link to="/support" className="hover:text-foreground hover:underline">
+            <Link
+              to="/support"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
               Support
             </Link>
           </div>
