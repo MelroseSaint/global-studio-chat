@@ -1085,26 +1085,29 @@ export const feed = query({
   },
   handler: async (ctx, { paginationOpts, filter, location, radiusKm }) => {
     const viewerId = await getAuthUserId(ctx);
-    // Pick the tab's base query first…
+    // Pick the tab's base query first…. The base must stay STRUCTURALLY
+    // STABLE across pages: Convex pagination cursors are bound to the
+    // query's filter shape, so a variable-length filter (like the
+    // followed-author set below) would invalidate the cursor the moment
+    // the set changes mid-scroll. Any per-viewer filtering happens AFTER
+    // pagination, exactly like the safety exclusions and keyword muting.
     let base = ctx.db.query("posts");
-    if (filter === "following" && viewerId !== null) {
-      const follows = await ctx.db
-        .query("follows")
-        .withIndex("by_follower", (q) => q.eq("followerId", viewerId))
-        .take(100);
-      const authorIds = new Set([
-        viewerId,
-        ...follows.map((f) => f.followingId),
-      ]);
-      if (authorIds.size > 1) {
-        base = ctx.db
-          .query("posts")
-          .filter((q) =>
-            q.or(...[...authorIds].map((id) => q.eq(q.field("authorId"), id))),
-          );
-      }
-      // Viewer follows nobody — keep the full feed as the base.
-    } else if (filter === "media") {
+    // The followed-author set for the "following" tab, resolved up front
+    // and applied post-pagination so following/unfollowing someone while
+    // scrolling can never break the page cursor. Follows nobody → the
+    // full feed stays the base (same convention as before).
+    const followingIds =
+      filter === "following" && viewerId !== null
+        ? new Set(
+            (
+              await ctx.db
+                .query("follows")
+                .withIndex("by_follower", (q) => q.eq("followerId", viewerId))
+                .take(100)
+            ).map((f) => f.followingId),
+          )
+        : null;
+    if (filter === "media") {
       // The Media tab shows posts that render photos/videos: posts with
       // their own attachments, plus SHARES — a share has no media of its
       // own but renders the original post's media embedded beneath the
@@ -1156,22 +1159,25 @@ export const feed = query({
           ),
         );
     }
-    // …then apply the safety exclusions on every tab: accounts the viewer
-    // blocked, accounts that blocked the viewer, banned accounts, accounts
-    // awaiting admin approval, and quietly shadowbanned accounts — in both
-    // directions. A silenced user still sees their own posts. QA-harness
-    // accounts (reserved qa_/pwtest prefixes) are excluded the same way, so
-    // a live test run's fixtures never surface to real members — while the
+    // …then collect the safety exclusions for every tab: accounts the
+    // viewer blocked, accounts that blocked the viewer, banned accounts,
+    // accounts awaiting admin approval, quietly shadowbanned accounts (in
+    // both directions), and QA-harness accounts (reserved qa_/pwtest
+    // prefixes, so a live test run's fixtures never surface to real
+    // members). A silenced user still sees their own posts, and the
     // harness's own account still sees its own posts (self-excluding).
+    //
+    // The exclusion is applied AFTER pagination (like personal keyword
+    // muting below), NOT as a base filter: the excluded set is
+    // variable-length, and Convex pagination cursors are bound to the
+    // query's filter structure — if the set changes size between pages
+    // (a new shadowban, a block, a test account created mid-scroll), the
+    // cursor becomes InvalidCursor and the whole feed errors out, which
+    // used to unmount every card (and any open comment popup) mid-read.
     const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
     const silencedIds = await silencedAuthorIds(ctx, viewerId);
     const testIds = await testAuthorIds(ctx, viewerId);
-    const excludedIds = [...hiddenIds, ...silencedIds, ...testIds];
-    if (excludedIds.length > 0) {
-      base = base.filter((q) =>
-        q.not(q.or(...excludedIds.map((id) => q.eq(q.field("authorId"), id)))),
-      );
-    }
+    const excludedIds = new Set([...hiddenIds, ...silencedIds, ...testIds]);
     // Posts awaiting a human AI-review stay out of public feeds — except
     // for their author, who sees their own review posts with an "under
     // review" note (with the reason), so a genuine creator is never left
@@ -1196,8 +1202,20 @@ export const feed = query({
       const viewer = await ctx.db.get(viewerId);
       mutedKeywords = viewer?.mutedKeywords;
     }
+    // Safety exclusions land here, post-pagination (see the note above —
+    // a variable-length base filter would invalidate the page cursor).
+    // The "following" tab filters to the followed-author set the same way.
     let page = await Promise.all(
-      result.page.map((p) => withAuthor(ctx, p, viewerId)),
+      result.page
+        .filter(
+          (p) =>
+            !excludedIds.has(p.authorId) &&
+            (followingIds === null ||
+              followingIds.size === 0 ||
+              followingIds.has(p.authorId) ||
+              p.authorId === viewerId),
+        )
+        .map((p) => withAuthor(ctx, p, viewerId)),
     );
     if (mutedKeywords !== undefined && mutedKeywords.length > 0) {
       page = page.filter((p) => !textMatchesMutes(p.content, mutedKeywords));
