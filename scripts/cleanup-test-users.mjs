@@ -86,17 +86,23 @@ async function main() {
       console.log(`  - @${u.username} (${u.name ?? "no name"}, joined ${new Date(u._creationTime).toISOString()})`);
     }
 
-    // Erase each with the full removeAccount sweep, citing a Standard principle.
+    // Erase each with the full removeAccount sweep, citing a Standard
+    // principle. removeAccount reports the post/comment counts it erased,
+    // so the log shows each account's blast radius.
     let removed = 0;
     for (const u of targets) {
       try {
-        await adminClient.mutation(api.admin.removeAccount, {
+        const res = await adminClient.mutation(api.admin.removeAccount, {
           userId: u._id,
           standardId: "no-spam",
           note: "Automated cleanup of leftover QA test account.",
         });
         removed++;
-        console.log(`  ✅ @${u.username} erased`);
+        const radius =
+          res && (res.posts > 0 || res.comments > 0)
+            ? ` (erased ${res.posts} posts, ${res.comments} comments)`
+            : " (no content)";
+        console.log(`  ✅ @${u.username} erased${radius}`);
       } catch (err) {
         console.error(
           `  ❌ @${u.username} failed: ${err instanceof Error ? err.message : err}`,

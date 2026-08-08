@@ -237,7 +237,25 @@ export const removeAccount = mutation({
       standardId,
       note: note !== undefined && note.trim().length > 0 ? note.trim() : undefined,
     });
+    // Blast-radius report: count what the sweep is about to erase (posts
+    // and comments authored by the target) so callers — the cleanup
+    // scripts, admin tooling — can show exactly how much content a
+    // removal removed. The same bounded pre-count the QA harness's
+    // deleteTestUser uses.
+    const posts = (
+      await ctx.db
+        .query("posts")
+        .withIndex("by_author", (q) => q.eq("authorId", userId))
+        .take(500)
+    ).length;
+    const comments = (
+      await ctx.db
+        .query("comments")
+        .withIndex("by_author", (q) => q.eq("authorId", userId))
+        .take(500)
+    ).length;
     await eraseAccount(ctx, userId);
+    return { posts, comments };
   },
 });
 
