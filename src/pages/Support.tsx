@@ -439,6 +439,14 @@ export function Support() {
               a: "Open any post, tap the ⋯ menu and choose \"Report post\". Choose what was violated and add details — the post and its author are included automatically so the team can review it quickly.",
             },
             {
+              q: "How do I share a post in a direct message?",
+              a: "Open the Share dialog on any post and tap \"Send via message\". A New message popup opens right where you are — pick a conversation or search anyone by name or @handle, then send. The person you message sees your caption (end-to-end encrypted) plus a preview card of the post with a View post link. You can also tap Message on someone's profile to open the same popup with them pre-selected.",
+            },
+            {
+              q: "How do I share a post in a comment?",
+              a: "Two ways. From the Share dialog on any post, tap \"Share in a comment\" and pick the post you want to comment on. Or, in any comment box (post page, comment popup, or replies), tap \"Attach a post\". You can even just paste a PureWire post link straight into the comment text — it's detected automatically and an \"Attach as card\" offer appears with a live preview. Attach turns the link into a preview card (and removes the link from your text); Dismiss hides the offer. Post the comment and everyone sees the card.",
+            },
+            {
               q: "How do I block someone?",
               a: "Open their profile and tap Block. Blocking hides their profile, posts, and notifications from you in both directions, and unfollows them automatically. You can unblock them anytime from their profile.",
             },
