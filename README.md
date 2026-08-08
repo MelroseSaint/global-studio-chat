@@ -9,6 +9,19 @@ say it.
 
 ---
 
+## Documentation
+
+Beyond this README, the repo keeps its knowledge structured:
+
+| Where | What |
+| --- | --- |
+| [`docs/`](docs/) | Documentation index — architecture, setup, CI/CD, and the ADR log |
+| [`docs/architecture.md`](docs/architecture.md) | System overview: layers, source map, content pipeline, deployment topology, invariants |
+| [`docs/setup.md`](docs/setup.md) | Straightforward setup steps — clone → install → run → QA → deploy |
+| [`docs/ci-cd.md`](docs/ci-cd.md) | The six GitHub Actions workflows, the alert model, and required secrets/vars |
+| [`docs/adr/`](docs/adr/) | Architectural decision records — every consequential decision and why |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | PR workflow, commit conventions, and clean-history rules |
+
 ## The PureWire promise
 
 - **Say it anyway** — your voice, your words, your way. No ads, no
@@ -312,8 +325,10 @@ required for the important pages:
 
 ## Setup
 
-Two places hold configuration. See `.env.example` for the complete
-annotated reference.
+The full step-by-step (clone → install → run → QA → deploy) lives in
+[`docs/setup.md`](docs/setup.md); the env-var dictionary is below and in
+`.env.example`. Two places hold configuration. See `.env.example` for the
+complete annotated reference.
 
 **Frontend (Vercel, build-time):**
 
