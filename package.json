@@ -64,7 +64,8 @@
     "upload:version": "npm run build && node scripts/upload-static-sync.mjs --prod",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
-    "qa:dm-share": "node scripts/dm-share-qa.mjs"
+    "qa:dm-share": "node scripts/dm-share-qa.mjs",
+    "qa:comment-share": "node scripts/comment-share-qa.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"
