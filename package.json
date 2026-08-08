@@ -29,6 +29,7 @@
     "qa:prod-pipeline": "node scripts/prod-pipeline-verify.mjs",
     "qa:admin-auth": "node scripts/admin-auth-qa.mjs",
     "qa:admin-ip": "node scripts/admin-ip-qa.mjs",
+    "qa:admin-workload": "node scripts/admin-workload-qa.mjs",
     "qa:admin-auth-browser": "node scripts/admin-auth-browser-qa.mjs",
     "qa:admin-responsive": "node scripts/qa-admin-responsive.mjs",
     "qa:evidence-no-resemble": "node scripts/evidence-no-resemble-qa.mjs",
