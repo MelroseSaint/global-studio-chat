@@ -63,7 +63,8 @@
     "deploy:web": "npx vercel --prod",
     "upload:version": "npm run build && node scripts/upload-static-sync.mjs --prod",
     "convex:dev": "convex dev",
-    "convex:codegen": "convex codegen"
+    "convex:codegen": "convex codegen",
+    "qa:dm-share": "node scripts/dm-share-qa.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"

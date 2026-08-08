@@ -756,6 +756,128 @@ jobs:
               console.log(`Closed phishing alert issue #${issue.number}.`);
             }
 
+  dm-share-qa:
+    # Two-user share-a-post-into-a-DM verification against production
+    # (scripts/dm-share-qa.mjs): the backend round trip (keys, post,
+    # conversation, sharedPostId on messages, dm-share notification) plus
+    # a real-browser half (A's composer preview → send → B sees the card).
+    # Harness-gated like the phishing/reinstate jobs.
+    name: DM share E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the DM share QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: dm-share
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: bash scripts/retry-once.sh dm-share.log npm run qa:dm-share
+
+      - name: Upload the DM share QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dm-share-log
+          path: dm-share.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a DM share regression gets its own visible alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-dm-share";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `DM share check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The two-user DM share QA failed against production.",
+                "",
+                "This means sharing a post into a DM is broken: the backend",
+                "round trip (sharedPostId on messages), the composer preview,",
+                "the recipient's shared-post card, or the dm-share",
+                "notification (bell badge + Open link).",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the dm-share-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-dm-share";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open DM share alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed DM share alert issue #${issue.number}.`);
+            }
+
   blocklist-sync:
     # Scheduled blocklist refresh + bootstrap: the script first runs
     # registerDefaultBlocklistSources (the self-healing bootstrap that
