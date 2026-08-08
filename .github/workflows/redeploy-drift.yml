@@ -11,6 +11,12 @@ name: Redeploy on drift
 # `drifted=true|false`; the deploy step below is skipped unless drifted.
 # The check exits 0 in both states and only fails on an API/check error,
 # so an outage never triggers an accidental redeploy.
+#
+# The same guard now covers the Convex backend (redeploy-convex-if-drifted
+# job): migrations.yml records the deployed git commit after every
+# successful `convex deploy`, and this job compares that record against
+# main HEAD — re-running `convex deploy` when they drift, so a silently
+# failed migrations deploy can never leave the backend behind the repo.
 on:
   schedule:
     # 03:47 UTC — after the nightly healthcheck (03:00) has validated the
@@ -21,7 +27,18 @@ on:
 
 # Same concurrency group as the Deploy workflow so a drift redeploy and a
 # push-triggered deploy never race the same Vercel project — one waits
-# for the other (cancel-in-progress: false).
+# for the other (cancel-in-progress: false). The Convex job in this
+# workflow shares this group too (job-level concurrency isn't supported),
+# so a Vercel drift deploy and a Convex drift deploy serialize rather than
+# racing.
+#
+# Note this does NOT serialize against the migrations workflow (which uses
+# its own `convex-migrations` group): a drift deploy at 03:47 and the
+# nightly migrations deploy at 04:00 could in principle overlap. That is
+# safe by construction — the Convex push protocol rejects concurrent
+# pushes (the later one fails cleanly, and the drift guard re-checks
+# nightly), and migrations.yml runs `convex deploy` on every push to main
+# anyway, so convergence is guaranteed within one night either way.
 concurrency:
   group: deploy-vercel
   cancel-in-progress: false
@@ -68,3 +85,75 @@ jobs:
       - name: Note the redeploy
         if: steps.drift.outputs.drifted == 'true'
         run: echo "Production redeployed to main HEAD — the live commit now matches the repo."
+
+  redeploy-convex-if-drifted:
+    # Backend twin of the Vercel drift guard. Convex exposes no commit
+    # metadata to a deploy key, so migrations.yml records the deployed git
+    # commit (internal.deployStatus.recordDeploy) right after every
+    # successful deploy; this job reads it back (convex-drift-check.mjs,
+    # via `convex run internal.deployStatus.getDeployedSha`) and compares
+    # against GITHUB_SHA (main HEAD). Drift — a silently failed migrations
+    # deploy, a dashboard redeploy of an older commit, a deploy that never
+    # happened — triggers `convex deploy` + a re-record, so the backend can
+    # never silently lag the repo. Skips when CONVEX_DEPLOY_KEY is not
+    # configured.
+    name: Redeploy Convex backend if drifted from main
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: env.CONVEX_DEPLOY_KEY != ''
+        run: npm ci
+
+      # Reads the recorded deploy commit via convex run and writes
+      # drifted=true|false to $GITHUB_OUTPUT. Exit 0 in both states; only a
+      # check error fails, so an outage can never trigger an accidental
+      # deploy. A backend with no record yet (predates deployStatus) reads
+      # as drifted and gets deployed to establish the ledger.
+      - name: Compare live backend commit vs main HEAD
+        if: env.CONVEX_DEPLOY_KEY != ''
+        id: drift
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: node scripts/convex-drift-check.mjs
+
+      - name: Deploy the backend (only when drifted)
+        if: steps.drift.outputs.drifted == 'true' && env.CONVEX_DEPLOY_KEY != ''
+        id: deploy
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex deploy
+
+      # A drift deploy can ship schema/code that carries pending migrations
+      # (the very case this guard exists for — a migrations deploy that
+      # silently failed). runAllMigrations is idempotent and deploy-key
+      # callable, so run it after the deploy to close the loop instead of
+      # waiting for the 04:00 nightly run.
+      - name: Run pending migrations (if any)
+        if: steps.deploy.conclusion == 'success' && env.CONVEX_DEPLOY_KEY != ''
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex run internal.migrationsRunner.runAllMigrations
+
+      # Re-establish the ledger after a drift deploy, exactly as
+      # migrations.yml does, so the next nightly comparison is meaningful.
+      - name: Record the redeployed commit
+        if: steps.deploy.conclusion == 'success' && env.CONVEX_DEPLOY_KEY != ''
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}"
+
+      - name: Note the backend redeploy
+        if: steps.drift.outputs.drifted == 'true'
+        run: echo "Convex backend redeployed to main HEAD — the live commit now matches the repo."

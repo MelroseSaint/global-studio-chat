@@ -484,6 +484,17 @@ const schema = defineSchema({
     sessionId: v.id("authSessions"),
     remember: v.boolean(),
   }).index("by_session", ["sessionId"]),
+  // Deploy-commit ledger (see deployStatus.ts): one row keyed "latest"
+  // recording the git SHA the production backend was last deployed from.
+  // Written by migrations.yml right after `convex deploy` succeeds and read
+  // by the nightly drift job, so the drift-gated redeploy can compare the
+  // live backend commit against main HEAD even though Convex exposes no
+  // commit metadata to a deploy key. Single row by construction.
+  deployStatus: defineTable({
+    key: v.literal("latest"),
+    sha: v.string(),
+    recordedAt: v.number(),
+  }).index("by_key", ["key"]),
   // Private, one-way removal log. When an admin permanently removes an
   // account, this record snapshots the removed user's public identity —
   // handle, display name, and the salted one-way email hash (never the

@@ -55,9 +55,21 @@ jobs:
 
       - name: Deploy the backend to production
         if: env.CONVEX_DEPLOY_KEY != ''
+        id: deploy
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: npx convex deploy
+
+      # Record the deployed git commit so the nightly drift job can compare
+      # the live backend against main HEAD (Convex exposes no commit
+      # metadata to a deploy key — see convex/deployStatus.ts). Runs only
+      # when the deploy actually succeeded, so the ledger always reflects
+      # what is live, not what was attempted.
+      - name: Record the deployed commit
+        if: steps.deploy.conclusion == 'success' && env.CONVEX_DEPLOY_KEY != ''
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: npx convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}"
 
       - name: Run all migrations
         if: env.CONVEX_DEPLOY_KEY != ''
