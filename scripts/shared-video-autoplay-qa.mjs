@@ -12,6 +12,11 @@
  * regression (autoplaying on iPhone, or never autoplaying on desktop)
  * surfaces on the next push.
  *
+ * The desktop feed block also asserts the viewport-aware pause: an
+ * autoplaying feed card pauses (IntersectionObserver) when scrolled out of
+ * view and resumes when it returns, so off-screen videos don't keep
+ * decoding frames (src/components/SharedPostEmbed.tsx AutoPauseVideo).
+ *
  * Run:
  *   TEST_HARNESS_SECRET=<secret> npm run qa:shared-video-autoplay
  *   # locally, against a production preview: PROBE_SITE_URL=http://localhost:4173 ...
@@ -33,6 +38,14 @@ const ns = CONVEX_URL.replace(/[^a-zA-Z0-9]/g, "");
 const VIDEO_URL =
   "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4";
 
+// The playback-dependent checks (pause off-screen / resume on return)
+// need a video that ACTUALLY decodes in headless Chromium, which lacks
+// proprietary H.264 — so the fixture must be a WebM (VP9). Fetched at run
+// time from MDN's CC0 sample. If the fetch ever fails, fall back to the
+// synthetic MP4 (mounts but can't decode) and skip the playback-dependent
+// checks rather than failing the whole gate on an external hiccup.
+const WEBM_URL =
+  "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.webm";
 // A minimal-but-real MP4 container (ftyp header) — enough for the upload
 // pipeline and a <video> element to mount with a provider-hosted URL.
 const MINI_MP4 = Buffer.from(
@@ -79,18 +92,34 @@ async function main() {
   ac.setAuth(a.token);
 
   // Upload the video exactly like the app: prepareUpload for the ticket,
-  // then POST the bytes. In Cloudinary mode the unsigned preset may reject
-  // a synthetic file, so use the ticket's Convex fallbackUrl — the same
-  // fallback MediaUpload.tsx uses — which stores the bytes in Convex
-  // storage and returns a storageId (provider-hosted, satisfying the gate).
+  // then POST the bytes. Prefer a real WebM so the video actually decodes
+  // in headless Chromium (H.264 does not) — the pause/resume assertions
+  // depend on genuine playback. On fetch failure, fall back to the
+  // synthetic MP4 and skip the playback-dependent checks.
+  let fixture = { bytes: MINI_MP4, contentType: "video/mp4", playable: false };
+  try {
+    const webm = await fetch(WEBM_URL);
+    if (webm.ok) {
+      fixture = {
+        bytes: Buffer.from(await webm.arrayBuffer()),
+        contentType: "video/webm",
+        playable: true,
+      };
+    } else {
+      console.log("  ⚠ WebM fixture fetch failed (" + webm.status + ") — playback checks will be skipped.");
+    }
+  } catch {
+    console.log("  ⚠ WebM fixture fetch failed (network) — playback checks will be skipped.");
+  }
+
   const ticket = await ac.action(api.media.prepareUpload, {
-    contentType: "video/mp4",
+    contentType: fixture.contentType,
   });
   const targetUrl = ticket.mode === "convex" ? ticket.uploadUrl : ticket.fallbackUrl;
   const res = await fetch(targetUrl, {
     method: "POST",
-    headers: { "Content-Type": "video/mp4" },
-    body: new Blob([MINI_MP4], { type: "video/mp4" }),
+    headers: { "Content-Type": fixture.contentType },
+    body: new Blob([fixture.bytes], { type: fixture.contentType }),
   });
   const data = await res.json();
   const videoMedia = { storageId: data.storageId, kind: "video", stripped: false };
@@ -210,7 +239,10 @@ async function main() {
       await ctx.close();
     }
 
-    // Desktop: feed video must autoplay.
+    // Desktop: feed video must autoplay AND pause when scrolled out of view
+    // (IntersectionObserver) so an off-screen card doesn't keep decoding
+    // frames. Moving the element out of the viewport via fixed positioning is
+    // deterministic regardless of how short the feed is.
     {
       const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
       const page = await ctx.newPage();
@@ -223,6 +255,61 @@ async function main() {
       const v = await videoAutoplay(page);
       check("desktop: feed video autoplays", v === true, `autoplay=${v}`);
       check("desktop: no feed 'Autoplay off' chip (autoplay on)", (await chipVisible(page)) === false);
+
+      if (fixture.playable) {
+        // Make sure the video is actually playing before scrolling it away.
+        await page.evaluate(() => {
+          const video = document.querySelector("video");
+          if (video) {
+            video.muted = true;
+            video.playsInline = true;
+            const p = video.play();
+            if (p) p.catch(() => {});
+          }
+        });
+        let playing = false;
+        for (let i = 0; i < 25 && !playing; i++) {
+          playing = await page.evaluate(() => {
+            const v = document.querySelector("video");
+            return v ? !v.paused && v.readyState >= 2 : false;
+          });
+          if (!playing) await page.waitForTimeout(400);
+        }
+        check("desktop: feed video is actually playing (precondition)", playing === true);
+
+        // Scroll it out of view → the IntersectionObserver must pause it.
+        const paused = await page.evaluate(async () => {
+          const v = document.querySelector("video");
+          if (!v) return null;
+          v.style.position = "fixed";
+          v.style.left = "-2000px";
+          v.style.top = "-2000px";
+          await new Promise((r) => setTimeout(r, 600));
+          return v.paused;
+        });
+        check("desktop: feed video pauses off-screen", paused === true, `paused=${paused}`);
+
+        // Bring it back → playback must resume where it left off.
+        let resumed = false;
+        await page.evaluate(() => {
+          const v = document.querySelector("video");
+          if (!v) return;
+          v.style.position = "";
+          v.style.left = "";
+          v.style.top = "";
+          v.scrollIntoView({ block: "center" });
+        });
+        for (let i = 0; i < 20 && !resumed; i++) {
+          resumed = await page.evaluate(() => {
+            const v = document.querySelector("video");
+            return v ? !v.paused : false;
+          });
+          if (!resumed) await page.waitForTimeout(300);
+        }
+        check("desktop: feed video resumes on return", resumed === true, `resumed=${resumed}`);
+      } else {
+        console.log("  ⚠ Skipping playback-dependent checks (fixture not decodable).");
+      }
       await ctx.close();
     }
   } finally {

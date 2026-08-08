@@ -6,6 +6,7 @@ import {
   Share2,
   VideoOff,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
@@ -92,6 +93,77 @@ function AutoplayOffChip() {
   );
 }
 
+/**
+ * A <video> that stops decoding when it scrolls out of view (or the tab
+ * hides) and resumes where it left off when it comes back — an autoplaying
+ * feed card must not keep chewing CPU/battery on frames a user can't see.
+ * Playback state is preserved: a video the user manually paused stays
+ * paused; one that was playing resumes on return. Resumes only while
+ * autoplay is permitted (muted inline playback; a user-gesture-started
+ * video on iOS resumes via the same gesture permission it already holds,
+ * and a rejected play() just stays paused).
+ */
+function AutoPauseVideo({
+  src,
+  className,
+  autoPlay,
+}: {
+  src: string;
+  className?: string;
+  autoPlay?: boolean;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    let wasPlaying = false;
+
+    const pauseForViewer = () => {
+      wasPlaying = !el.paused && !el.ended;
+      el.pause();
+    };
+    const resumeIfWasPlaying = () => {
+      if (wasPlaying && !el.ended) {
+        void el.play().catch(() => {
+          // Resume can be blocked (autoplay policy) — the video simply
+          // stays paused; the user can tap play.
+        });
+      }
+      wasPlaying = false;
+    };
+
+    const io = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) resumeIfWasPlaying();
+      else pauseForViewer();
+    });
+    io.observe(el);
+
+    // A hidden tab is fully off-screen too.
+    const onVisibility = () => {
+      if (document.hidden) pauseForViewer();
+      else resumeIfWasPlaying();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      io.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  return (
+    <video
+      ref={ref}
+      src={src}
+      controls
+      autoPlay={autoPlay}
+      muted={autoPlay}
+      playsInline={autoPlay}
+      className={className}
+    />
+  );
+}
+
 /** The media grid of a post, shown inside the post and inside shares. */
 export function PostMediaGrid({
   media,
@@ -135,12 +207,9 @@ export function PostMediaGrid({
           // Stop propagation so the player's own controls never trigger the
           // parent card's click-to-open navigation.
           <div onClick={(e) => e.stopPropagation()}>
-            <video
+            <AutoPauseVideo
               src={cloudinaryVideoUrl(m.url) ?? m.url}
-              controls
               autoPlay={autoPlay}
-              muted={autoPlay}
-              playsInline={autoPlay}
               className="max-h-[480px] w-full"
             />
           </div>
@@ -177,12 +246,9 @@ export function PostMediaGrid({
               />
             ) : m.kind === "video" && m.url ? (
               <div onClick={(e) => e.stopPropagation()} className="size-full">
-                <video
+                <AutoPauseVideo
                   src={cloudinaryVideoUrl(m.url) ?? m.url}
-                  controls
                   autoPlay={autoPlay}
-                  muted={autoPlay}
-                  playsInline={autoPlay}
                   className="size-full object-cover"
                 />
               </div>
