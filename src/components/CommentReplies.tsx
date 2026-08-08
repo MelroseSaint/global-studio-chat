@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { formatPluralLabel, timeAgo } from "@/lib/format";
+import { useAuth } from "@/hooks/use-auth";
+import { mayProceed } from "@/lib/rate-limit";
 import { solveChallenge, type PowChallenge } from "@/lib/pow";
 
 interface ReplyComment {
@@ -72,6 +74,7 @@ export function CommentReplyComposer({
   autoFocus?: boolean;
 }) {
   const addComment = useMutation(api.posts.addComment);
+  const { user } = useAuth();
   const [text, setText] = useState("");
   const [posting, setPosting] = useState(false);
   // A post attached to the reply, mirroring the top-level comment flow.
@@ -82,6 +85,15 @@ export function CommentReplyComposer({
     if ((!content && !sharingPostId) || posting) return;
     setPosting(true);
     try {
+      // Redis preflight (distributed token bucket) — fail fast before the
+      // PoW solve + backend write when the hourly comment budget is spent.
+      // Degrades open; Convex's table limit is the backstop.
+      if (!(await mayProceed("comment", user?._id))) {
+        toast.error(
+          "You're moving a little too fast. Slow down and try again in a moment.",
+        );
+        return;
+      }
       const pow = await solveChallenge(powChallenge);
       const res = await addComment({
         postId,

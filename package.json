@@ -66,7 +66,8 @@
     "convex:codegen": "convex codegen",
     "qa:dm-share": "node scripts/dm-share-qa.mjs",
     "qa:comment-share": "node scripts/comment-share-qa.mjs",
-    "qa:ios-layout": "node scripts/qa-ios-layout.mjs"
+    "qa:ios-layout": "node scripts/qa-ios-layout.mjs",
+    "qa:redis-rate-limit": "node scripts/qa-redis-rate-limit.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"
@@ -76,6 +77,7 @@
     "@convex-dev/static-hosting": "^0.2.1",
     "@metascraper/helpers": "file:stubs/metascraper-helpers",
     "@tailwindcss/vite": "^4.1.17",
+    "@upstash/redis": "^1.38.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "convex": "^1.30.0",

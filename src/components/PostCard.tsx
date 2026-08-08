@@ -25,6 +25,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { CommentDialog } from "@/components/CommentDialog";
 import { LinkCard } from "@/components/LinkCard";
+import { mayProceed } from "@/lib/rate-limit";
 import { MessageDialog } from "@/components/MessageDialog";
 import { ReportDialog } from "@/components/ReportDialog";
 import { ShareDialog } from "@/components/ShareDialog";
@@ -169,6 +170,16 @@ export function PostCard({
     if (busy) return;
     setBusy(true);
     const next = !liked;
+    if (next && !(await mayProceed("like", me?._id))) {
+      // Redis preflight (distributed token bucket) says the hourly like
+      // budget is spent — fail fast without a database write. Convex's
+      // table-based limit is the backstop either way.
+      setBusy(false);
+      toast.error(
+        "You're moving a little too fast. Slow down and try again in a moment.",
+      );
+      return;
+    }
     setLiked(next);
     setLikeCount((c) => Math.max(0, c + (next ? 1 : -1)));
     try {

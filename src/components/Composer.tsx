@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { solvePow } from "@/lib/pow";
+import { mayProceed } from "@/lib/rate-limit";
 import { cn } from "@/lib/utils";
 
 const MAX_LENGTH = 1000;
@@ -81,6 +82,16 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
     if (!canPost || submitting || overLimit) return;
     setSubmitting(true);
     try {
+      // Redis preflight (distributed token bucket) — fail fast before the
+      // PoW solve + backend write when the hourly post budget is spent.
+      // Degrades open: if the limiter is unavailable, Convex's own table
+      // limit still rejects over-budget posts.
+      if (!(await mayProceed("post", user?._id))) {
+        toast.error(
+          "You're moving a little too fast. Slow down and try again in a moment.",
+        );
+        return;
+      }
       // Scan uploaded media bytes for AI-generator metadata before posting.
       let aiMediaStatus: "clean" | "review" | "blocked" = "clean";
       // The server-side strip may swap video storage ids (or overwrite a

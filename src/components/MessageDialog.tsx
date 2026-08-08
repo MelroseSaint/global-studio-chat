@@ -17,6 +17,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { scanWithBlocklist } from "@/convex/phishing";
 import { solveChallenge } from "@/lib/pow";
+import { mayProceed } from "@/lib/rate-limit";
 import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -254,6 +255,15 @@ export function MessageDialog({
     setPhishConfirm(null);
     setSending(true);
     try {
+      // Redis preflight (distributed token bucket) — fail fast before the
+      // PoW solve + backend write when the hourly DM budget is spent.
+      // Degrades open; Convex's table limit is the backstop.
+      if (!(await mayProceed("dm", user?._id))) {
+        toast.error(
+          "You're moving a little too fast. Slow down and try again in a moment.",
+        );
+        return;
+      }
       let ciphertext = "";
       let iv = "";
       if (text) {
