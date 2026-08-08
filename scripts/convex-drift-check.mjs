@@ -85,6 +85,10 @@ const readDeployedSha = () => {
     const out = lines[lines.length - 1] ?? "";
     if (out === "null") return { sha: null };
     const parsed = JSON.parse(out);
+    // getDeployedSha returns a bare JSON string (the SHA), not an object
+    // ({ sha }), so a string result IS the sha. A future shape change to
+    // { sha } is also handled defensively.
+    if (typeof parsed === "string") return { sha: parsed };
     if (parsed && typeof parsed === "object" && typeof parsed.sha === "string") {
       return { sha: parsed.sha };
     }
