@@ -1,5 +1,5 @@
 import { paginationOptsValidator } from "convex/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
@@ -629,7 +629,10 @@ export const blockUser = mutation({
   handler: async (ctx, { username }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const target = await ctx.db
       .query("users")
@@ -680,7 +683,10 @@ export const unblockUser = mutation({
   handler: async (ctx, { username }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const target = await ctx.db
       .query("users")
@@ -714,7 +720,7 @@ export const listFlaggedAccounts = query({
     }
     const me = await ctx.db.get(userId);
     if (me?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts) — admin surfaces must
     // prove the session's IP was recently observed by the backend.
@@ -767,11 +773,14 @@ export const exportFlaggedAccounts = query({
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const me = await ctx.db.get(userId);
     if (me?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts) — admin surfaces must
     // prove the session's IP was recently observed by the backend.
@@ -823,7 +832,7 @@ export const listSilencedAccounts = query({
     }
     const me = await ctx.db.get(userId);
     if (me?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts) — admin surfaces must
     // prove the session's IP was recently observed by the backend.
@@ -886,11 +895,14 @@ export const silentFlagHistory = query({
   handler: async (ctx, { userId }) => {
     const adminId = await getAuthUserId(ctx);
     if (adminId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const me = await ctx.db.get(adminId);
     if (me?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts) — admin surfaces must
     // prove the session's IP was recently observed by the backend.
@@ -963,11 +975,14 @@ export const bulkUnsilence = mutation({
   handler: async (ctx, { userIds }) => {
     const adminId = await getAuthUserId(ctx);
     if (adminId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const admin = await ctx.db.get(adminId);
     if (admin?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts).
     await assertAdminIpVerified(ctx);
@@ -1002,11 +1017,14 @@ export const setAccountStatus = mutation({
   handler: async (ctx, { userId, status, standardId, note }) => {
     const adminId = await getAuthUserId(ctx);
     if (adminId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const admin = await ctx.db.get(adminId);
     if (admin?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts).
     await assertAdminIpVerified(ctx);
@@ -1093,11 +1111,14 @@ export const suspendAccount = mutation({
   handler: async (ctx, { userId, durationHours, standardId, note }) => {
     const adminId = await getAuthUserId(ctx);
     if (adminId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const admin = await ctx.db.get(adminId);
     if (admin?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts).
     await assertAdminIpVerified(ctx);
@@ -1161,11 +1182,14 @@ export const setShadowban = mutation({
   handler: async (ctx, { userId, shadowban, standardId, note }) => {
     const adminId = await getAuthUserId(ctx);
     if (adminId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const admin = await ctx.db.get(adminId);
     if (admin?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts).
     await assertAdminIpVerified(ctx);
@@ -1285,11 +1309,14 @@ export const reinstateAccount = mutation({
   handler: async (ctx, { userId, note, standardId }) => {
     const adminId = await getAuthUserId(ctx);
     if (adminId === null) {
-      throw new Error("Not authenticated");
+      // ConvexError so the message crosses the public HTTP boundary (plain
+      // Errors are masked as "Server Error") — the admin UI and QA harness
+      // rely on the real reason.
+      throw new ConvexError("Not authenticated");
     }
     const admin = await ctx.db.get(adminId);
     if (admin?.role !== "admin") {
-      throw new Error("Admins only");
+      throw new ConvexError("Admins only");
     }
     // Backend-verified device gate (see adminIp.ts).
     await assertAdminIpVerified(ctx);

@@ -38,7 +38,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AdminOfflineBanner } from "@/components/AdminOfflineBanner";
 import { verifyAdminIp } from "@/lib/admin-ip";
-import { cn } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 import { AiEvidencePanel } from "@/components/AiEvidencePanel";
 import { BlocklistPanel } from "@/components/BlocklistPanel";
 import { AnnouncementsPanel } from "@/components/AnnouncementsPanel";
@@ -519,7 +519,7 @@ export function Admin() {
       }
       // On success the adminIpStatus query re-runs and flips to verified.
     } catch (err) {
-      setVerifyError(err instanceof Error ? err.message : String(err));
+      setVerifyError(errorMessage(err, "Something went wrong."));
     } finally {
       setVerifying(false);
     }
@@ -612,7 +612,7 @@ function AdminDashboard({ meId }: { meId: string }) {
       const result = await previewEvidence({});
       setPreviewResults(result.results);
     } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : String(err));
+      setPreviewError(errorMessage(err, "Something went wrong."));
     } finally {
       setPreviewRunning(false);
     }
@@ -826,7 +826,7 @@ function UsersPanel({ meId }: { meId: string }) {
       if (res) return;
       toast.success("Account suspended — it returns to active automatically.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not suspend.");
+      toast.error(errorMessage(err, "Could not suspend."));
     } finally {
       setSuspendBusy(false);
     }
@@ -848,7 +848,7 @@ function UsersPanel({ meId }: { meId: string }) {
       if (res) return;
       toast.success("Account reinstated — their profile is fully active again.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not reinstate.");
+      toast.error(errorMessage(err, "Could not reinstate."));
     } finally {
       setReinstateBusy(false);
     }
@@ -866,7 +866,7 @@ function UsersPanel({ meId }: { meId: string }) {
       if (res) return;
       toast.success("Account removed — every trace of them is gone.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not remove.");
+      toast.error(errorMessage(err, "Could not remove."));
     } finally {
       setRemoving(false);
     }
@@ -1216,7 +1216,7 @@ function TicketsPanel() {
       if (res) return;
       toast.success("Ticket updated.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update.");
+      toast.error(errorMessage(err, "Could not update."));
     }
   };
 
@@ -1429,7 +1429,7 @@ function PostsPanel() {
       if (res) return;
       toast.success("Post removed.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not remove.");
+      toast.error(errorMessage(err, "Could not remove."));
     } finally {
       setBusy(false);
     }
@@ -1677,7 +1677,7 @@ function SecurityPanel() {
       if (res) return;
       toast.success("Account removed — every trace of them is gone.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not remove.");
+      toast.error(errorMessage(err, "Could not remove."));
     } finally {
       setRemoving(false);
     }
@@ -1731,7 +1731,7 @@ function SecurityPanel() {
       if (res) return;
       toast.success("Account reinstated — their profile is fully active again.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not reinstate.");
+      toast.error(errorMessage(err, "Could not reinstate."));
     } finally {
       setReinstateBusy(false);
     }
@@ -1755,7 +1755,7 @@ function SecurityPanel() {
       if (res) return;
       toast.success("Account suspended — it returns to active automatically.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not suspend.");
+      toast.error(errorMessage(err, "Could not suspend."));
     } finally {
       setSuspendBusy(false);
     }
@@ -1798,7 +1798,7 @@ function SecurityPanel() {
         toast.success(kind === "restrict" ? "Account restricted." : "Account banned.");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update.");
+      toast.error(errorMessage(err, "Could not update."));
     } finally {
       setBusy(false);
     }
@@ -2269,7 +2269,7 @@ function SilencedPanel() {
         return next;
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not suspend.");
+      toast.error(errorMessage(err, "Could not suspend."));
     } finally {
       setSuspendBusy(false);
     }
@@ -2297,7 +2297,7 @@ function SilencedPanel() {
         return next;
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not reinstate.");
+      toast.error(errorMessage(err, "Could not reinstate."));
     } finally {
       setReinstateBusy(false);
     }
@@ -2328,7 +2328,7 @@ function SilencedPanel() {
         return next;
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not remove.");
+      toast.error(errorMessage(err, "Could not remove."));
     } finally {
       setRemoving(false);
     }
@@ -2378,7 +2378,7 @@ function SilencedPanel() {
         return next;
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not unsilence.");
+      toast.error(errorMessage(err, "Could not unsilence."));
     } finally {
       setBusy(false);
     }
@@ -2685,7 +2685,7 @@ function AiReviewPanel() {
           : `${posts.length} posts marked as original — kept live.`,
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not approve.");
+      toast.error(errorMessage(err, "Could not approve."));
     } finally {
       setApprovingPage(false);
     }
@@ -2697,7 +2697,7 @@ function AiReviewPanel() {
       if (res) return;
       toast.success("Marked as original — kept live.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update.");
+      toast.error(errorMessage(err, "Could not update."));
     }
   };
 
@@ -2720,7 +2720,7 @@ function AiReviewPanel() {
       if (res) return;
       toast.success("Post removed.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not remove.");
+      toast.error(errorMessage(err, "Could not remove."));
     } finally {
       setBusy(false);
     }
@@ -2911,7 +2911,7 @@ function StoryReviewPanel() {
     try {
       await resolveAiReviewStoryBatch({ storyIds: stories.map(s => s._id as Id<"stories">) });
       toast.success(stories.length === 1 ? "Cleared — story stays live." : stories.length + " stories cleared.");
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not approve."); }
+    } catch (err) { toast.error(errorMessage(err, "Could not approve.")); }
     finally { setApprovingPage(false); }
   };
 
@@ -2919,7 +2919,7 @@ function StoryReviewPanel() {
     try {
       await resolveAiReviewStory({ storyId: storyId as Id<"stories"> });
       toast.success("Cleared — story stays live.");
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not update."); }
+    } catch (err) { toast.error(errorMessage(err, "Could not update.")); }
   };
 
   const [pendingRemove, setPendingRemove] = useState<{ storyId: string; author: string | null } | null>(null);
@@ -2931,7 +2931,7 @@ function StoryReviewPanel() {
       await moderateStory({ storyId: pendingRemove.storyId as Id<"stories">, standardId, note });
       setPendingRemove(null);
       toast.success("Story removed.");
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not remove."); }
+    } catch (err) { toast.error(errorMessage(err, "Could not remove.")); }
     finally { setBusy(false); }
   };
 
@@ -3008,7 +3008,7 @@ function RacismReviewPanel() {
     try {
       await resolveRacismReviewBatch({ postIds: posts.map(p => p._id as Id<"posts">) });
       toast.success(posts.length === 1 ? "Cleared — post stays live." : posts.length + " posts cleared.");
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not approve."); }
+    } catch (err) { toast.error(errorMessage(err, "Could not approve.")); }
     finally { setApprovingPage(false); }
   };
 
@@ -3016,7 +3016,7 @@ function RacismReviewPanel() {
     try {
       await resolveRacismReview({ postId: postId as Id<"posts"> });
       toast.success("Cleared — post stays live.");
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not update."); }
+    } catch (err) { toast.error(errorMessage(err, "Could not update.")); }
   };
 
   const [pendingRemove, setPendingRemove] = useState<{ postId: string; author: string | null } | null>(null);
@@ -3028,7 +3028,7 @@ function RacismReviewPanel() {
       await moderatePost({ postId: pendingRemove.postId as Id<"posts">, standardId, note });
       setPendingRemove(null);
       toast.success("Post removed.");
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Could not remove."); }
+    } catch (err) { toast.error(errorMessage(err, "Could not remove.")); }
     finally { setBusy(false); }
   };
 

@@ -34,6 +34,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { assertAdminIpVerified } from "./lib/qa-admin-ip.mjs";
 import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
@@ -100,6 +101,10 @@ async function main() {
     secret: SECRET,
   });
   check("created throwaway, viewer and admin sessions", !!(A && B && admin));
+  // Backend-verified device gate: bind the minted admin session to the
+  // backend-observed IP or the admin-gated calls below are refused once the
+  // 30s bootstrap grace lapses.
+  await assertAdminIpVerified({ convexUrl: CONVEX_URL, token: admin.token });
 
   const state = () =>
     client.query(api.testHarness.getTestUserState, {
@@ -112,6 +117,7 @@ async function main() {
     client.setAuth(A.token);
     const postRes = await client.action(api.posts.createPost, {
       content: `A public note from the reinstate QA run — ${stamp}.`,
+      creatorDisclosure: "human-made",
       ...(await powProof(client))});
     const postId = postRes.ok === true ? postRes.postId : null;
     check("throwaway posted a public note", postRes.ok === true);
@@ -128,6 +134,7 @@ async function main() {
       "significantly this matters overall.";
     const aiRes = await client.action(api.posts.createPost, {
       content: aiText,
+      creatorDisclosure: "human-made",
       ...(await powProof(client))});
     check("AI-suspicious post accepted into review", aiRes.ok === true);
     let s = await state();
@@ -256,6 +263,7 @@ async function main() {
     );
     const postAgain = await client.action(api.posts.createPost, {
       content: `Posting again after reinstatement — ${stamp}.`,
+      creatorDisclosure: "human-made",
       ...(await powProof(client))});
     check("reinstated account can post again", postAgain.ok === true);
 

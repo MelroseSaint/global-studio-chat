@@ -12,6 +12,7 @@ import { useInView } from "react-intersection-observer";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
+import { errorMessage } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -137,7 +138,7 @@ export function BlocklistPanel() {
       setNewDomain("");
       toast.success(`${domain} is now on the blocklist.`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not add domain.");
+      toast.error(errorMessage(err, "Could not add domain."));
     } finally {
       setBusy(false);
     }
@@ -157,7 +158,7 @@ export function BlocklistPanel() {
       setSourceUrl("");
       toast.success("Source added — it syncs on the next run.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not add source.");
+      toast.error(errorMessage(err, "Could not add source."));
     } finally {
       setBusy(false);
     }
@@ -174,7 +175,7 @@ export function BlocklistPanel() {
       setSyncResult(summary || "No enabled sources to sync.");
       toast.success("Blocklist sync finished.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Sync failed.");
+      toast.error(errorMessage(err, "Sync failed."));
     } finally {
       setSyncing(false);
     }
@@ -187,7 +188,7 @@ export function BlocklistPanel() {
       if (res) return;
       toast.success("Core list re-seeded — the static adult rules are back.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not re-seed.");
+      toast.error(errorMessage(err, "Could not re-seed."));
     } finally {
       setBusy(false);
     }
@@ -207,7 +208,7 @@ export function BlocklistPanel() {
       setNewPattern("");
       toast.success("Pattern added — matching URLs are now handled per its action.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not add pattern.");
+      toast.error(errorMessage(err, "Could not add pattern."));
     } finally {
       setBusy(false);
     }

@@ -1,5 +1,5 @@
 import { paginationOptsValidator } from "convex/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
@@ -37,11 +37,14 @@ export const ensureAdminStatus = mutation({
 export async function requireAdmin(ctx: QueryCtx) {
   const userId = await getAuthUserId(ctx);
   if (userId === null) {
-    throw new Error("Not authenticated");
+    // ConvexError so the message crosses the public HTTP boundary (plain
+    // Errors are masked as "Server Error") — the admin UI and QA harness
+    // rely on the real reason.
+    throw new ConvexError("Not authenticated");
   }
   const me = await ctx.db.get(userId);
   if (me?.role !== "admin") {
-    throw new Error("Admins only");
+    throw new ConvexError("Admins only");
   }
   // Backend-verified device gate (see adminIp.ts): admin power is refused
   // unless the backend has recently OBSERVED the admin's IP for this

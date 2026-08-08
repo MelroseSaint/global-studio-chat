@@ -215,9 +215,10 @@ async function main() {
         .catch(() => false),
     );
 
-    // 6. Sign out from the sidebar and confirm we land back on the landing
-    //    page.
-    await page.getByRole("button", { name: "Sign out" }).click();
+    // 6. Sign out (now inside the "More" dropdown) and confirm we land
+    //    back on the landing page.
+    await page.getByRole("button", { name: /^More/ }).first().click();
+    await page.getByRole("menuitem", { name: "Sign out" }).click();
     try {
       await page.waitForURL(`${SITE_URL}/`, { timeout: NAV_TIMEOUT });
       check("returned to landing after sign-out", true);

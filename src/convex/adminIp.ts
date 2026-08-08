@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { getAuthSessionId, getAuthUserId } from "@convex-dev/auth/server";
 
@@ -298,7 +298,11 @@ export async function assertAdminIpVerified(ctx: {
   // decode, but admin power must not survive a deleted session. Refuse even
   // when a stale binding row lingers.
   if (session === null) {
-    throw new Error(
+    // ConvexError so the message crosses the public HTTP boundary: plain
+    // Errors are masked as "Server Error" by Convex (see auth.ts), so the
+    // admin UI and the QA harness would both see a generic failure instead
+    // of the real reason admin power is refused.
+    throw new ConvexError(
       "Admin access requires device IP verification. Please reload the page.",
     );
   }
@@ -315,7 +319,7 @@ export async function assertAdminIpVerified(ctx: {
   if (binding === null && age < GRACE_MS) {
     return;
   }
-  throw new Error(
+  throw new ConvexError(
     "Admin access requires device IP verification. Please reload the page.",
   );
 }

@@ -90,6 +90,17 @@ async function adminQueryError(client) {
     await client.query(api.admin.dashboardStats);
     return "";
   } catch (err) {
+    // Convex masks EVERY error message at the public HTTP boundary — even a
+    // ConvexError's `.message` arrives as "Server Error", with the real
+    // payload in `err.data` (see Auth.tsx authErrorMessage, which reads
+    // `.data` first for exactly this reason). Prefer the payload so the
+    // enforcement checks assert on the REAL refusal reason.
+    if (err instanceof Error && "data" in err) {
+      const data = err.data;
+      if (typeof data === "string" && data.length > 0) {
+        return data;
+      }
+    }
     return err instanceof Error ? err.message : String(err);
   }
 }

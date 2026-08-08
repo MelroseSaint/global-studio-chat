@@ -183,6 +183,7 @@ async function removeAccountChecks() {
         : undefined;
     const postRes = await userClient.action(api.posts.createPost, {
       content: `Remove-account QA post ${stamp} — original text written by a human.`,
+      creatorDisclosure: "human-made",
       ...(mediaItem ? { media: mediaItem } : {}),
       aiMediaStatus: "clean",
       ...(await powProof(client))});

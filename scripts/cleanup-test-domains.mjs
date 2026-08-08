@@ -32,6 +32,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { assertAdminIpVerified } from "./lib/qa-admin-ip.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
@@ -49,6 +50,10 @@ async function main() {
   });
   if (!admin?.token) throw new Error("failed to mint admin session");
   client.setAuth(admin.token);
+  // Backend-verified device gate: bind the minted admin session to the
+  // backend-observed IP or the admin-gated sweeps below are refused once
+  // the 30s bootstrap grace lapses.
+  await assertAdminIpVerified({ convexUrl: CONVEX_URL, token: admin.token });
 
   let domains = 0;
   let patterns = 0;

@@ -25,6 +25,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { assertAdminIpVerified } from "./lib/qa-admin-ip.mjs";
 import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
@@ -70,6 +71,10 @@ async function main() {
     secret: SECRET,
   });
   check("created the harness users and an admin session", !!admin);
+  // Backend-verified device gate: bind the minted admin session to the
+  // backend-observed IP or admin-gated calls are refused once the 30s
+  // bootstrap grace lapses (this QA runs for minutes).
+  await assertAdminIpVerified({ convexUrl: CONVEX_URL, token: admin.token });
 
   try {
     // ── 1. The core list seeds the DB ─────────────────────────────────────
@@ -502,6 +507,7 @@ async function main() {
     try {
       const cleanupAdmin = await client.mutation(api.testHarness.mintAdminSession, { secret: SECRET });
       client.setAuth(cleanupAdmin.token);
+      await assertAdminIpVerified({ convexUrl: CONVEX_URL, token: cleanupAdmin.token });
       // Delete this run's own domains (ignore errors — may not exist).
       // .catch(() => {}) on each because the try block may have already
       // deleted them, and a missing-domain error must not crash cleanup.

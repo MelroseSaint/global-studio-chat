@@ -297,9 +297,14 @@ async function dashboardVisible(page) {
     .catch(() => false);
 }
 
-/** Sign out from the sidebar and land back on the landing page. */
+/** Sign out and land back on the landing page. */
 async function signOut(page) {
-  await page.getByRole("button", { name: "Sign out" }).first().click();
+  // Sign out now lives inside the "More" dropdown (both the desktop
+  // sidebar and the phone bottom nav), not as a bare sidebar button —
+  // open the menu first, then pick the destructive item.
+  const more = page.getByRole("button", { name: /^More/ }).first();
+  await more.click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await page
     .waitForURL(`${SITE_URL}/`, { timeout: NAV_TIMEOUT })
     .catch(() => {});

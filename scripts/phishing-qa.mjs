@@ -31,6 +31,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { assertAdminIpVerified } from "./lib/qa-admin-ip.mjs";
 import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
@@ -107,6 +108,10 @@ async function main() {
   const admin = await client.mutation(api.testHarness.mintAdminSession, {
     secret: SECRET,
   });
+  // Backend-verified device gate: bind the minted admin session to the
+  // backend-observed IP or the admin-gated calls below are refused once the
+  // 30s bootstrap grace lapses.
+  await assertAdminIpVerified({ convexUrl: CONVEX_URL, token: admin.token });
   check(
     "created three throwaways, a viewer and an admin session",
     !!(C1 && C2 && B && adultUser && admin),
