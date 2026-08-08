@@ -150,6 +150,10 @@ async function main() {
       const v = document.querySelector("video");
       return v ? v.autoplay : null;
     });
+  // The "Autoplay off" chip surfaces exactly when the policy disables
+  // autoplay, so an iOS/cellular viewer knows the video waits for a tap.
+  const chipVisible = (page) =>
+    page.evaluate(() => document.body.innerText.includes("Autoplay off"));
 
   try {
     // iPhone: autoplay must be OFF (policy default).
@@ -167,6 +171,7 @@ async function main() {
       }
       const v = await videoAutoplay(page);
       check("iPhone: shared video does NOT autoplay", v === false, `autoplay=${v}`);
+      check("iPhone: 'Autoplay off' chip is shown", (await chipVisible(page)) === true);
       await ctx.close();
     }
 
@@ -184,6 +189,7 @@ async function main() {
       }
       const v = await videoAutoplay(page);
       check("desktop: shared video autoplays", v === true, `autoplay=${v}`);
+      check("desktop: no 'Autoplay off' chip (autoplay on)", (await chipVisible(page)) === false);
       await ctx.close();
     }
 
@@ -200,6 +206,7 @@ async function main() {
       }
       const v = await videoAutoplay(page);
       check("iPhone: feed video does NOT autoplay", v === false, `autoplay=${v}`);
+      check("iPhone: feed 'Autoplay off' chip is shown", (await chipVisible(page)) === true);
       await ctx.close();
     }
 
@@ -215,6 +222,7 @@ async function main() {
       }
       const v = await videoAutoplay(page);
       check("desktop: feed video autoplays", v === true, `autoplay=${v}`);
+      check("desktop: no feed 'Autoplay off' chip (autoplay on)", (await chipVisible(page)) === false);
       await ctx.close();
     }
   } finally {

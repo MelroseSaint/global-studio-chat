@@ -4,10 +4,12 @@ import {
   MessageCircle,
   Repeat2,
   Share2,
+  VideoOff,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 
 import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { formatCount, timeAgo } from "@/lib/format";
@@ -56,6 +58,36 @@ export function RichText({ text }: { text: string }) {
   );
 }
 
+/**
+ * The tiny "Autoplay off" note shown over video media when the
+ * device-aware policy disabled autoplay (off by default on iOS/cellular
+ * — see src/lib/video-autoplay.ts). Tells the viewer the video isn't
+ * broken, it just waits for a tap. Same overlay discipline as
+ * MetadataStrippedChip: pointer-events-none so it never swallows clicks
+ * on the player controls; the tooltip explains the policy on hover.
+ */
+function AutoplayOffChip() {
+  return (
+    <div className="pointer-events-none absolute right-2 top-2">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm"
+            aria-label="Autoplay is off — tap the video to play it"
+          >
+            <VideoOff className="size-3" />
+            Autoplay off
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          Videos don&apos;t play automatically on this device or connection.
+          Tap the video to play it.
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 /** The media grid of a post, shown inside the post and inside shares. */
 export function PostMediaGrid({
   media,
@@ -71,6 +103,13 @@ export function PostMediaGrid({
   const anyStripped = media.some((m) => m.stripped === true);
 
   const strippedChip = anyStripped ? <MetadataStrippedChip /> : null;
+  // When the policy disabled autoplay, tell the viewer the video waits for
+  // a tap instead of looking broken. Shown on shared-post previews AND
+  // feed cards (the policy is platform-wide).
+  const autoplayOffChip =
+    !autoPlay && media.some((m) => m.kind === "video") ? (
+      <AutoplayOffChip />
+    ) : null;
 
   if (media.length === 1) {
     const m = media[0];
@@ -107,6 +146,7 @@ export function PostMediaGrid({
             <audio src={m.url} controls className="w-full" />
           </div>
         )}
+        {autoplayOffChip}
         {strippedChip}
       </div>
     );
@@ -140,6 +180,7 @@ export function PostMediaGrid({
           </div>
         ))}
       </div>
+      {autoplayOffChip}
       {strippedChip}
     </div>
   );
