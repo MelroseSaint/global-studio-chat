@@ -350,9 +350,10 @@ async function main() {
     if (fx) await browserChecks(client, fx);
   } finally {
     // Sweep fixtures: conversation, posts (author session still valid),
-    // then the users. deleteTestUser does NOT cascade posts, so the
-    // post deletion must happen first or orphaned QA content lingers on
-    // the live feed (and trips the near-duplicate gate on later runs).
+    // then the users. deleteTestUser now runs the full eraseAccount
+    // cascade (posts, comments, engagement) — the explicit post deletion
+    // here stays as a tidy first step so the feed never even briefly
+    // shows the QA fixture while the account is being erased.
     if (fx?.a?.token) {
       const ac = new ConvexHttpClient(CONVEX_URL);
       ac.setAuth(fx.a.token);

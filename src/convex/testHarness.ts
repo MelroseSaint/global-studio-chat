@@ -3,6 +3,7 @@ import { getAuthSessionId } from "@convex-dev/auth/server";
 import { SignJWT, importPKCS8 } from "jose";
 
 import { ADMIN_EMAIL } from "./auth";
+import { eraseAccount } from "./account";
 
 import { sweepCommentLikes } from "./mediaCleanup";
 import {
@@ -148,22 +149,33 @@ export const deleteTestUser = mutation({
     if (!user.username?.startsWith("qa_")) {
       return { deleted: false, reason: "not-qa" };
     }
-    const sessions = await ctx.db
-      .query("authSessions")
-      .withIndex("userId", (q) => q.eq("userId", userId))
-      .take(100);
-    for (const session of sessions) {
-      const pref = await ctx.db
-        .query("sessionPrefs")
-        .withIndex("by_session", (q) => q.eq("sessionId", session._id))
-        .first();
-      if (pref !== null) {
-        await ctx.db.delete(pref._id);
-      }
-      await ctx.db.delete(session._id);
-    }
-    await ctx.db.delete(userId);
-    return { deleted: true, sessions: sessions.length };
+    // Pre-count what the sweep will remove so callers' logs stay useful;
+    // the actual erasure is eraseAccount — the SAME cascade a real account
+    // deletion runs (posts + media + engagement, stories + views, comments
+    // and likes left on other people's posts, follows, notifications, auth
+    // records), with post/comment counts recomputed from surviving rows. A
+    // QA run that skips its cleanup (crash, timeout, interrupted job) can
+    // therefore never leave the user's content on the live feed again.
+    const sessions = (
+      await ctx.db
+        .query("authSessions")
+        .withIndex("userId", (q) => q.eq("userId", userId))
+        .take(100)
+    ).length;
+    const posts = (
+      await ctx.db
+        .query("posts")
+        .withIndex("by_author", (q) => q.eq("authorId", userId))
+        .take(500)
+    ).length;
+    const comments = (
+      await ctx.db
+        .query("comments")
+        .withIndex("by_author", (q) => q.eq("authorId", userId))
+        .take(500)
+    ).length;
+    await eraseAccount(ctx, userId);
+    return { deleted: true, sessions, posts, comments };
   },
 });
 
