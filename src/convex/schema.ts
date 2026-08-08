@@ -407,9 +407,16 @@ const schema = defineSchema({
       v.literal("system"),
       v.literal("ticket"),
       v.literal("dm"),
+      // A post shared into a DM thread — distinct from plain messages so
+      // the bell can say "shared a post with you" and deep-link to the
+      // exact conversation (see dms.sendMessage).
+      v.literal("dm-share"),
     ),
     actorId: v.optional(v.id("users")),
     postId: v.optional(v.id("posts")),
+    // The DM conversation a "dm-share" notification points at, so the
+    // bell entry opens the thread (with the shared card) directly.
+    conversationId: v.optional(v.id("dmConversations")),
     message: v.optional(v.string()),
     read: v.boolean(),
   }).index("by_user", ["userId"]),

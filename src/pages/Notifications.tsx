@@ -12,6 +12,7 @@ import {
   MessageCircle,
   Repeat2,
   Reply,
+  Share2,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -39,6 +40,7 @@ const ICONS = {
   system: Bell,
   ticket: Flag,
   dm: Mail,
+  "dm-share": Share2,
 } as const;
 
 export function Notifications() {
@@ -75,6 +77,9 @@ export function Notifications() {
     type: keyof typeof ICONS;
     read: boolean;
     message?: string | null;
+    // The conversation a "dm-share" notification points at, so Open lands
+    // on the exact thread (with the shared card) instead of a user picker.
+    conversationId?: string | null;
     actor: {
       _id: string;
       name?: string | null;
@@ -127,6 +132,12 @@ export function Notifications() {
         return (
           <>
             <b>{who}</b> sent you an encrypted message
+          </>
+        );
+      case "dm-share":
+        return (
+          <>
+            <b>{who}</b> shared a post with you
           </>
         );
       case "ticket":
@@ -265,6 +276,15 @@ export function Notifications() {
             {n.type === "dm" && n.actor ? (
               <Link
                 to={`/messages?user=${n.actor._id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                Open
+              </Link>
+            ) : null}
+            {n.type === "dm-share" && n.conversationId ? (
+              <Link
+                to={`/messages?convo=${n.conversationId}`}
                 onClick={(e) => e.stopPropagation()}
                 className="shrink-0 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
               >

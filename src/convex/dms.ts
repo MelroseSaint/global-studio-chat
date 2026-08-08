@@ -446,10 +446,17 @@ export const sendMessage = mutation({
       lastMessageAt: now,
       lastMessageSenderId: me,
     });
+    // A message that shares a post gets a distinct "dm-share" notification
+    // (post + conversation attached) so the bell can say "shared a post
+    // with you" and open the exact thread — instead of the generic DM
+    // ping. Only the reference is metadata; the caption stays encrypted.
     await ctx.db.insert("notifications", {
       userId: recipientId,
-      type: "dm",
+      type: sharedPostId !== undefined ? "dm-share" : "dm",
       actorId: me,
+      ...(sharedPostId !== undefined
+        ? { postId: sharedPostId, conversationId }
+        : {}),
       read: false,
     });
     return { messageId };
