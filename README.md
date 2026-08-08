@@ -65,13 +65,19 @@ Beyond this README, the repo keeps its knowledge structured:
   the thread's best replies, **Top** (ranked by likes) and **Newest**
   sorts, comment likes shown as plain language ("3 likes" / "Like"),
   threaded replies, and edit/delete for your own comments
+- Share a post **into another post's comments** as a preview card — attach
+  it from any comment composer (paste a PureWire post link and it is
+  **auto-detected**), the Share dialog, or a `?share=` deep link
 - Search **every registered member** by their exact **@handle** — or by
   name or partial handle — from Messages and Discover, even accounts that
   registered after the first few hundred
 - Pick your feed: **Global | Following | Latest | Local | Photos & videos**
 - Send **direct messages** — end-to-end encrypted, readable only on the
-  devices of the people in the conversation
-- Get notified on likes, comments, follows, shares, and mentions
+  devices of the people in the conversation — from a **popup composer**
+  (no redirect), and share any post into a message with a live preview
+  card
+- Get notified on likes, comments, replies, follows, shares, DMs, and
+  post-shares into your DMs or your post's comments
 - Build a profile with a banner, bio, and links to your other platforms
 - Open a **support ticket** — reports capture the post, the user, and the
   Standard principle violated
@@ -97,6 +103,37 @@ Commenting is a first-class conversation surface, not a redirect:
 - **Engage** — like/unlike any comment, reply to comments (replies hang
   one level deep under the top-level comment), and edit or delete your own
   comments, with reply counts kept in sync.
+
+## Sharing posts
+
+Posts travel as preview cards — in DMs and in comments — with one shared
+component and one privacy model: the post *id* travels as public metadata
+(like the sender or timestamp); any caption stays encrypted in DMs or plain
+text in comments.
+
+- **Share into a DM** — "Send via message" on any post (Share dialog) opens a
+  **popup New message composer** over the current page: pick a conversation
+  or search any user, see the live preview card (with a remove button),
+  and send end-to-end encrypted without leaving the page. The recipient's
+  thread renders the card with its media (video autoplays muted with full
+  user controls) and a working **View post** link. The profile page's
+  Message button opens the same popup pre-targeted at that user.
+- **Share into a comment** — "Share in a comment" (Share dialog) or
+  **Attach a post** in any comment composer (post page, comment popup,
+  inline replies). Paste a PureWire post link straight into the comment
+  text and it is **auto-detected** and offered as a card: attach strips
+  the link from the draft, dismiss hides the offer until the link leaves
+  the text. `?share=<postId>` deep links arm the composer directly, and a
+  card-only comment (no text) is allowed — empty husks are not.
+- **Cards degrade gracefully** — a shared post deleted, blocked, or
+  silenced later shows "This post is no longer available" through the
+  normal visibility rules instead of a broken link.
+- **Bell notifications** — sharing a post into a DM pings the recipient
+  with "shared a post with you" (Open lands on the exact conversation);
+  sharing into your post's comments pings you with "shared a post in your
+  post's comments" (previewing the shared post, View opens the thread).
+  Both are distinct notification types (`dm-share` / `comment-share`) that
+  light the unread badge like any other notification.
 
 ## Content moderation pipeline
 
@@ -272,7 +309,9 @@ required for the important pages:
 - **Salted email hashes** — `SHA-256(salt + normalized email)`, salt
   versioned and rotatable
 - **E2E encrypted DMs** — message bodies encrypted on sender's device,
-  decrypt only on recipients' devices; server never holds plaintext
+  decrypt only on recipients' devices; server never holds plaintext. A
+  shared post travels as its *id* (public metadata like sender/time); the
+  caption stays encrypted
 - **Client-side media processing** — EXIF/GPS/device metadata stripped
   before upload; videos get a server-side remux pass too
 - **No identifying logs** — IP addresses, browser headers, and connection
@@ -317,6 +356,9 @@ required for the important pages:
   enforced before any conversation or key exchange
 - **Data export** — one click downloads a complete JSON archive of your
   posts, comments, stories, follows, and blocks (Settings → Data & privacy)
+- **Permanent erasure** — deleting your account cascades through your
+  posts, comments, engagement, stories, and auth records; nothing of yours
+  lingers (the QA harness runs the same `eraseAccount` cascade)
 - **Public system status** — `/status` shows live backend latency and
   platform totals, no account needed
 - **Admin announcements** — categorized, dismissible home-page banners,
@@ -402,6 +444,8 @@ for the same reason.
 | `npm run qa:extend-sessions` | Session extension tooling |
 | `npm run qa:count-drift` | Data-integrity DQS audit (harness-gated) |
 | `npm run qa:live-engage` | Live engagement e2e (likes/comments/replies) |
+| `npm run qa:dm-share` | Two-user DM share e2e: `sharedPostId` round trip on messages, the `dm-share` notification (bell badge + Open to the conversation), composer preview + card in a real browser (harness-gated) |
+| `npm run qa:comment-share` | Comment share e2e: `sharedPostId` on comments, empty-husk + ghost-post rejections, the attach-a-post composer and posted card in a real browser (harness-gated) |
 | `npm run qa:prod-pipeline` | Full production pipeline verification |
 | `npm run qa:signup-e2e` | Sign-up flow e2e against production |
 | `npm run qa:cleanup-test-users` / `qa:cleanup-test-domains` | Sweep leftover QA accounts / blocklist test domains (harness-gated) |
@@ -479,8 +523,9 @@ Six workflows on GitHub Actions, all gated on `main`:
 - **Production Health Check** (`production-healthcheck.yml`, on push +
   nightly 03:00 UTC) — live-site e2e probes (auth loop, phishing, blocklist
   sync, moderation reinstate, admin IP binding, story views, cloudinary
-  upload) plus the Vercel env guard and the build-log warning guard; any
-  failure opens a deduplicated alert issue.
+  upload, DM share E2E, comment share E2E) plus the Vercel env guard and
+  the build-log warning guard; any failure opens a deduplicated alert
+  issue.
 - **SEO Audit** (`seo-audit.yml`, nightly 04:00 UTC) — runs the claude-seo
   audit and the sitemap-wide sweep against the live site; score regressions
   open a `prod-seo-audit` alert issue, and a weekly step (Monday 05:00 UTC)
