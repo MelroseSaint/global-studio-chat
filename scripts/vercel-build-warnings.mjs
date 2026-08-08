@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Vercel build-log warning guard — production.
+ * Vercel build-log warning guard — production and preview.
  *
  * The env guard (vercel-env-guard.mjs) proves the stale VITE_SITE_URL var
  * is absent from the dashboard — but a dashboard edit between runs can
@@ -10,13 +10,19 @@
  *   [purewire-site-url] VITE_SITE_URL is set but ignored — ...
  *
  * This guard is the log-level twin of the env guard: it watches the
- * actual production deployment for the current commit (found by git SHA,
- * or the newest production deployment of the last 20 minutes), waits for
- * the build to finish, fetches the deployment's build events, and fails
- * if `VITE_SITE_URL is set but ignored` or ANY other `[purewire-site-url]`
+ * actual deployment for the current commit (found by git SHA, or the
+ * newest deployment of the last 20 minutes), waits for the build to
+ * finish, fetches the deployment's build events, and fails if
+ * `VITE_SITE_URL is set but ignored` or ANY other `[purewire-site-url]`
  * warning appears. A warning in the build log means the shipped bundle
  * carries the wrong canonical host — the exact defect that originally
  * shipped the Convex host in the OG tags.
+ *
+ * Which target to inspect is set with VERCEL_TARGET: `production`
+ * (default) or `preview`. Preview builds share vite.config.ts and the
+ * dashboard env — a stale VITE_SITE_URL var sitting in the preview
+ * environment prints the same warning there, so the healthcheck runs this
+ * guard once per target.
  *
  * Zero dependencies (global fetch, Node 18+). Needs VERCEL_TOKEN (the
  * same secret the Deploy workflow uses). Project/team come from
@@ -42,9 +48,21 @@ if (!projectId || !teamId) {
   teamId = teamId ?? cfg.orgId;
 }
 
+const TARGET = (process.env.VERCEL_TARGET ?? "production").toLowerCase();
+if (TARGET !== "production" && TARGET !== "preview") {
+  console.error(
+    `::error::VERCEL_TARGET must be "production" or "preview", got "${TARGET}"`,
+  );
+  process.exit(1);
+}
+
 const SHA = (process.env.GITHUB_SHA ?? "").toLowerCase();
 const RECENT_WINDOW_MS = 20 * 60 * 1000; // fallback: only inspect a fresh deploy
-const FIND_POLL_MS = 2 * 60 * 1000; // how long to wait for the deploy to appear
+// Production: a push is followed by a deploy within seconds, so a 2-min wait
+// covers the race. Preview: a push to main never creates a preview deploy,
+// so a long SHA wait would just burn CI time before SKIPping — 45s bounds
+// the cost while still catching a preview deploy that is mid-creation.
+const FIND_POLL_MS = TARGET === "production" ? 2 * 60 * 1000 : 45 * 1000;
 const READY_POLL_MS = 10 * 60 * 1000; // how long to wait for the build to finish
 const POLL_INTERVAL_MS = 15 * 1000;
 
@@ -71,7 +89,7 @@ const api = async (path) => {
 const listDeployments = async () => {
   const body = await api(
     `/v6/deployments?projectId=${projectId}&teamId=${teamId}` +
-      "&target=production&limit=20",
+      `&target=${TARGET}&limit=20`,
   );
   return body.deployments ?? [];
 };
@@ -123,7 +141,7 @@ const main = async () => {
   const deployment = await findDeployment();
   if (!deployment) {
     console.log(
-      "SKIP no production deployment for this SHA or within the last 20 minutes " +
+      `SKIP no ${TARGET} deployment for this SHA or within the last 20 minutes ` +
         "(nothing new to inspect) — nothing to check.",
     );
     return;
@@ -152,6 +170,18 @@ const main = async () => {
   }
 
   if (readyState !== "READY") {
+    // Production: a failed build ships nothing and is itself alarming, so
+    // keep failing loudly. Preview: builds get canceled/errored routinely
+    // (WIP branches, forced cancels) with no relation to the canonical
+    // host — treat that as a skip, not a warning-alert, so preview noise
+    // can't masquerade as a VITE_SITE_URL regression.
+    if (TARGET === "preview") {
+      console.log(
+        `SKIP preview deployment ${deployment.uid} ended ${readyState} ` +
+          "(canceled/failed build, nothing to scan) — nothing to check.",
+      );
+      return;
+    }
     console.error(
       `::error::deployment ${deployment.uid} build failed (readyState=${readyState})`,
     );
@@ -168,7 +198,7 @@ const main = async () => {
   console.log(`Build log scanned: ${events.length} events, ${hits.length} warning(s).`);
   if (hits.length > 0) {
     for (const hit of hits) {
-      console.error(`::error::[purewire-site-url] warning in production build log:`);
+      console.error(`::error::[purewire-site-url] warning in ${TARGET} build log:`);
       console.error(hit.trim().slice(0, 500));
     }
     console.error(
@@ -180,7 +210,7 @@ const main = async () => {
     return;
   }
   console.log(
-    "PASS production build log is free of purewire-site-url warnings " +
+    `PASS ${TARGET} build log is free of purewire-site-url warnings ` +
       `(deployment ${deployment.uid}).`,
   );
 };
