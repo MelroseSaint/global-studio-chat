@@ -32,7 +32,9 @@ import {
   escalateSilently,
   hiddenAuthorIds,
   isSandboxed,
+  isTestAccount,
   silencedAuthorIds,
+  testAuthorIds,
 } from "./security";
 
 import type { Doc, Id } from "./_generated/dataModel";
@@ -59,11 +61,16 @@ export const listPublicPostsForSitemap = internalQuery({
     // Newest 1000 — generous for crawl coverage, bounded so the sitemap
     // endpoint never scans the whole table per cache miss.
     const posts = await ctx.db.query("posts").order("desc").take(1000);
+    // QA-harness fixtures must never be crawled or submitted: a live test
+    // run's posts stay out of the sitemap (and thus out of Google) even
+    // though they exist in the database.
+    const testIds = new Set(await testAuthorIds(ctx, null));
     const out: { id: Id<"posts">; lastmod: number }[] = [];
     for (const post of posts) {
       // Pending AI review → getPost returns null anonymously → the OG
       // page 404s, so the URL must not be submitted.
       if (post.aiStatus === "review") continue;
+      if (testIds.has(post.authorId)) continue;
       out.push({ id: post._id, lastmod: post._creationTime });
     }
     return out;
@@ -245,6 +252,11 @@ async function notifyMentions(
   authorId: Id<"users">,
   postId: Id<"posts">,
 ) {
+  // A QA-harness author never pings the members they @mention — test
+  // engagement must stay invisible to real users.
+  if (await isTestAccount(ctx, authorId)) {
+    return;
+  }
   const ids = await resolveMentionIds(ctx, content, authorId);
   for (const userId of ids) {
     await ctx.db.insert("notifications", {
@@ -1147,10 +1159,14 @@ export const feed = query({
     // …then apply the safety exclusions on every tab: accounts the viewer
     // blocked, accounts that blocked the viewer, banned accounts, accounts
     // awaiting admin approval, and quietly shadowbanned accounts — in both
-    // directions. A silenced user still sees their own posts.
+    // directions. A silenced user still sees their own posts. QA-harness
+    // accounts (reserved qa_/pwtest prefixes) are excluded the same way, so
+    // a live test run's fixtures never surface to real members — while the
+    // harness's own account still sees its own posts (self-excluding).
     const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
     const silencedIds = await silencedAuthorIds(ctx, viewerId);
-    const excludedIds = [...hiddenIds, ...silencedIds];
+    const testIds = await testAuthorIds(ctx, viewerId);
+    const excludedIds = [...hiddenIds, ...silencedIds, ...testIds];
     if (excludedIds.length > 0) {
       base = base.filter((q) =>
         q.not(q.or(...excludedIds.map((id) => q.eq(q.field("authorId"), id)))),
@@ -1267,7 +1283,10 @@ export const likePost = mutation({
     }
     await ctx.db.insert("likes", { userId, postId });
     await ctx.db.patch(postId, { likeCount: post.likeCount + 1 });
-    if (post.authorId !== userId) {
+    // A QA-harness liker never pings the author — the like row and count
+    // still commit (QA drift checks stay honest), only the notification
+    // is suppressed.
+    if (post.authorId !== userId && !(await isTestAccount(ctx, userId))) {
       await ctx.db.insert("notifications", {
         userId: post.authorId,
         type: "like",
@@ -1325,6 +1344,9 @@ export const addComment = mutation({
     if (userId === null) {
       throw new Error("Not authenticated");
     }
+    // QA-harness comments still insert (counts stay honest) but never ping
+    // the post or parent author.
+    const testActor = await isTestAccount(ctx, userId);
     await requireProof(powChallenge, powNonce, powIssuedAt);
     const text = content.trim();
     // No empty husks: a comment carries text, a shared post reference, or
@@ -1468,7 +1490,7 @@ export const addComment = mutation({
     // the share landed; the shared post rides in sharedPostId.
     const hasShare = sharedPostId !== undefined;
     if (parentId !== undefined) {
-      if (parentAuthorId !== null && parentAuthorId !== userId) {
+      if (parentAuthorId !== null && parentAuthorId !== userId && !testActor) {
         await ctx.db.insert("notifications", {
           userId: parentAuthorId,
           type: "reply",
@@ -1486,7 +1508,7 @@ export const addComment = mutation({
       }
       // A share arriving via a reply still lands on the post author's bell
       // when they aren't the parent author (who already got the reply ping).
-      if (hasShare && post.authorId !== userId && post.authorId !== parentAuthorId) {
+      if (hasShare && post.authorId !== userId && post.authorId !== parentAuthorId && !testActor) {
         await ctx.db.insert("notifications", {
           userId: post.authorId,
           type: "comment-share",
@@ -1496,7 +1518,7 @@ export const addComment = mutation({
           read: false,
         });
       }
-    } else if (post.authorId !== userId) {
+    } else if (post.authorId !== userId && !testActor) {
       await ctx.db.insert("notifications", {
         userId: post.authorId,
         type: hasShare ? "comment-share" : "comment",
@@ -1523,7 +1545,8 @@ export const listComments = query({
     const viewerId = await getAuthUserId(ctx);
     const hidden = await hiddenAuthorIds(ctx, viewerId);
     const silenced = await silencedAuthorIds(ctx, viewerId);
-    const excluded = [...hidden, ...silenced];
+    const test = await testAuthorIds(ctx, viewerId);
+    const excluded = [...hidden, ...silenced, ...test];
     const result =
       sort === "top"
         ? await ctx.db
@@ -1586,7 +1609,8 @@ export const listReplies = query({
     const viewerId = await getAuthUserId(ctx);
     const hidden = await hiddenAuthorIds(ctx, viewerId);
     const silenced = await silencedAuthorIds(ctx, viewerId);
-    const excluded = [...hidden, ...silenced];
+    const test = await testAuthorIds(ctx, viewerId);
+    const excluded = [...hidden, ...silenced, ...test];
     const result =
       sort === "top"
         ? await ctx.db
@@ -1901,7 +1925,7 @@ export const sharePost = mutation({
     }
     await ctx.db.insert("shares", { postId, userId });
     await ctx.db.patch(postId, { shareCount: post.shareCount + 1 });
-    if (post.authorId !== userId) {
+    if (post.authorId !== userId && !(await isTestAccount(ctx, userId))) {
       await ctx.db.insert("notifications", {
         userId: post.authorId,
         type: "share",
@@ -2111,7 +2135,7 @@ export const createShare = mutation({
     if (existing === null) {
       await ctx.db.insert("shares", { postId: target._id, userId });
       await ctx.db.patch(target._id, { shareCount: target.shareCount + 1 });
-      if (target.authorId !== userId) {
+      if (target.authorId !== userId && !(await isTestAccount(ctx, userId))) {
         await ctx.db.insert("notifications", {
           userId: target.authorId,
           type: "share",

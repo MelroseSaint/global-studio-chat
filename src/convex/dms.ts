@@ -6,7 +6,12 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { cleanupMediaItems } from "./mediaCleanup";
 import { requireProof } from "./pow";
 import { publicUser } from "./privacy";
-import { enforceActive, enforceRateLimit, hiddenAuthorIds } from "./security";
+import {
+  enforceActive,
+  enforceRateLimit,
+  hiddenAuthorIds,
+  isTestAccount,
+} from "./security";
 
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 
@@ -450,15 +455,20 @@ export const sendMessage = mutation({
     // (post + conversation attached) so the bell can say "shared a post
     // with you" and open the exact thread — instead of the generic DM
     // ping. Only the reference is metadata; the caption stays encrypted.
-    await ctx.db.insert("notifications", {
-      userId: recipientId,
-      type: sharedPostId !== undefined ? "dm-share" : "dm",
-      actorId: me,
-      ...(sharedPostId !== undefined
-        ? { postId: sharedPostId, conversationId }
-        : {}),
-      read: false,
-    });
+    // QA-harness senders never ping the recipient's bell — the message
+    // still lands in the thread (QA round trips stay honest), only the
+    // notification is suppressed.
+    if (!(await isTestAccount(ctx, me))) {
+      await ctx.db.insert("notifications", {
+        userId: recipientId,
+        type: sharedPostId !== undefined ? "dm-share" : "dm",
+        actorId: me,
+        ...(sharedPostId !== undefined
+          ? { postId: sharedPostId, conversationId }
+          : {}),
+        read: false,
+      });
+    }
     return { messageId };
   },
 });

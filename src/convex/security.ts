@@ -600,6 +600,57 @@ export async function silencedAuthorIds(
   return silenced.filter((u) => u._id !== viewerId).map((u) => u._id);
 }
 
+/**
+ * True for the reserved QA-harness username prefixes. Registration and the
+ * harness both enforce these prefixes (see auth.ts / users.ts), so the
+ * prefix is the invariant that marks a throwaway test account — a real
+ * member can never take one of these handles.
+ */
+export function isTestUsername(username?: string | null): boolean {
+  return typeof username === "string" && /^(qa_|pwtest)/i.test(username);
+}
+
+/**
+ * True when the account is a QA-harness throwaway (reserved prefix). Used
+ * to keep test engagement silent: their likes/follows/comments/shares/DMs
+ * still commit (so QA counters and drift checks stay honest) but never
+ * notify a real member.
+ */
+export async function isTestAccount(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const user = await ctx.db.get(userId);
+  return isTestUsername(user?.username);
+}
+
+/**
+ * IDs of every QA-harness account, for read-surface exclusion. The
+ * viewer's own id is kept out of the result, matching the silenced-account
+ * convention ("a silenced user still sees their own content") — a QA run
+ * driving the UI as its own account must still observe its own fixtures.
+ * The by_username index resolves each reserved prefix as a bounded range
+ * scan, so this stays cheap no matter how many real accounts exist.
+ */
+export async function testAuthorIds(
+  ctx: QueryCtx,
+  viewerId: Id<"users"> | null,
+): Promise<Id<"users">[]> {
+  const qa = await ctx.db
+    .query("users")
+    .withIndex("by_username", (q) => q.gte("username", "qa_").lt("username", "qb_"))
+    .take(200);
+  const pw = await ctx.db
+    .query("users")
+    .withIndex("by_username", (q) =>
+      q.gte("username", "pwtest").lt("username", "pwtf"),
+    )
+    .take(200);
+  return [...qa, ...pw]
+    .filter((u) => u._id !== viewerId)
+    .map((u) => u._id);
+}
+
 export const isBlocked = query({
   args: { username: v.string() },
   handler: async (ctx, { username }) => {

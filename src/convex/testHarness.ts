@@ -4,6 +4,7 @@ import { SignJWT, importPKCS8 } from "jose";
 
 import { ADMIN_EMAIL } from "./auth";
 import { eraseAccount } from "./account";
+import { internal } from "./_generated/api";
 
 import { sweepCommentLikes } from "./mediaCleanup";
 import {
@@ -1332,6 +1333,46 @@ export const getTestUserState = query({
         source: e.source ?? null,
         createdAt: e._creationTime,
       })),
+    };
+  },
+});
+
+/**
+ * Deterministic, cache-free read of whether a QA fixture leaked onto the
+ * public crawl surface: runs the exact same internal queries the sitemap
+ * endpoint serves and reports whether the given test post and profile are
+ * in them. The QA-isolation check asserts both are false, so a live test
+ * run can never pollute Google's index. (Fetching the HTTP sitemap would
+ * be cache-prone; running the source queries is exact.)
+ *
+ * Gated by the same two env gates as the rest of the harness.
+ */
+export const qaIsolationSnapshot = query({
+  args: {
+    secret: v.string(),
+    testUserId: v.id("users"),
+    testUsername: v.string(),
+    testPostId: v.id("posts"),
+  },
+  handler: async (ctx, { secret, testUserId, testUsername, testPostId }) => {
+    requireHarness(secret);
+    // Explicitly shaped (the established links.ts / media.ts pattern): the
+    // handler's return type must not flow through the generated `internal`
+    // namespace, or its inference resolves back through `typeof testHarness`
+    // into this query's own initializer (TS7022) and poisons the whole app.
+    const [posts, users] = (await Promise.all([
+      ctx.runQuery(internal.posts.listPublicPostsForSitemap),
+      ctx.runQuery(internal.users.listPublicUsersForSitemap),
+    ])) as unknown as [
+      { id: Id<"posts">; lastmod: number }[],
+      { username: string; lastmod: number }[],
+    ];
+    return {
+      postInSitemap: posts.some((p) => p.id === testPostId),
+      userInSitemap: users.some((u) => u.username === testUsername),
+      sitemapPostCount: posts.length,
+      sitemapUserCount: users.length,
+      testUserId,
     };
   },
 });

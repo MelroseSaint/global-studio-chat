@@ -66,6 +66,7 @@
     "convex:codegen": "convex codegen",
     "qa:dm-share": "node scripts/dm-share-qa.mjs",
     "qa:comment-share": "node scripts/comment-share-qa.mjs",
+    "qa:test-isolation": "node scripts/qa-test-isolation.mjs",
     "qa:ios-layout": "node scripts/qa-ios-layout.mjs",
     "qa:pwa-install-hint": "node scripts/pwa-install-hint-qa.mjs",
     "qa:shared-video-autoplay": "node scripts/shared-video-autoplay-qa.mjs"

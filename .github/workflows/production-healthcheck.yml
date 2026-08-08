@@ -1577,6 +1577,126 @@ jobs:
               console.log(`Closed admin-ip alert issue #${issue.number}.`);
             }
 
+  test-isolation:
+    # Proves the "testing never disrupts production" invariant end-to-end
+    # against the live site (scripts/qa-test-isolation.mjs): a throwaway
+    # qa_ account posts, follows, likes, and comments on the real admin,
+    # and the admin's (a real member's) viewpoint must show NONE of it —
+    # feed, search, follower list, comment thread, bell notifications, and
+    # the sitemap source queries — while the test account's own viewpoint
+    # still works (self-exclusion preserved so UI-driving QAs keep
+    # passing). If any of it leaks, real members would be seeing
+    # test-correlated content during every QA run.
+    name: Test isolation QA (QA fixtures invisible to real members)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the test isolation QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: test-isolation
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+          ADMIN_USERNAME: ${{ vars.ADMIN_USERNAME || 'adminmelrose' }}
+        run: bash scripts/retry-once.sh test-isolation.log npm run qa:test-isolation
+
+      - name: Upload the test-isolation QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-isolation-log
+          path: test-isolation.log
+
+      # Deduplicated alert with its own label so a leak (a QA fixture
+      # surfacing to real members) is visible instead of being swallowed
+      # by another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-test-isolation";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Test isolation check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The test-isolation QA failed against production.",
+                "",
+                "This means a QA run's fixtures are leaking to real members:",
+                "a throwaway account's posts, comments, likes, follows, or",
+                "notifications appeared on a live surface (feed, search,",
+                "follow lists, comment threads, bell, or the sitemap). Real",
+                "members would be seeing test-correlated content.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the test-isolation-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-test-isolation";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open test-isolation alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed test-isolation alert issue #${issue.number}.`);
+            }
+
   admin-workload-qa:
     # Guards the exact crash class that once replaced the whole app with
     # React Router's bare "Unexpected Application Error!" page: the shell

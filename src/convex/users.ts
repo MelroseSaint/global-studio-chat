@@ -23,6 +23,8 @@ import {
   escalateSilently,
   hiddenAuthorIds,
   isSandboxed,
+  isTestAccount,
+  isTestUsername,
   silencedAuthorIds,
 } from "./security";
 
@@ -82,6 +84,9 @@ export const listPublicUsersForSitemap = internalQuery({
       // their profile URL 404s and must not be submitted.
       if (user.shadowban === true) continue;
       if (!user.username) continue;
+      // QA-harness profiles are never crawled or submitted — a live test
+      // run's accounts stay out of Google entirely.
+      if (isTestUsername(user.username)) continue;
       out.push({ username: user.username, lastmod: user._creationTime });
     }
     return out;
@@ -504,12 +509,17 @@ export const follow = mutation({
     await ctx.db.patch(followerId, {
       followingCount: (me?.followingCount ?? 0) + 1,
     });
-    await ctx.db.insert("notifications", {
-      userId: target._id,
-      type: "follow",
-      actorId: followerId,
-      read: false,
-    });
+    // A QA-harness follow still commits the row and bumps the target's
+    // follower count (QA drift checks stay honest) but never pings the
+    // target's bell — test engagement is invisible to real members.
+    if (!(await isTestAccount(ctx, followerId))) {
+      await ctx.db.insert("notifications", {
+        userId: target._id,
+        type: "follow",
+        actorId: followerId,
+        read: false,
+      });
+    }
   },
 });
 
@@ -611,10 +621,13 @@ async function withFollowListMeta(
         // The same visibility rule every other user-listing surface uses
         // (searchUsers, suggestedUsers): nothing pending approval,
         // restricted, banned, or quietly shadowbanned appears — and
-        // blocked accounts (either direction) are excluded too.
+        // blocked accounts (either direction) are excluded too. QA-harness
+        // accounts are excluded the same way, so a live test run's users
+        // never appear in follower/following lists.
         !hidden.has(u._id) &&
         u.shadowban !== true &&
         (u.accountStatus === undefined || u.accountStatus === "active") &&
+        !isTestUsername(u.username) &&
         (q.length === 0 ||
           (u.username ?? "").includes(q) ||
           (u.name ?? "").toLowerCase().includes(q)),
@@ -745,9 +758,14 @@ export const listFollowing = query({
 const isPubliclyVisible = (u: {
   shadowban?: boolean | null | undefined;
   accountStatus?: string | undefined;
+  username?: string | null | undefined;
 }) =>
   u.shadowban !== true &&
-  (u.accountStatus === undefined || u.accountStatus === "active");
+  (u.accountStatus === undefined || u.accountStatus === "active") &&
+  // QA-harness accounts (reserved qa_/pwtest prefixes) never surface on
+  // ANY discovery/search path — a live test run's accounts are invisible
+  // to real members by construction.
+  !isTestUsername(u.username);
 
 /**
  * The same shadowban gate getProfile uses: a quietly shadowbanned profile's
