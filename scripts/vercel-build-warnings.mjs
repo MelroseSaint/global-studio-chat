@@ -12,11 +12,16 @@
  * This guard is the log-level twin of the env guard: it watches the
  * actual deployment for the current commit (found by git SHA, or the
  * newest deployment of the last 20 minutes), waits for the build to
- * finish, fetches the deployment's build events, and fails if
- * `VITE_SITE_URL is set but ignored` or ANY other `[purewire-site-url]`
- * warning appears. A warning in the build log means the shipped bundle
- * carries the wrong canonical host — the exact defect that originally
- * shipped the Convex host in the OG tags.
+ * finish, fetches the deployment's build events, and fails if ANY build
+ * warning appears in the log — the stale `VITE_SITE_URL` warning (or any
+ * other `[purewire-site-url]` line), OR an esbuild/Vite warning like
+ * `[esbuild css minify]` or a rollup chunk-size advisory. A warning in
+ * the build log means the shipped bundle carries a defect: the wrong
+ * canonical host (the exact defect that originally shipped the Convex
+ * host in the OG tags), an unknown CSS property, an oversized chunk, a
+ * circular dependency, or eval usage. The build log is supposed to be
+ * 100% warning-free (see vite.config.ts's esbuild logOverride), so any
+ * warning is a regression worth alerting on.
  *
  * Which target to inspect is set with VERCEL_TARGET: `production`
  * (default) or `preview`. Preview builds share vite.config.ts and the
@@ -66,12 +71,37 @@ const FIND_POLL_MS = TARGET === "production" ? 2 * 60 * 1000 : 45 * 1000;
 const READY_POLL_MS = 10 * 60 * 1000; // how long to wait for the build to finish
 const POLL_INTERVAL_MS = 15 * 1000;
 
-// The siteUrl() plugin prefixes every warning with `[purewire-site-url]`;
-// the stale-var text is matched explicitly so a format drift in the prefix
-// can never silently disable the guard.
+// Warning signatures to fail on. Two families:
+//
+// 1. siteUrl() plugin warnings — the plugin prefixes every warning with
+//    `[purewire-site-url]`; the stale-var text is matched explicitly so a
+//    format drift in the prefix can never silently disable the guard.
+//
+// 2. esbuild/Vite/rollup build warnings — these are the warnings a clean
+//    Vite build never emits. Matched on the distinctive prefixes/markers
+//    Vite prints (`[esbuild css minify]`, `[vite:esbuild]`, the rollup
+//    `(!) ` banner, `[plugin:` / `[vite:`) plus the concrete advisory
+//    texts (chunk size, eval, sourcemap, circular dependency). The
+//    `(!)`-banner and `[plugin:` prefixes are broad enough to catch new
+//    Vite warning shapes as they appear, without matching ordinary log
+//    lines (npm install noise, Vercel runner output, etc.).
 const WARN_PATTERNS = [
+  // siteUrl() plugin
   "VITE_SITE_URL is set but ignored",
   "[purewire-site-url]",
+  // esbuild (CSS minify / transform)
+  "[esbuild css minify]",
+  "[vite:esbuild]",
+  // Vite plugin warnings and the rollup (!) warning banner
+  "[plugin:",
+  "[vite:",
+  "(!) ",
+  // Concrete advisory texts
+  "chunk size",
+  "larger than 500 kB",
+  "Use of eval is strongly discouraged",
+  "Sourcemap is likely to be incorrect",
+  "Circular dependency",
 ];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -189,7 +219,8 @@ const main = async () => {
     return;
   }
 
-  // Scan the build log for the siteUrl() plugin's warnings.
+  // Scan the build log for the siteUrl() plugin's warnings and any
+  // esbuild/Vite/rollup build warning.
   const events = await fetchEvents(deployment.uid);
   const hits = events
     .map((e) => e.payload?.text ?? e.text ?? "")
@@ -198,20 +229,23 @@ const main = async () => {
   console.log(`Build log scanned: ${events.length} events, ${hits.length} warning(s).`);
   if (hits.length > 0) {
     for (const hit of hits) {
-      console.error(`::error::[purewire-site-url] warning in ${TARGET} build log:`);
+      console.error(`::error::build-log warning in ${TARGET} build log:`);
       console.error(hit.trim().slice(0, 500));
     }
     console.error(
-      "::error::a purewire-site-url warning means the stale VITE_SITE_URL var " +
-        "reappeared or the canonical-host plugin is misconfigured — check the " +
-        "Vercel project env and remove VITE_SITE_URL from every environment.",
+      "::error::a build-log warning means a regression in the shipped bundle: " +
+        "either the stale VITE_SITE_URL var reappeared (or the canonical-host " +
+        "plugin is misconfigured — remove VITE_SITE_URL from every Vercel " +
+        "environment), or an esbuild/Vite warning slipped in (unknown CSS " +
+        "property, oversized chunk, circular dependency, eval usage — fix at " +
+        "the source in vite.config.ts / the offending dependency).",
     );
     process.exitCode = 1;
     return;
   }
   console.log(
-    `PASS ${TARGET} build log is free of purewire-site-url warnings ` +
-      `(deployment ${deployment.uid}).`,
+    `PASS ${TARGET} build log is free of purewire-site-url and esbuild/Vite ` +
+      `warnings (deployment ${deployment.uid}).`,
   );
 };
 

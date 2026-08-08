@@ -355,8 +355,8 @@ jobs:
         run: npm run qa:vercel-build-warnings
 
       # Same deduplicated-alert pattern as the other jobs, with its own
-      # label per target so a reintroduced stale var (or any
-      # purewire-site-url warning) gets a visible alert for the exact
+      # label per target so a build-log warning (stale VITE_SITE_URL var
+      # or any esbuild/Vite warning) gets a visible alert for the exact
       # environment that emitted it. The `steps.<id>.outcome` guards keep
       # the two alerts independent — a preview-only warning never opens
       # (or closes) a production alert and vice versa. (Intentional
@@ -386,20 +386,26 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `purewire-site-url warning in the production build log (${via}, ${new Date().toISOString()})`,
+              title: `build-log warning (purewire-site-url or esbuild/Vite) in the production build (${via}, ${new Date().toISOString()})`,
               labels: [label],
               body: [
                 "The Vercel build-log warning guard failed against the live deployment's build log.",
                 "",
-                "This means **VITE_SITE_URL is set but ignored** (or another **purewire-site-url**",
-                "warning) appeared in the production build — the stale var was re-added to a",
-                "Vercel environment, or the canonical-host plugin in vite.config.ts is misconfigured.",
-                "The shipped bundle then carries the wrong canonical/OG host, re-opening the",
-                "cross-host duplicate-content defect.",
+                "This means the production build emitted a warning, which a clean build never does.",
                 "",
-                "Fix: remove VITE_SITE_URL from every Vercel environment (Settings → Environment",
-                "Variables) and ensure PUREWIRE_SITE_URL=https://purewire.vercel.app exists in",
-                "production.",
+                "- **purewire-site-url**: `VITE_SITE_URL is set but ignored` (or another",
+                "  `[purewire-site-url]` line) — the stale var was re-added to a Vercel",
+                "  environment, or the canonical-host plugin in vite.config.ts is misconfigured.",
+                "  The shipped bundle then carries the wrong canonical/OG host, re-opening the",
+                "  cross-host duplicate-content defect. Fix: remove VITE_SITE_URL from every",
+                "  Vercel environment and keep PUREWIRE_SITE_URL=https://purewire.vercel.app set.",
+                "",
+                "- **esbuild/Vite warning** (e.g. `[esbuild css minify]`, chunk-size advisory, eval,",
+                "  sourcemap, or circular-dependency warning) — an unknown CSS property or other",
+                "  bundle defect slipped into the build. Fix at the source: vite.config.ts's esbuild",
+                "  logOverride or the offending dependency, so the log is 100% warning-free again.",
+                "",
+                "See the workflow log for the exact warning line(s) that tripped the guard.",
                 "",
                 `Triggered by: ${via}`,
                 `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
@@ -460,20 +466,25 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `purewire-site-url warning in a preview build log (${via}, ${new Date().toISOString()})`,
+              title: `build-log warning (purewire-site-url or esbuild/Vite) in a preview build (${via}, ${new Date().toISOString()})`,
               labels: [label],
               body: [
                 "The Vercel build-log warning guard failed against a preview deployment's build log.",
                 "",
-                "This means **VITE_SITE_URL is set but ignored** (or another **purewire-site-url**",
-                "warning) appeared in a preview build — the stale var sits in the Vercel preview",
-                "environment, or the canonical-host plugin in vite.config.ts is misconfigured.",
-                "Preview bundles then carry the wrong canonical/OG host; production is unaffected",
-                "but the defect will ship the moment the preview branch merges.",
+                "This means a preview build emitted a warning, which a clean build never does.",
                 "",
-                "Fix: remove VITE_SITE_URL from the preview (and development) environment (Settings →",
-                "Environment Variables) and keep PUREWIRE_SITE_URL=https://purewire.vercel.app set",
-                "everywhere so every environment canonicalizes to the production host.",
+                "- **purewire-site-url**: `VITE_SITE_URL is set but ignored` (or another",
+                "  `[purewire-site-url]` line) — the stale var sits in the Vercel preview",
+                "  environment, or the canonical-host plugin in vite.config.ts is misconfigured.",
+                "  Preview bundles then carry the wrong canonical/OG host; production is unaffected",
+                "  but the defect will ship the moment the preview branch merges.",
+                "",
+                "- **esbuild/Vite warning** (e.g. `[esbuild css minify]`, chunk-size advisory, eval,",
+                "  sourcemap, or circular-dependency warning) — an unknown CSS property or other",
+                "  bundle defect slipped into the preview build and will ship on merge. Fix at the",
+                "  source so the log is 100% warning-free again.",
+                "",
+                "See the workflow log for the exact warning line(s) that tripped the guard.",
                 "",
                 `Triggered by: ${via}`,
                 `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
