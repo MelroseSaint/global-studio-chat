@@ -9,9 +9,16 @@ name: SEO Audit (claude-seo)
 # the same pattern as the production healthcheck. Runs nightly at 04:00 UTC
 # (after the 03:00 production healthcheck so the two never overlap) and on
 # demand from the Actions tab.
+#
+# In addition to the failure-only alert, a weekly report step (Monday 05:00
+# UTC, or any manual dispatch) posts the metrics table to a deduplicated
+# seo-weekly-report issue — updated, not duplicated — with an accumulating
+# content-quality score history, so trends are visible even when nothing
+# regresses.
 on:
   schedule:
     - cron: "0 4 * * *"
+    - cron: "0 5 * * 1" # weekly report: Monday 05:00 UTC
   workflow_dispatch: {}
 
 concurrency:
@@ -21,6 +28,7 @@ concurrency:
 permissions:
   contents: read
   issues: write # open a deduplicated alert issue when scores regress
+                # + maintain the weekly seo-weekly-report trend issue
 
 env:
   SITE_URL: https://purewire.vercel.app
@@ -202,4 +210,108 @@ jobs:
                 state_reason: "completed",
               });
               console.log(`Closed SEO audit alert issue #${issue.number}.`);
+            }
+
+      # Weekly trend report: post the metrics table to a deduplicated issue
+      # even when everything passes, so scores are visible without a
+      # regression. always() keeps the report flowing on a failing run (the
+      # metrics step captures the table before exiting non-zero), and the
+      # issue is updated in place — never duplicated — with an accumulating
+      # content-quality history (last 12 weeks) for trend visibility.
+      # workflow_dispatch doubles as an on-demand refresh, so a mid-week
+      # manual run adds a same-week row (deduped by date) rather than a
+      # strictly-weekly cadence.
+      - name: Post weekly SEO report
+        if: always() && ((github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || github.event_name == 'workflow_dispatch')
+        uses: actions/github-script@v7
+        env:
+          METRICS: ${{ steps.audit.outputs.metrics }}
+          SWEEP_METRICS: ${{ steps.sweep.outputs.sweep_metrics }}
+        with:
+          script: |
+            const label = "seo-weekly-report";
+            const metrics = process.env.METRICS || "";
+            const sweep = process.env.SWEEP_METRICS || "";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            // This week's date + content-quality scores from the metrics
+            // table. The row regexes are coupled to seo-audit.mjs's metrics
+            // format (| Content quality <kind> | <score> (floor N) |) — keep
+            // them in sync if that table ever changes shape.
+            const date = ((metrics.match(/## SEO audit metrics — (\S+)/) ?? [])[1] ??
+              new Date().toISOString()).slice(0, 10);
+            const postScore = (metrics.match(/\| Content quality post \| (\d+)/) ?? [])[1];
+            const profileScore = (metrics.match(/\| Content quality profile \| (\d+)/) ?? [])[1];
+            const hasScores = postScore !== undefined && profileScore !== undefined;
+            // Carry over the prior history rows — scoped to the Score history
+            // section of the existing body so no other date-first table (e.g.
+            // a future metrics row) can leak into the trend.
+            let history = [];
+            if (open.length > 0) {
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: open[0].number,
+              });
+              const tail = (issue.body ?? "").split("### Score history (content quality)")[1] ?? "";
+              history = [...tail.matchAll(
+                /^\| (\d{4}-\d{2}-\d{2}) \| (\S+) \| (\S+) \|$/gm,
+              )].map((m) => `| ${m[1]} | ${m[2]} | ${m[3]} |`);
+            }
+            // A week without captured metrics still posts the report, but is
+            // not recorded as an n/a row in the trend table.
+            const newRow = hasScores ? `| ${date} | ${postScore} | ${profileScore} |` : null;
+            const historyRows = [
+              ...(newRow ? [newRow] : []),
+              ...history.filter((r) => !r.includes(`| ${date} |`)),
+            ].slice(0, 12).join("\n");
+            const body = [
+              "## Weekly SEO report",
+              "",
+              "The claude-seo audit metrics for this week — posted even when",
+              "everything passes, so score trends stay visible without a",
+              "regression. The nightly **prod-seo-audit** alert issue is the",
+              "failure signal; this issue is the trend signal.",
+              "",
+              `**Week of ${date}** — content quality: post ${postScore ?? "n/a"}, profile ${profileScore ?? "n/a"}`,
+              "",
+              "### Audit metrics",
+              "",
+              metrics || "(audit metrics not captured)",
+              "",
+              "### Sweep metrics",
+              "",
+              sweep || "(sweep metrics not captured)",
+              "",
+              "### Score history (content quality)",
+              "",
+              "| Date | Post | Profile |",
+              "|---|---|---|",
+              historyRows,
+              "",
+              `Last updated: ${new Date().toISOString()}`,
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join("\n");
+            if (open.length > 0) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: open[0].number,
+                title: `Weekly SEO report — ${date}`,
+                body,
+              });
+              console.log(`Updated weekly SEO report issue #${open[0].number}.`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Weekly SEO report — ${date}`,
+                labels: [label],
+                body,
+              });
+              console.log(`Created weekly SEO report issue #${created.data.number}.`);
             }

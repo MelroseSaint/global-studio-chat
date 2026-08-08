@@ -457,7 +457,9 @@ Six workflows on GitHub Actions, all gated on `main`:
   failure opens a deduplicated alert issue.
 - **SEO Audit** (`seo-audit.yml`, nightly 04:00 UTC) — runs the claude-seo
   audit and the sitemap-wide sweep against the live site; score regressions
-  open an alert issue.
+  open a `prod-seo-audit` alert issue, and a weekly step (Monday 05:00 UTC)
+  posts the metrics table to a deduplicated `seo-weekly-report` trend issue
+  with an accumulating score history — visible even when nothing regresses.
 - **Run Convex migrations** (`migrations.yml`, on push + nightly 04:00
   UTC) — deploys the Convex backend and auto-runs schema migrations, so
   backfills like the comment like-count never need a manual step.
