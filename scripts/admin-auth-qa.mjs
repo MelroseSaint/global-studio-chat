@@ -165,6 +165,26 @@ async function removeAccountChecks() {
     // Give the account real data: a post with an uploaded file, and a follow.
     const userClient = new ConvexHttpClient(CONVEX_URL);
     userClient.setAuth(created.token);
+
+    // Video-autoplay preference is account data: it must round-trip
+    // through the users row (users.setVideoAutoplay) and appear in the
+    // data export — and then die with the account (asserted below via
+    // userExists === false).
+    await userClient.mutation(api.users.setVideoAutoplay, { preference: false });
+    const exportOff = await userClient.query(api.exportData.exportMyData);
+    check(
+      "preference false appears in the data export",
+      exportOff.preferences?.videoAutoplay === false,
+      `got ${JSON.stringify(exportOff.preferences?.videoAutoplay)}`,
+    );
+    await userClient.mutation(api.users.setVideoAutoplay, { preference: "auto" });
+    const exportAuto = await userClient.query(api.exportData.exportMyData);
+    check(
+      "preference auto appears in the data export",
+      exportAuto.preferences?.videoAutoplay === "auto",
+      `got ${JSON.stringify(exportAuto.preferences?.videoAutoplay)}`,
+    );
+
     const media = await uploadMedia(userClient);
     storageId = media.storageId ?? null;
     mediaUrl = media.url ?? null;

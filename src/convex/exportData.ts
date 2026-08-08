@@ -70,6 +70,12 @@ export const exportMyData = query({
       exportedAt: new Date().toISOString(),
       platform: "PureWire",
       profile: publicUser(me),
+      // Account preferences. videoAutoplay lives on the users row (synced
+      // from the device on every change), so the export covers it even
+      // though the browser keeps a local cache copy.
+      preferences: {
+        videoAutoplay: me.videoAutoplay ?? "auto",
+      },
       stats: {
         posts: posts.length,
         comments: comments.length,

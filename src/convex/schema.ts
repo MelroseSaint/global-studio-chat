@@ -106,6 +106,11 @@ const schema = defineSchema({
     // views. Stored here (not a separate table) because it's a per-user
     // preference, exactly like links/location.
     mutedKeywords: v.optional(v.array(v.string())),
+    // Video autoplay preference ("auto" = follow the device policy, or an
+    // explicit true/false the user chose in Settings). Account data: synced
+    // from the device on every change, included in the data export, and
+    // erased with the account — the browser-local copy is only a cache.
+    videoAutoplay: v.optional(v.union(v.literal("auto"), v.boolean())),
     // Browser-automation signal: a coarse 0–100 likelihood that this
     // account's browser is being driven by automation (headless,
     // Playwright/Puppeteer/CDP), computed client-side and filed by

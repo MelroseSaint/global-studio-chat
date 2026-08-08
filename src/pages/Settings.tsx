@@ -54,7 +54,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
 import { isValidUsername, PLATFORM_OPTIONS } from "@/lib/format";
-import { useVideoAutoplay } from "@/lib/video-autoplay";
+import {
+  clearAutoplayPreference,
+  useVideoAutoplay,
+} from "@/lib/video-autoplay";
 import { cn } from "@/lib/utils";
 
 interface LinkRow {
@@ -174,6 +177,10 @@ function SettingsForm({ user }: { user: Profile }) {
       setDeleting(false);
       return;
     }
+    // Erasure covers the browser-local preference cache too — the server
+    // copy already died with the users row, so the device copy must not
+    // survive the account.
+    clearAutoplayPreference();
     // The account is gone — signing out and returning home must always
     // happen, even if the session was already invalidated server-side.
     try {

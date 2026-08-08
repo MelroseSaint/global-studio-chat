@@ -59,6 +59,10 @@ export const getCurrentUser = query({
       ...publicUser(user),
       avatarUrl,
       bannerUrl,
+      // Own-view only: the video autoplay preference is account data
+      // (synced from the device, exported, erased with the account). Never
+      // exposed on other members' profiles via publicUser.
+      videoAutoplay: user.videoAutoplay ?? "auto",
       // Lets the client lock the owner's identity fields (name, handle,
       // deletion) so they're disabled in the UI, not just rejected by the
       // server. Derived from the email here so no surface needs the
@@ -419,6 +423,25 @@ export const updateProfile = mutation({
     await ctx.db.patch(userId, patch);
     const updated = await ctx.db.get(userId);
     return updated ? { ok: true as const, user: publicUser(updated) } : null;
+  },
+});
+
+/**
+ * Persist the video autoplay preference ("auto" = follow the device
+ * policy, or an explicit choice) as account data. The client mirrors every
+ * change here so the preference survives across devices and is included in
+ * the data export and erased with the account.
+ */
+export const setVideoAutoplay = mutation({
+  args: {
+    preference: v.union(v.literal("auto"), v.boolean()),
+  },
+  handler: async (ctx, { preference }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    await ctx.db.patch(userId, { videoAutoplay: preference });
   },
 });
 
