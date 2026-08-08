@@ -12,7 +12,14 @@ import { RequireAuth } from "@/components/RequireAuth";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/index.css";
+import { applyDeviceAttributes } from "@/lib/device";
 import { PUBLIC_ROUTES } from "@/lib/routes";
+
+// Detect the device BEFORE first paint so `<html>` already carries the
+// data-device / data-ios / data-touch / data-standalone attributes the
+// shell CSS hooks on — no flash of the wrong layout on iPad or installed
+// iPhones.
+applyDeviceAttributes();
 
 // Entry and error pages stay eager for an instant first paint. Every other
 // route is code-split: the shell downloads once and the page body streams in

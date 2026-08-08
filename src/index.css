@@ -146,11 +146,55 @@
        settings still apply on top. */
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* iOS Safari flashes a grey highlight on every tap; the app draws its
+       own press states, so kill the default. */
+    -webkit-tap-highlight-color: transparent;
   }
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+  /* iOS Safari delays every tap on a clickable by ~350 ms waiting for a
+     possible double-tap zoom. The app's touch targets are first-class, so
+     declare them non-zoomable and make taps instant. */
+  a,
+  button,
+  [role="button"],
+  input,
+  select,
+  textarea,
+  label,
+  summary {
+    touch-action: manipulation;
+  }
+  /* App-shell feel: no rubber-band overscroll bouncing the page to reveal
+     the background behind the sticky header/nav on iOS, and no desktop
+     glow either — content scrolls inside the shell. */
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
+  /* Installed PWA (standalone): the notch / Dynamic Island status bar
+     overlays the top of the viewport in black-translucent mode. The app
+     shell's sticky top bars (mobile header, tablet/desktop sidebar,
+     Landing header) add env(safe-area-inset-top) individually so content
+     never renders under the status bar without breaking their h-dvh
+     heights. */
+
+  /* iOS Safari auto-zooms into any input/textarea whose font is < 16px
+     when it gains focus, which scroll-janks the whole page mid-compose
+     (the classic mobile form annoyance). PureWire's inputs are 15px for
+     density, so on iOS bump just the text size to 16px — the tap targets
+     and layout are unchanged, only the focus zoom disappears. */
+  @media (pointer: coarse) {
+    html[data-ios="true"] input,
+    html[data-ios="true"] textarea {
+      font-size: 16px !important;
+    }
+  }
+
+  /* On installed PWAs the bottom bar is a separate edge; the mobile nav
+     already pads safe-area-inset-bottom, so nothing else is needed here. */
   ::selection {
     background: color-mix(in oklch, var(--primary) 30%, transparent);
   }

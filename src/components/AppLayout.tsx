@@ -294,7 +294,7 @@ export function AppLayout() {
 
       {/* Sidebar — icon-only w-20 rail at sm–lg (tablets), full w-64 with
           labels at lg+. Below sm the bottom nav takes over. */}
-      <aside className="sticky top-0 hidden h-dvh w-20 shrink-0 flex-col border-r bg-sidebar sm:flex lg:w-64">
+      <aside className="sticky top-0 hidden h-[calc(100dvh-env(safe-area-inset-top))] w-20 shrink-0 flex-col border-r bg-sidebar pt-[env(safe-area-inset-top)] sm:flex lg:w-64">
         <div className="flex h-16 items-center px-4 sm:justify-center lg:justify-start lg:px-6">
           <NavLink to="/home" className="flex items-center gap-2.5">
             <img src="/logo.svg" alt="PureWire" className="size-8 rounded-xl" />
@@ -378,7 +378,7 @@ export function AppLayout() {
         {/* Top header — phones only. Tablets get the icon rail (which
             carries the logo) and desktops the full sidebar, so showing
             this bar there would duplicate the brand mark. */}
-        <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background/80 px-4 backdrop-blur sm:hidden">
+        <header className="sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center border-b bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur sm:hidden">
           <NavLink to="/home" className="flex items-center gap-2">
             <img src="/logo.svg" alt="PureWire" className="size-7 rounded-lg" />
             <span className="font-bold tracking-tight">PureWire</span>

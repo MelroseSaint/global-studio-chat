@@ -65,7 +65,8 @@
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
     "qa:dm-share": "node scripts/dm-share-qa.mjs",
-    "qa:comment-share": "node scripts/comment-share-qa.mjs"
+    "qa:comment-share": "node scripts/comment-share-qa.mjs",
+    "qa:ios-layout": "node scripts/qa-ios-layout.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"
