@@ -128,6 +128,7 @@ export function PostMediaGrid({
             alt=""
             className="max-h-[480px] w-full object-cover"
             loading="lazy"
+            decoding="async"
           />
         )}
         {m.kind === "video" && m.url && (
@@ -172,6 +173,7 @@ export function PostMediaGrid({
                 alt=""
                 className="size-full object-cover"
                 loading="lazy"
+                decoding="async"
               />
             ) : m.kind === "video" && m.url ? (
               <div onClick={(e) => e.stopPropagation()} className="size-full">

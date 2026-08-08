@@ -115,6 +115,27 @@ const router = createBrowserRouter([
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
+// Warm the two connections every page needs before the first paint: the
+// Convex backend (realtime queries) and Cloudinary (media delivery).
+// Without these, the browser only opens those sockets after the JS boots;
+// preconnecting overlaps DNS + TLS with the script download.
+{
+  const preconnects = [
+    import.meta.env.VITE_CONVEX_URL,
+    "https://res.cloudinary.com",
+  ].filter((u): u is string => typeof u === "string" && u.length > 0);
+  for (const url of new Set(preconnects)) {
+    try {
+      const link = document.createElement("link");
+      link.rel = "preconnect";
+      link.href = url;
+      document.head.appendChild(link);
+    } catch {
+      // Preconnects are a hint — never block startup on them.
+    }
+  }
+}
+
 // PWA: register the offline-capable service worker in production only (in
 // dev it would fight Vite's HMR and live reload).
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
