@@ -2,25 +2,24 @@
 /**
  * PureWire Cloudinary health probe.
  *
- * Proves the unsigned-preset upload path actually works, end-to-end:
+ * Proves the SIGNED upload path actually works, end-to-end — the exact
+ * path the browser uses for real uploads (the composer mints a server-side
+ * signature, no unsigned preset):
  *
- *   1. Uploads a tiny 1x1 PNG to Cloudinary using the configured unsigned
- *      upload preset — the exact path the browser uses for real uploads.
+ *   1. Uploads a tiny 1x1 PNG to Cloudinary with a freshly-minted
+ *      signature from CLOUDINARY_API_KEY + CLOUDINARY_API_SECRET.
  *   2. If the upload succeeds, the probe asset is destroyed immediately via
  *      a signed destroy call so nothing is left behind in the media library.
  *
  * This is the earliest possible detection of the failure that otherwise
- * silently breaks every user upload: a missing/renamed unsigned preset
- * (which returns `Upload preset not found`), a revoked API key, an account
- * suspension, or a quota block.
+ * silently breaks every user upload: a revoked API key, an API key whose
+ * permission set lacks Upload/create (returns `403 missing permissions`),
+ * an account suspension, or a quota block.
  *
  * Env:
  *   CLOUDINARY_CLOUD_NAME      (required; production: saintscloud)
- *   CLOUDINARY_UPLOAD_PRESET   (required; production: purewire_unsigned)
- *   CLOUDINARY_API_KEY         (required to clean up the probe asset;
- *                               without it the probe FAILS so a nightly
- *                               run can never leave an orphan asset)
- *   CLOUDINARY_API_SECRET      (required to clean up the probe asset)
+ *   CLOUDINARY_API_KEY         (required — signs the upload AND cleans up)
+ *   CLOUDINARY_API_SECRET      (required — signs the upload AND cleans up)
  *
  * Exit codes: 0 = uploads healthy, 1 = uploads broken or not cleanable
  * (alert), 2 = config missing (misconfigured run, treated as an alert too).
@@ -29,7 +28,6 @@ import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 
 const CLOUD = process.env.CLOUDINARY_CLOUD_NAME;
-const PRESET = process.env.CLOUDINARY_UPLOAD_PRESET;
 const API_KEY = process.env.CLOUDINARY_API_KEY;
 const API_SECRET = process.env.CLOUDINARY_API_SECRET;
 
@@ -82,22 +80,34 @@ function sha1Hex(input) {
 }
 
 async function main() {
-  if (!CLOUD || !PRESET) {
+  if (!CLOUD || !API_KEY || !API_SECRET) {
     console.error(
-      "Cloudinary health probe: CLOUDINARY_CLOUD_NAME and " +
-        "CLOUDINARY_UPLOAD_PRESET are required.",
+      "Cloudinary health probe: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY " +
+        "and CLOUDINARY_API_SECRET are required (the app signs uploads with " +
+        "the API key + secret; there is no unsigned preset path anymore).",
     );
     process.exit(2);
   }
   console.log(
-    `Cloudinary health probe: cloud=${CLOUD} preset=${PRESET} ` +
-      `cleanup=${API_KEY && API_SECRET ? "signed" : "MISSING (probe will FAIL without key/secret)"}`,
+    `Cloudinary health probe: cloud=${CLOUD} signed upload with api_key=${API_KEY.slice(0, 4)}…`,
   );
 
-  // 1. The upload itself — the thing that breaks when a preset goes missing.
+  // 1. The upload itself — signed, exactly like the composer's server-minted
+  //    signature (params sorted, joined `k=v&k=v`, SHA-1 with the secret).
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const uploadParams = { timestamp, folder: "qa-probe" };
+  const signature = sha1Hex(
+    Object.keys(uploadParams)
+      .sort()
+      .map((k) => `${k}=${uploadParams[k]}`)
+      .join("&") + API_SECRET,
+  );
   const form = new FormData();
   form.append("file", new Blob([makeProbePng()], { type: "image/png" }), "health-probe.png");
-  form.append("upload_preset", PRESET);
+  form.append("timestamp", timestamp);
+  form.append("folder", uploadParams.folder);
+  form.append("api_key", API_KEY);
+  form.append("signature", signature);
   const res = await fetch(
     `https://api.cloudinary.com/v1_1/${CLOUD}/image/upload`,
     { method: "POST", body: form },
@@ -112,15 +122,15 @@ async function main() {
 
   if (!res.ok) {
     const message = parsed?.error?.message ?? bodyText.slice(0, 200);
-    const hint = /preset/i.test(message)
-      ? " — the unsigned upload preset is missing or renamed in the Cloudinary dashboard (Settings → Upload → Upload Presets)"
+    const hint = /missing permissions/i.test(message)
+      ? " — the API key lacks the Upload/create permission in the Cloudinary dashboard (Settings → Access Keys → edit the key → enable Upload). This is a console setting, not a code issue."
       : "";
     console.error(`FAIL: Cloudinary upload rejected (HTTP ${res.status}): ${message}${hint}`);
     process.exit(1);
   }
 
   const publicId = parsed?.public_id;
-  console.log(`OK: unsigned upload succeeded (public_id: ${publicId})`);
+  console.log(`OK: signed upload succeeded (public_id: ${publicId})`);
 
   // 2. Cleanup — destroy the probe asset so the media library stays clean.
   if (publicId && API_KEY && API_SECRET) {

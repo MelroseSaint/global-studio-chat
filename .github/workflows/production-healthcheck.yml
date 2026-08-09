@@ -523,11 +523,13 @@ jobs:
             }
 
   cloudinary-upload:
-    # Proves the unsigned-preset upload path works (the exact call the
-    # browser makes) by uploading a 1x1 PNG and destroying it. Catches a
-    # missing/renamed preset, a revoked key, or a quota block the moment it
-    # happens — before every user upload breaks silently. Runs in parallel
-    # with the auth loop, same schedule, own alert label.
+    # Proves the SIGNED upload path works (the exact call the composer
+    # makes — server-minted api_key + timestamp + signature, no unsigned
+    # preset) by uploading a 1x1 PNG and destroying it. Catches a revoked
+    # key, a key missing the Upload/create permission (403), or a quota
+    # block the moment it happens — before every user upload breaks
+    # silently. Runs in parallel with the auth loop, same schedule, own
+    # alert label.
     name: Cloudinary upload health
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -551,7 +553,6 @@ jobs:
           # preset can come from repository variables instead; the API key +
           # secret are only used to destroy the probe asset afterward.
           CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME || secrets.CLOUDINARY_CLOUD_NAME || 'saintscloud' }}
-          CLOUDINARY_UPLOAD_PRESET: ${{ vars.CLOUDINARY_UPLOAD_PRESET || secrets.CLOUDINARY_UPLOAD_PRESET || 'purewire_unsigned' }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         run: bash scripts/retry-once.sh cloudinary-health.log npm run qa:cloudinary-health
