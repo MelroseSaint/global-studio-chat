@@ -105,8 +105,8 @@ export function useAuth() {
   return {
     // True while the session is still being restored on load OR while the
     // signed-in user document is loading. Only when this settles do gate
-    // components (RequireAuth, the Auth page's redirect, NotFound) make an
-    // auth decision — so a refresh never flashes the login page before the
+    // components (the Auth page's redirect, NotFound) make an auth
+    // decision — so a refresh never flashes the login page before the
     // stored session is restored. The restore window only matters when a
     // JWT exists in storage (see hasStoredSession above) — an anonymous
     // visitor has nothing to restore, so the gate stays closed and the
@@ -114,6 +114,16 @@ export function useAuth() {
     isLoading:
       (authResolving && hasStoredSession) ||
       (isAuthenticated && user === undefined),
+    // The narrowest auth gate: true only while a STORED session is being
+    // restored (the few ms the auth client reads the token). Route guards
+    // (RequireAuth) mount the shell on this instead of on isLoading, so a
+    // signed-in refresh renders the app immediately and the `me` document,
+    // the shell's unread counts, and the page's own queries all start in
+    // PARALLEL — the old serialized gate (wait for `me`, then mount, then
+    // query the page) added a full round trip to every authed refresh.
+    // Pages that need the user document guard themselves (Settings and
+    // Admin return null until `user` resolves).
+    isAuthRestoring: authResolving && hasStoredSession,
     isAuthenticated,
     user,
     signIn,

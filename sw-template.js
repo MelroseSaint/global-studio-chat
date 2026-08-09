@@ -15,9 +15,13 @@
  *   the same build-time Vite plugin). That includes the lazy-loaded Admin
  *   route, so the whole app — admin dashboard included — opens without a
  *   connection after install, not only after each route has been visited.
- * - Navigations are network-first with an offline fallback to the cached
- *   shell, so a fresh deployment is always served when online while the app
- *   still opens without a connection.
+ * - Navigations are stale-while-revalidate: the cached shell answers
+ *   instantly (refresh feels instant — no waiting on the network for the
+ *   HTML), while the network copy is fetched in the background to refresh
+ *   the cache, with an offline fallback to whatever shell is cached. Safe
+ *   because the cache name is per-deploy: a new deployment installs a new
+ *   sw.js, precaches the new shell, and purges this cache on activate — so
+ *   a served shell can never be older than the currently-active deploy.
  * - Hashed build assets (/assets/*) are immutable, so they are cache-first
  *   with a background refresh — fast loads, no stale UI.
  * - Every other same-origin GET (logos, manifest) is stale-while-revalidate.
@@ -108,27 +112,32 @@ self.addEventListener("fetch", (event) => {
   // and must always go to the network.
   if (url.origin !== self.location.origin) return;
 
-  // Navigations: network first, offline fallback to the shell. Only a real
-  // page (response.ok) is stored — an error page must never become the
-  // offline shell.
+  // Navigations: stale-while-revalidate — serve the cached shell NOW, then
+  // refresh the cache from the network in the background. A refresh (or any
+  // reload) no longer waits a network round trip for the HTML: the entry
+  // script and its preloaded chunks are already cache-first below, so the
+  // whole reload is served from cache and the network only revalidates.
+  // Only a real page (response.ok) is stored — an error page must never
+  // become the offline shell. When there's no cache yet, fall through to
+  // the network; offline with nothing cached, fall back to the shell or /
+  // if the network copy is unreachable.
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches
-              .open(CACHE)
-              .then((cache) => cache.put("/index.html", copy))
-              .catch(() => {});
-          }
-          return response;
-        })
-        .catch(() =>
-          caches
-            .match("/index.html")
-            .then((hit) => hit || caches.match("/")),
-        ),
+      caches.match("/index.html").then((hit) => {
+        const revalidate = fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              const copy = response.clone();
+              caches
+                .open(CACHE)
+                .then((cache) => cache.put("/index.html", copy))
+                .catch(() => {});
+            }
+            return response;
+          })
+          .catch(() => hit || caches.match("/"));
+        return hit || revalidate;
+      }),
     );
     return;
   }
