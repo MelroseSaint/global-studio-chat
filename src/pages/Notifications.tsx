@@ -8,6 +8,7 @@ import {
   ChevronUp,
   Flag,
   Heart,
+  Hourglass,
   Mail,
   MessageCircle,
   Repeat2,
@@ -44,6 +45,7 @@ const ICONS = {
   "dm-share": Share2,
   "comment-share": Share2,
   "comment-deleted": Trash2,
+  "comment-auto-closed": Hourglass,
 } as const;
 
 export function Notifications() {
@@ -156,6 +158,12 @@ export function Notifications() {
         return (
           <>
             <b>{who}</b> removed your comment
+          </>
+        );
+      case "comment-auto-closed":
+        return (
+          <>
+            Your post&apos;s comment thread auto-closed — reopen or opt it out
           </>
         );
       case "ticket":

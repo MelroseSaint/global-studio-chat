@@ -17,6 +17,7 @@ import type * as auth from "../auth.js";
 import type * as auth_email from "../auth/email.js";
 import type * as automation from "../automation.js";
 import type * as blocklist from "../blocklist.js";
+import type * as crons from "../crons.js";
 import type * as deployStatus from "../deployStatus.js";
 import type * as dms from "../dms.js";
 import type * as emailDomainList from "../emailDomainList.js";
@@ -68,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   "auth/email": typeof auth_email;
   automation: typeof automation;
   blocklist: typeof blocklist;
+  crons: typeof crons;
   deployStatus: typeof deployStatus;
   dms: typeof dms;
   emailDomainList: typeof emailDomainList;

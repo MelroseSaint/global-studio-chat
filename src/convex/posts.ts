@@ -883,6 +883,30 @@ export function isCommentThreadAutoClosed(
 }
 
 /**
+ * Tell the author that their thread auto-closed, exactly once. Fires only
+ * when the auto-close policy (not the author) closed the thread, the
+ * author hasn't opted out, and they haven't already been told — the
+ * commentsAutoClosedNotifiedAt marker makes both the write-time crossing
+ * and the nightly sweep idempotent. QA-harness authors stay silent.
+ */
+async function maybeNotifyAutoClosed(
+  ctx: MutationCtx,
+  post: Doc<"posts">,
+): Promise<boolean> {
+  if (post.commentsAutoClosedNotifiedAt !== undefined) return false;
+  if (!isCommentThreadAutoClosed(post)) return false;
+  if (await isTestAccount(ctx, post.authorId)) return false;
+  await ctx.db.insert("notifications", {
+    userId: post.authorId,
+    type: "comment-auto-closed",
+    postId: post._id,
+    read: false,
+  });
+  await ctx.db.patch(post._id, { commentsAutoClosedNotifiedAt: Date.now() });
+  return true;
+}
+
+/**
  * Author (or admin) control: lock or unlock comments on a post. When
  * locked, no new comments can be added (existing ones stay readable).
  */
@@ -929,6 +953,36 @@ export const setAutoCloseComments = mutation({
       // undefined = default policy; only a true value persists the opt-out.
       autoCloseComments: keepOpen ? true : undefined,
     });
+  },
+});
+
+/**
+ * Nightly sweep behind the auto-close notification: find threads the
+ * policy has closed that the author hasn't been told about yet (posts
+ * that crossed the age threshold with no new comments, or whose count was
+ * reconciled across the line), notify once, and mark them done. Bounded
+ * paginate over the implicit _creationTime index, mirroring the migration
+ * scans — the shared maybeNotifyAutoClosed guard keeps it idempotent.
+ * Wired to a Convex cron (see crons.ts).
+ */
+export const notifyAutoClosedThreads = internalMutation({
+  handler: async (ctx) => {
+    let scanned = 0;
+    let notified = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await ctx.db
+        .query("posts")
+        .withIndex("by_creation_time")
+        .paginate({ numItems: 500, cursor });
+      for (const post of page.page) {
+        scanned++;
+        if (await maybeNotifyAutoClosed(ctx, post)) notified++;
+      }
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return { scanned, notified };
   },
 });
 
@@ -1595,6 +1649,14 @@ export const addComment = mutation({
       ...(sharedPostId !== undefined ? { sharedPostId } : {}),
     });
     await ctx.db.patch(postId, { commentCount: post.commentCount + 1 });
+    // The thread may have just crossed the auto-close line (or an old
+    // thread's first comment in weeks landed on an already-eligible post)
+    // — tell the author once, immediately. Idempotent via the marker; the
+    // nightly sweep catches anything this misses.
+    await maybeNotifyAutoClosed(ctx, {
+      ...post,
+      commentCount: post.commentCount + 1,
+    });
     // A reply notifies the comment author they got a reply; a top-level
     // comment notifies the post author as before. Never self-notify. A
     // comment that carries a shared post swaps the post author's ping for

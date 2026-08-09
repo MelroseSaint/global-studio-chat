@@ -239,6 +239,10 @@ const schema = defineSchema({
     // open forever (the default closes threads after a set age or comment
     // count — see posts.isCommentThreadClosed). Absent = policy applies.
     autoCloseComments: v.optional(v.boolean()),
+    // When the author was notified that this thread auto-closed (unix ms;
+    // see posts.maybeNotifyAutoClosed). Absent = not yet told. Guards both
+    // the write-time crossing and the nightly sweep from re-notifying.
+    commentsAutoClosedNotifiedAt: v.optional(v.number()),
     // Optional place the post was shared from — powers the Local feed.
     location: v.optional(
       v.object({
@@ -432,6 +436,10 @@ const schema = defineSchema({
       // The post's author removed one of your comments (see
       // posts.deleteComment) — moderation isn't silent.
       v.literal("comment-deleted"),
+      // The auto-close policy closed one of your post's threads (see
+      // posts.maybeNotifyAutoClosed) — a heads-up so the author can
+      // reopen it or opt the post out.
+      v.literal("comment-auto-closed"),
     ),
     actorId: v.optional(v.id("users")),
     postId: v.optional(v.id("posts")),

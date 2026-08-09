@@ -30,10 +30,11 @@
  *   9. A closes comments via setCommentsLocked — B's addComment is
  *      rejected while closed, accepted again after reopen, and a
  *      non-author can't close someone else's post.
- *  10. Auto-close policy: a 100-comment thread closes by itself (B 41 +
- *      C 59, both under the 60/hour budget), rejects new comments, and
- *      the author's per-post opt-out (setAutoCloseComments) reopens it —
- *      reverting re-closes, and a non-author can't change the opt-out.
+ *  10. Auto-close policy: a 100-comment thread on an admin-authored post
+ *      closes by itself (B 41 + C 59, both under the 60/hour budget),
+ *      rejects new comments, heads-up notifies the author's bell once
+ *      (re-closing never re-notifies), the author's per-post opt-out
+ *      reopens it, and a non-author can't change the opt-out.
  *
  * All fixtures (users, posts, comments, notifications) are erased at the
  * end, so the site is left exactly as found. Run:
@@ -98,6 +99,8 @@ async function main() {
   let adminPostId = null;
   let closePostId = null;
   let autoClosePostId = null;
+  // The admin's auto-close heads-up rows to remove after the run.
+  let adminNotifIds = [];
   const users = [];
 
   try {
@@ -454,15 +457,18 @@ async function main() {
     // The count leg of the policy: a post that crosses the comment-count
     // threshold (100) closes by itself. Each run mints fresh users, so the
     // 60-comments-per-hour budget is clean — B adds 41 and C adds 59
-    // (both under 60), reaching exactly 100 on the post.
-    console.log("\n5. Auto-close policy + per-post opt-out");
-    const autoClosePost = await ac.action(api.posts.createPost, {
+    // (both under 60), reaching exactly 100 on the post. The post is the
+    // ADMIN's (a non-test author), so the auto-close heads-up lands on a
+    // real bell and the notification path is exercised — the run cleans
+    // that row back up at the end.
+    console.log("\n5. Auto-close policy + per-post opt-out + notification");
+    const autoClosePost = await adm.action(api.posts.createPost, {
       creatorDisclosure: "human-made",
       content: `Auto-close QA ${stamp}`,
       ...(await powProof(client)),
     });
     check(
-      "A created a post for the auto-close check",
+      "the admin created a post for the auto-close check",
       autoClosePost.ok === true,
       autoClosePost.error ?? "",
     );
@@ -481,7 +487,7 @@ async function main() {
     };
     await flood(bc, "b", 41);
     await flood(cc, "c", 59);
-    const autoClosed = await ac.query(api.posts.getPost, {
+    const autoClosed = await adm.query(api.posts.getPost, {
       postId: autoClosePostId,
     });
     check(
@@ -490,6 +496,24 @@ async function main() {
         autoClosed?.commentsClosed === true &&
         autoClosed?.commentsAutoClosed === true,
       `count ${autoClosed?.commentCount}`,
+    );
+
+    // The author was told once: exactly one comment-auto-closed row on
+    // their bell pointing at this post.
+    const adminAutoCloseNotifs = async () => {
+      const r = await adm.query(api.notifications.listNotifications, {
+        paginationOpts: { numItems: 50, cursor: null },
+      });
+      return r.page.filter(
+        (n) =>
+          n.type === "comment-auto-closed" && n.postId === autoClosePostId,
+      );
+    };
+    const firstNotifs = await adminAutoCloseNotifs();
+    check(
+      "the auto-close heads-up reached the author's bell once",
+      firstNotifs.length === 1 && firstNotifs[0].read === false,
+      `got ${firstNotifs.length}`,
     );
 
     let autoRejected = false;
@@ -505,11 +529,11 @@ async function main() {
     check("new comments rejected while auto-closed", autoRejected);
 
     // Per-post opt-out: the author keeps this thread open forever.
-    await ac.mutation(api.posts.setAutoCloseComments, {
+    await adm.mutation(api.posts.setAutoCloseComments, {
       postId: autoClosePostId,
       keepOpen: true,
     });
-    const optedOut = await ac.query(api.posts.getPost, {
+    const optedOut = await adm.query(api.posts.getPost, {
       postId: autoClosePostId,
     });
     check(
@@ -527,12 +551,13 @@ async function main() {
       afterOptOut.error ?? "",
     );
 
-    // Reverting the opt-out re-closes (the count still qualifies).
-    await ac.mutation(api.posts.setAutoCloseComments, {
+    // Reverting the opt-out re-closes (the count still qualifies) — and
+    // the author is NOT told again (the marker keeps it one-shot).
+    await adm.mutation(api.posts.setAutoCloseComments, {
       postId: autoClosePostId,
       keepOpen: false,
     });
-    const reverted = await ac.query(api.posts.getPost, {
+    const reverted = await adm.query(api.posts.getPost, {
       postId: autoClosePostId,
     });
     check(
@@ -540,6 +565,13 @@ async function main() {
       reverted?.autoCloseComments === undefined &&
         reverted?.commentsClosed === true,
     );
+    const afterRevert = await adminAutoCloseNotifs();
+    check(
+      "re-closing does not re-notify the author",
+      afterRevert.length === firstNotifs.length,
+      `count ${firstNotifs.length} -> ${afterRevert.length}`,
+    );
+    adminNotifIds = afterRevert.map((n) => n._id);
 
     let thirdPartyOptOut = false;
     try {
@@ -564,22 +596,36 @@ async function main() {
         /* best-effort */
       }
     }
-    // The close-check and auto-close posts are A's — delete them through
-    // A's session so the fixtures never linger on the feed while the
-    // account erasure runs.
-    const authorPosts = [closePostId, autoClosePostId];
-    if (users[0]?.token) {
+    // The auto-close post is the ADMIN's — delete it (with its 100
+    // comments) through the admin session, and remove the heads-up bell
+    // row(s) it produced so no test trace ever outlives the run on a real
+    // account.
+    if (autoClosePostId && admin) {
+      try {
+        const admCleanup = new ConvexHttpClient(CONVEX_URL);
+        admCleanup.setAuth(admin.token);
+        await admCleanup.mutation(api.posts.deletePost, { postId: autoClosePostId });
+      } catch {
+        /* best-effort */
+      }
+    }
+    for (const notifId of adminNotifIds) {
+      try {
+        await client.mutation(api.testHarness.deleteNotification, {
+          notificationId: notifId,
+          secret: HARNESS_SECRET,
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
+    // The close-check post is A's — delete it through A's session so the
+    // fixture never lingers on the feed while the account erasure runs.
+    if (closePostId && users[0]?.token) {
       try {
         const aCleanup = new ConvexHttpClient(CONVEX_URL);
         aCleanup.setAuth(users[0].token);
-        for (const postId of authorPosts) {
-          if (!postId) continue;
-          try {
-            await aCleanup.mutation(api.posts.deletePost, { postId });
-          } catch {
-            /* best-effort */
-          }
-        }
+        await aCleanup.mutation(api.posts.deletePost, { postId: closePostId });
       } catch {
         /* best-effort */
       }

@@ -135,6 +135,26 @@ export const createTestUser = mutation({
 });
 
 /**
+ * Delete a single notification row by id — QA cleanup for notifications
+ * that land on REAL accounts (e.g. the auto-close heads-up the admin
+ * receives when a QA flood closes a thread on an admin-authored post).
+ * Test accounts are cascade-erased by deleteTestUser; this exists for the
+ * real-account recipient case so no test trace ever outlives a run. Gated
+ * by the same harness env pair as everything else in this module.
+ */
+export const deleteNotification = mutation({
+  args: { notificationId: v.id("notifications"), secret: v.string() },
+  handler: async (ctx, { notificationId, secret }) => {
+    requireHarness(secret);
+    const row = await ctx.db.get(notificationId);
+    if (row !== null) {
+      await ctx.db.delete(notificationId);
+    }
+    return { deleted: row !== null };
+  },
+});
+
+/**
  * Erase a throwaway QA account (and its auth sessions) by id, so a run that
  * crashes before its own cleanup can still be swept. Only ever targets the
  * reserved qa_ prefix, never a real account. Gated by the same two env gates.
