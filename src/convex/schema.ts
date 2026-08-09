@@ -21,6 +21,11 @@ const schema = defineSchema({
     phone: v.optional(v.string()),
     phoneVerificationTime: v.optional(v.number()),
     isAnonymous: v.optional(v.boolean()),
+    // Set when the account's email domain is on the disposable/temporary/
+    // forwarding denylist (see emailGate.ts). Signups are rejected at
+    // creation; this flag marks accounts whose domain was added to the list
+    // after signup — caught at verification and routed to human review.
+    disposableEmailDomain: v.optional(v.boolean()),
     // PureWire custom profile fields
     username: v.optional(v.string()),
     bio: v.optional(v.string()),
@@ -763,6 +768,14 @@ const schema = defineSchema({
   })
     .index("by_url_hash", ["urlHash"])
     .index("by_verdict", ["verdict"]),
+
+  // Account-creation velocity counter: one row per hourly bucket, incremented
+  // on each new account (see SIGNUP_VELOCITY_LIMIT in auth.ts). Breached
+  // buckets flag signups for human review instead of blocking registration.
+  signupVelocity: defineTable({
+    bucket: v.number(),
+    count: v.number(),
+  }).index("by_bucket", ["bucket"]),
 });
 
 export default schema;

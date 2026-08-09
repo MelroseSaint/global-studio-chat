@@ -19,6 +19,8 @@ import type * as automation from "../automation.js";
 import type * as blocklist from "../blocklist.js";
 import type * as deployStatus from "../deployStatus.js";
 import type * as dms from "../dms.js";
+import type * as emailDomainList from "../emailDomainList.js";
+import type * as emailGate from "../emailGate.js";
 import type * as exportData from "../exportData.js";
 import type * as farmNetwork from "../farmNetwork.js";
 import type * as http from "../http.js";
@@ -68,6 +70,8 @@ declare const fullApi: ApiFromModules<{
   blocklist: typeof blocklist;
   deployStatus: typeof deployStatus;
   dms: typeof dms;
+  emailDomainList: typeof emailDomainList;
+  emailGate: typeof emailGate;
   exportData: typeof exportData;
   farmNetwork: typeof farmNetwork;
   http: typeof http;

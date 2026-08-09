@@ -1697,6 +1697,109 @@ jobs:
               console.log(`Closed test-isolation alert issue #${issue.number}.`);
             }
 
+  email-domain-qa:
+    # Proves the disposable-email anti-abuse layer against the LIVE signup
+    # action (scripts/disposable-email-qa.mjs Part 2): signups with
+    # disposable, temporary, and mail-forwarding addresses must be rejected
+    # BEFORE the account is created (the error crosses the boundary in
+    # err.data, and mintSessionForEmail must find no leaked account row).
+    # Guards the auth.ts gate so the denylist can never silently stop
+    # enforcing at signup. The static-audit workflow runs the pure-logic
+    # half; this job runs the live half against production.
+    name: Disposable-email gate (live signup rejection)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the disposable-email gate QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: email-domain
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: bash scripts/retry-once.sh email-domain.log npm run qa:email-domains
+
+      - name: Upload the disposable-email gate QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-domain-log
+          path: email-domain.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-email-domain";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Disposable-email gate check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The disposable-email gate QA failed against production.",
+                "",
+                "This means a signup with a known disposable/temporary/",
+                "mail-forwarding domain was NOT rejected (or leaked an",
+                "account row), or the denylist drift guard caught the",
+                "generated module out of sync with blocked-email-domains/*.txt.",
+                "",
+                "Fix, then close this issue — the next green run closes it",
+                "automatically.",
+              ].join("\n"),
+            });
+
+      - name: Close alert issue on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-email-domain";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed disposable-email gate alert issue #${issue.number}.`);
+            }
+
   admin-workload-qa:
     # Guards the exact crash class that once replaced the whole app with
     # React Router's bare "Unexpected Application Error!" page: the shell

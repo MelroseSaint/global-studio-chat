@@ -68,6 +68,28 @@ jobs:
             || { echo "::error::robots.txt Sitemap line drifted from ${host} (vite.config.ts)"; exit 1; }
           echo "SEO static files OK — canonical host ${host}"
 
+  email-domain-gate:
+    # The disposable-email denylist is a repo-owned anti-abuse control: the
+    # generated module (src/convex/emailDomainList.ts) must never drift from
+    # the maintained blocked-email-domains/*.txt files, and the gate logic
+    # itself (normalize → extract domain → match → reject) must keep
+    # passing. Both are pure checks — no deployment or secret needed. The
+    # LIVE signup-rejection checks run in the production healthcheck, where
+    # TEST_HARNESS_SECRET exists.
+    name: Disposable-email denylist (drift + gate logic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Assert the generated module matches blocked-email-domains/*.txt
+        run: node scripts/generate-email-domain-list.mjs --check
+      - name: Run the pure gate-logic checks
+        run: npm run qa:email-domains
+
   sitemap-url-health:
     # Proves the dynamic sitemap only submits URLs that actually render —
     # and (since the canonical guard landed) that each sampled post/profile

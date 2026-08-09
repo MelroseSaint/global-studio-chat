@@ -1,0 +1,7 @@
+# Custom additions — domains observed abusing PureWire signups that aren't
+# in the curated lists above. Add one bare domain per line, lowercase;
+# `#` starts a comment. After editing, regenerate the backend module:
+#
+#   node scripts/generate-email-domain-list.mjs
+#
+# and commit both files (a CI guard fails if they drift).

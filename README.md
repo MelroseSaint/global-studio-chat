@@ -306,6 +306,16 @@ required for the important pages:
 
 ## Privacy & security
 
+- **Disposable-email blocking** — signup normalizes the address, extracts
+  the domain, and rejects known disposable / temporary / mail-forwarding
+  domains against a maintained denylist
+  (`blocked-email-domains/*.txt` → `src/convex/emailDomainList.ts`)
+  before the account is created; a domain added after signup is caught at
+  verification and routed to human review instead of being verified.
+  Compiles to a typed module by `scripts/generate-email-domain-list.mjs`
+  (a CI drift guard fails if the two fall out of sync), sits alongside
+  Turnstile, OTP verification, risk scoring, and a signup-velocity
+  ceiling, and never relies on DNS/MX alone
 - **Salted email hashes** — `SHA-256(salt + normalized email)`, salt
   versioned and rotatable
 - **E2E encrypted DMs** — message bodies encrypted on sender's device,

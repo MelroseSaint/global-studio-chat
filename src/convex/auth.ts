@@ -4,6 +4,11 @@ import { ConvexError } from "convex/values";
 
 import { normalizeEmailIdentity } from "@/lib/format";
 
+import { DISPOSABLE_EMAIL_DOMAINS } from "./emailDomainList";
+import {
+  disposableEmailDomain,
+  disposableEmailReason,
+} from "./emailGate";
 import { currentEmailHashVersion, saltedEmailHash } from "./privacy";
 import { computeRiskScore } from "./security";
 
@@ -13,10 +18,21 @@ import { EmailVerification, PasswordReset } from "./auth/email";
 
 export const ADMIN_EMAIL = "monroedoses@gmail.com";
 
+// Account-creation velocity ceiling: new accounts per rolling hour before
+// the velocity layer flags signups for human review. 240/hour is ~4 per
+// minute sustained — far beyond legitimate organic growth, far below what
+// a bot farm needs to be useful.
+export const SIGNUP_VELOCITY_LIMIT = 240;
+
 interface ProfileParams {
   email?: string | null;
   name?: string | null;
   username?: string | null;
+  // The auth library passes the full params object through; the flow lets
+  // the gate reject at SIGNUP (and profile updates) without ever touching
+  // a sign-in from an existing account whose domain got denylisted later
+  // — that account is handled by the verification re-check instead.
+  flow?: string;
 }
 
 /** Build a PureWire user profile from sign-in parameters. */
@@ -24,6 +40,18 @@ function buildProfile(params: ProfileParams) {
   // Identity is decided on the canonical email: Gmail/Outlook spell the
   // same inbox in many ways (dots, +tags), and one inbox gets one badge.
   const email = normalizeEmailIdentity(String(params.email ?? ""));
+  // Disposable/temporary/forwarding domains are rejected BEFORE the
+  // account is created — a throw here aborts the signup, and ConvexError's
+  // payload surfaces verbatim in the Auth page error banner (never a bare
+  // "Server Error"). Existing accounts that sign in later are untouched;
+  // the afterUserCreatedOrUpdated re-check catches domains added to the
+  // denylist after signup.
+  if (params.flow === "signUp" || params.flow === "updateProfile") {
+    const verdict = disposableEmailDomain(email, DISPOSABLE_EMAIL_DOMAINS);
+    if (verdict !== null) {
+      throw new ConvexError(disposableEmailReason(verdict));
+    }
+  }
   let username =
     String(params.username ?? "")
       .toLowerCase()
@@ -101,6 +129,11 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       if (user === null) {
         return;
       }
+      // The auth callback ctx is typed with the library's generic data
+      // model, which knows only the auth tables — the app's custom tables
+      // (signupVelocity, and the email index on users) need the project's
+      // generated ctx. Cast once here and use it for those queries.
+      const typed = ctx as unknown as MutationCtx;
       // Privacy: the user record carries only a salted SHA-256 hash of the
       // email, never plain-text. Existing accounts get backfilled on their
       // next update through the auth library. The hash is computed from the
@@ -120,12 +153,9 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         await ctx.db.patch(userId, { email: canonicalEmail });
       }
       if (canonicalEmail !== undefined) {
-        const typed = ctx as unknown as MutationCtx;
         if (user.emailHash === undefined) {
           // One inbox can only ever claim one verified badge: if another
           // account already owns this canonical identity, reject the signup.
-          // (The auth callback ctx is typed with the library's generic data
-          // model, so cast to the project's generated ctx for the email index.)
           const existing = await typed.db
             .query("users")
             .withIndex("email", (q) => q.eq("email", canonicalEmail))
@@ -157,7 +187,24 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       // attach when the badge was never decided: this callback fires on
       // every auth-library update (each sign-in), so an explicit admin
       // decision (setVerified false) must never be silently undone.
+      //
+      // A denylisted domain is checked AGAIN at this exact moment: a domain
+      // added to the list after signup must not slip through, because email
+      // verification alone never proves an address is permanent. Such an
+      // account is flagged for human review instead of being marked verified.
       if (user.emailVerificationTime !== undefined && user.verified === undefined) {
+        const emailVerdict = disposableEmailDomain(
+          user.email ?? "",
+          DISPOSABLE_EMAIL_DOMAINS,
+        );
+        if (emailVerdict !== null) {
+          await ctx.db.patch(userId, {
+            disposableEmailDomain: true,
+            accountStatus: "suspicious",
+            riskReasons: ["disposable-email-domain"],
+          });
+          return;
+        }
         await ctx.db.patch(userId, { verified: true });
       }
       if (user.role === "admin") {
@@ -180,6 +227,32 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
           riskReasons: verdict.reasons,
           accountStatus: verdict.score >= 60 ? "suspicious" : "active",
         });
+      }
+      // Account-creation velocity: a rolling hourly bucket counter, one row
+      // per hour. A bot farm signing up en masse trips it; legitimate growth
+      // never approaches the ceiling. A breached account is flagged for
+      // human review rather than rejected outright — rejecting a real user
+      // is worse than reviewing one. Runs only when this callback is the
+      // fresh-creation one (the account was just made), and only when the
+      // account isn't already under review.
+      if (
+        Date.now() - user._creationTime < 5 * 60_000 &&
+        user.accountStatus === undefined
+      ) {
+        const bucket = Math.floor(Date.now() / 3600_000);
+        const velocityRow = await typed.db
+          .query("signupVelocity")
+          .withIndex("by_bucket", (q) => q.eq("bucket", bucket))
+          .first();
+        const count = (velocityRow?.count ?? 0) + 1;
+        if (velocityRow !== null) {
+          await typed.db.patch(velocityRow._id, { count });
+        } else {
+          await typed.db.insert("signupVelocity", { bucket, count });
+        }
+        if (count > SIGNUP_VELOCITY_LIMIT) {
+          await ctx.db.patch(userId, { accountStatus: "suspicious" });
+        }
       }
     },
   },
