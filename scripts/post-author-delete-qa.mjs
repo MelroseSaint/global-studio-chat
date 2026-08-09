@@ -38,6 +38,17 @@
  *      cooldown is active — and after the cooldown (marker backdated past
  *      8 days) the guard re-notifies exactly once. The author's per-post
  *      opt-out reopens it, and a non-author can't change it.
+ *  11. Post-deletion sweep: the historical leak (a comment flood whose
+ *      rows dangle after the post dies) is reproduced and asserted clean.
+ *      Test-actor floods are suppressed by the isolation layer, so the
+ *      flood is driven by the REAL admin (a non-test actor) commenting on
+ *      a test-authored post — 12 real "comment" rows land on the
+ *      author's bell and the unread badge ticks up by exactly 12. Deleting
+ *      the post sweeps every one of them (bell + unread badge back to
+ *      baseline), and the dangling-row purge finds zero. (12, not a larger
+ *      flood: the admin's comments draw on the real account's 60/hour
+ *      comment budget, so the flood stays modest enough that a nightly run
+ *      plus occasional manual re-runs never trip it.)
  *
  * All fixtures (users, posts, comments, notifications) are erased at the
  * end, so the site is left exactly as found. Run:
@@ -50,6 +61,7 @@
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { purgeAllDanglingNotifications } from "./lib/qa-notifs.mjs";
 import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
@@ -635,6 +647,120 @@ async function main() {
       thirdPartyOptOut = true;
     }
     check("only the author can change the opt-out", thirdPartyOptOut);
+
+    // ── 6. Post deletion sweeps its notifications ───────────────────────
+    // (bell + unread badge return to baseline, zero dangling rows). The
+    // historical leak: a comment flood on a post, the post deleted, and
+    // every bell row pointing at it left dangling on the recipient — the
+    // unread badge inflated forever. Test-actor floods are suppressed by
+    // the isolation layer, so the flood here is driven by the REAL admin
+    // (a non-test actor): their comments on a test-authored post land
+    // real "comment" rows on the author's bell. Deleting the post must
+    // sweep every one of them (sweepPostEngagement removes postId-keyed
+    // notification rows), and the dangling-row purge must find nothing.
+    console.log(
+      "\n6. Post deletion sweeps its notifications (bell + badge back to baseline)",
+    );
+    const floodRecv = await client.mutation(api.testHarness.createTestUser, {
+      name: `QA FloodRecv ${stamp}`,
+      username: `qa_floodrecv_${stamp}`,
+      secret: HARNESS_SECRET,
+    });
+    users.push(floodRecv);
+    check(
+      "created the flood recipient (qa_ account)",
+      Boolean(floodRecv?.token && floodRecv?.userId),
+    );
+    if (!floodRecv?.userId || !floodRecv?.token) {
+      throw new Error("flood recipient mint failed");
+    }
+    const dc = new ConvexHttpClient(CONVEX_URL);
+    dc.setAuth(floodRecv.token);
+    const floodPost = await dc.action(api.posts.createPost, {
+      creatorDisclosure: "human-made",
+      content: `Post-deletion flood QA ${stamp}`,
+      ...(await powProof(client)),
+    });
+    check(
+      "the flood recipient created a post",
+      floodPost.ok === true,
+      floodPost.error ?? "",
+    );
+    if (!floodPost.ok) throw new Error("flood post creation failed");
+    const floodPostId = floodPost.postId;
+
+    // Baseline before the flood: the recipient's unread badge and bell.
+    // Asserted as a delta, never an absolute count.
+    const floodBaseline = await dc.query(api.notifications.shellCounts);
+    const floodBell = async () => {
+      const r = await dc.query(api.notifications.listNotifications, {
+        paginationOpts: { numItems: 50, cursor: null },
+      });
+      return r.page.filter((n) => n.postId === floodPostId);
+    };
+    const bellBefore = await floodBell();
+    check("the recipient's bell starts clean", bellBefore.length === 0);
+
+    // The flood: the REAL admin (a non-test actor) comments 12 times on
+    // the recipient's post — every one lands a real "comment" row on the
+    // recipient's bell, exactly the leak class that used to dangle. 12 is
+    // a real flood but stays modest against the admin's 60-comments/hour
+    // budget, so a nightly run plus occasional manual re-runs in the same
+    // hour never trip it. (Admins are exempt from AI escalation, and the
+    // content mirrors the generic flood pattern the auto-close section
+    // already uses.)
+    const FLOOD_N = 12;
+    for (let i = 0; i < FLOOD_N; i++) {
+      await adm.mutation(api.posts.addComment, {
+        postId: floodPostId,
+        content: `flood-${i} ${stamp}`,
+        ...(await powProof(client)),
+      });
+      await sleep(60); // stay gentle on the shared backend
+    }
+    const bellAfter = await floodBell();
+    const shellAfterFlood = await dc.query(api.notifications.shellCounts);
+    check(
+      "the flood landed exactly N real comment notifications",
+      bellAfter.length === FLOOD_N &&
+        bellAfter.every((n) => n.type === "comment" && n.read === false),
+      `got ${bellAfter.length}`,
+    );
+    check(
+      "the recipient's unread badge rose by exactly N",
+      shellAfterFlood.unread === floodBaseline.unread + FLOOD_N,
+      `${floodBaseline.unread} -> ${shellAfterFlood.unread}`,
+    );
+
+    // Delete the post — sweepPostEngagement must remove every
+    // notification row referencing it, and the recipient's bell + unread
+    // badge return to the pre-flood baseline.
+    await dc.mutation(api.posts.deletePost, { postId: floodPostId });
+    const bellAfterDelete = await floodBell();
+    const shellAfterDelete = await dc.query(api.notifications.shellCounts);
+    check(
+      "deleting the post swept every notification pointing at it",
+      bellAfterDelete.length === 0,
+      `got ${bellAfterDelete.length}`,
+    );
+    check(
+      "the recipient's unread badge returned to baseline",
+      shellAfterDelete.unread === floodBaseline.unread,
+      `${floodBaseline.unread} -> ${shellAfterDelete.unread}`,
+    );
+
+    // Zero dangling rows: the purge sweep finds nothing to remove — the
+    // post is gone, its rows are gone with it, and nothing else on the
+    // deployment references a deleted post/actor/recipient.
+    const { total: danglingTotal } = await purgeAllDanglingNotifications(
+      client,
+      HARNESS_SECRET,
+    );
+    check(
+      "zero dangling notification rows remain",
+      danglingTotal === 0,
+      `purged ${danglingTotal}`,
+    );
   } finally {
     // ── Cleanup: admin post first (so the feed never lingers on it), ───
     // then the qa_ accounts (cascade erases posts, comments, likes,

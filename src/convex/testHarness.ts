@@ -1148,55 +1148,72 @@ export const purgeTestTraces = mutation({
 });
 
 /**
- * Purge dangling notification rows — bell entries whose post, shared
- * post, actor, or recipient no longer exists. These are always test
- * debris or dead weight: a real notification always points at a live
- * post/actor, and the account erasure cascade already removes
- * notifications for deleted users, so a row surviving with a missing
- * postId/actorId/sharedPostId can only be a QA flood leftover on a REAL
- * bell (e.g. comments a deleted test account left on a deleted test post)
- * or an orphan. Deleting them also un-inflates the recipient's unread
- * badge. Gated by the same two env gates as the rest of the module.
+ * Page of notification ids for the dangling-row sweep, in _id order.
+ * Paginated because the sweep must run in bounded executions: a single
+ * mutation scanning the whole table exceeds Convex's per-function read
+ * limits once real accounts accumulate notifications (the old full-table
+ * sweep tripped "Too many documents read in a single function
+ * execution" at ~6.4k rows). The caller walks pages with
+ * purgeNotificationChunk until isDone — every execution stays small no
+ * matter how large the table grows. Gated by the same two env gates as
+ * the rest of the module.
  */
-export const purgeDanglingNotifications = mutation({
-  args: { secret: v.string() },
-  handler: async (ctx, { secret }) => {
+export const listNotificationsForPurge = query({
+  args: { secret: v.string(), cursor: v.optional(v.string()) },
+  handler: async (ctx, { secret, cursor }) => {
+    requireHarness(secret);
+    return await ctx.db
+      .query("notifications")
+      .paginate({ cursor: cursor ?? null, numItems: 400 });
+  },
+});
+
+/**
+ * Check one page of notification rows (from listNotificationsForPurge)
+ * for dangling references — a post, shared post, actor, or recipient
+ * that no longer exists — and delete the dead rows. Bounded to the passed
+ * ids so each execution stays well under Convex's per-function read/write
+ * limits no matter how large the table grows: the caller walks pages via
+ * listNotificationsForPurge and hands each page to this mutation.
+ * Gated by the same harness env pair as everything else in this module.
+ */
+export const purgeNotificationChunk = mutation({
+  args: { secret: v.string(), ids: v.array(v.id("notifications")) },
+  handler: async (ctx, { secret, ids }) => {
     requireHarness(secret);
     const purged: Array<{
       id: Id<"notifications">;
       type: string;
       reason: string;
     }> = [];
-    for (;;) {
-      const rows = await ctx.db.query("notifications").take(500);
-      if (rows.length === 0) break;
-      for (const row of rows) {
-        let reason: string | null = null;
-        if (row.postId !== undefined) {
-          const post = await ctx.db.get(row.postId);
-          if (post === null) reason = "missing-post";
-        }
-        // dm-share / comment-share rows preview the SHARED post, which
-        // rides in sharedPostId while postId stays the host (thread or DM
-        // the share landed in). The host can survive while the shared post
-        // is gone — the preview then dangles even though every other
-        // reference resolves. Sweep that class too.
-        if (reason === null && row.sharedPostId !== undefined) {
-          const shared = await ctx.db.get(row.sharedPostId);
-          if (shared === null) reason = "missing-shared-post";
-        }
-        if (reason === null && row.actorId !== undefined) {
-          const actor = await ctx.db.get(row.actorId);
-          if (actor === null) reason = "missing-actor";
-        }
-        if (reason === null) {
-          const recipient = await ctx.db.get(row.userId);
-          if (recipient === null) reason = "missing-recipient";
-        }
-        if (reason !== null) {
-          await ctx.db.delete(row._id);
-          purged.push({ id: row._id, type: row.type, reason });
-        }
+    for (const id of ids) {
+      const row = await ctx.db.get(id);
+      if (row === null) continue;
+      let reason: string | null = null;
+      if (row.postId !== undefined) {
+        const post = await ctx.db.get(row.postId);
+        if (post === null) reason = "missing-post";
+      }
+      // dm-share / comment-share rows preview the SHARED post, which
+      // rides in sharedPostId while postId stays the host (thread or DM
+      // the share landed in). The host can survive while the shared post
+      // is gone — the preview then dangles even though every other
+      // reference resolves. Sweep that class too.
+      if (reason === null && row.sharedPostId !== undefined) {
+        const shared = await ctx.db.get(row.sharedPostId);
+        if (shared === null) reason = "missing-shared-post";
+      }
+      if (reason === null && row.actorId !== undefined) {
+        const actor = await ctx.db.get(row.actorId);
+        if (actor === null) reason = "missing-actor";
+      }
+      if (reason === null) {
+        const recipient = await ctx.db.get(row.userId);
+        if (recipient === null) reason = "missing-recipient";
+      }
+      if (reason !== null) {
+        await ctx.db.delete(id);
+        purged.push({ id, type: row.type, reason });
       }
     }
     return { purgedCount: purged.length, purged };
