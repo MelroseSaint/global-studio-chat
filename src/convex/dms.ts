@@ -279,6 +279,36 @@ export const listConversations = query({
   },
 });
 
+/**
+ * Unread DM count for a user — shared by the nav badge query and the
+ * shell's combined counts query, so both surfaces compute it once.
+ */
+export async function countUnreadDms(
+  ctx: QueryCtx,
+  me: Id<"users">,
+): Promise<number> {
+  const mine = await myConversations(ctx, me, 200);
+  let unread = 0;
+  for (const conversation of mine) {
+    if (conversation.lastMessageSenderId === me) {
+      continue;
+    }
+    const read = await ctx.db
+      .query("dmReads")
+      .withIndex("by_user_conversation", (q) =>
+        q.eq("userId", me).eq("conversationId", conversation._id),
+      )
+      .first();
+    if (
+      (conversation.lastMessageAt ?? conversation._creationTime) >
+      (read?.lastReadAt ?? 0)
+    ) {
+      unread++;
+    }
+  }
+  return unread;
+}
+
 /** Unread DM count for the nav badge. */
 export const unreadDmCount = query({
   handler: async (ctx) => {
@@ -286,26 +316,7 @@ export const unreadDmCount = query({
     if (me === null) {
       return 0;
     }
-    const mine = await myConversations(ctx, me, 200);
-    let unread = 0;
-    for (const conversation of mine) {
-      if (conversation.lastMessageSenderId === me) {
-        continue;
-      }
-      const read = await ctx.db
-        .query("dmReads")
-        .withIndex("by_user_conversation", (q) =>
-          q.eq("userId", me).eq("conversationId", conversation._id),
-        )
-        .first();
-      if (
-        (conversation.lastMessageAt ?? conversation._creationTime) >
-        (read?.lastReadAt ?? 0)
-      ) {
-        unread++;
-      }
-    }
-    return unread;
+    return await countUnreadDms(ctx, me);
   },
 });
 

@@ -254,3 +254,20 @@
 .animate-pulse-ring {
   animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+/* Landing fade-up — the Landing page is self-contained (no framer-motion),
+   so section entrances are pure CSS: fade + rise 16px, staggered with
+   inline animation-delay where the old motion.divs used transition delay. */
+@keyframes pw-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-pw-fade-up {
+  animation: pw-fade-up 0.4s ease-out both;
+}

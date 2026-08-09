@@ -23,6 +23,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
 import { useAdminIpVerify } from "@/hooks/use-admin-ip-verify";
 import { detectAutomation } from "@/lib/automation-signal";
@@ -117,6 +118,38 @@ class WorkloadBoundary extends Component<{ children: ReactNode }, { failed: bool
  * nothing (no badge, no title) until the backend recovers — the shell
  * never crashes over a badge count.
  */
+/**
+ * Run a task when the browser is idle — after first paint and the feed's
+ * initial render, never competing with them for the main thread. Used for
+ * the shell's background maintenance/security signals (session fingerprint,
+ * automation score, story pruning, admin-role ensure) which must run
+ * eventually but never need to delay the page the member actually came to
+ * see.
+ *
+ * requestIdleCallback has no timeout guarantee on a busy main thread, so
+ * the task is capped with its `timeout` option AND a setTimeout fallback
+ * for browsers without rIC (older Safari) — every signal still fires,
+ * just off the critical path. Returns a cancel function for effect cleanup.
+ */
+function runWhenIdle(
+  fn: () => void,
+  timeoutMs = 2000,
+): () => void {
+  const run = () => {
+    try {
+      fn();
+    } catch {
+      // Background signals are best-effort — never let one crash the shell.
+    }
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    const id = window.requestIdleCallback(run, { timeout: timeoutMs });
+    return () => window.cancelIdleCallback(id);
+  }
+  const timer = window.setTimeout(run, timeoutMs);
+  return () => window.clearTimeout(timer);
+}
+
 function WorkloadQuery({
   enabled,
   onData,
@@ -141,8 +174,12 @@ function WorkloadQuery({
 export function AppLayout() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const unread = useQuery(api.notifications.unreadCount);
-  const dmUnread = useQuery(api.dms.unreadDmCount);
+  // Both badges in ONE query — the shell's combined counts save a round
+  // trip on every authenticated page load (the individual queries remain
+  // for the QA scripts and any surface that needs just one of them).
+  const counts = useQuery(api.notifications.shellCounts);
+  const unread = counts?.unread;
+  const dmUnread = counts?.dmUnread;
   const ensureAdminStatus = useMutation(api.admin.ensureAdminStatus);
   const pruneExpiredStories = useMutation(api.account.pruneExpiredStories);
   // Self-auditing session security: file this device's one-way fingerprint
@@ -203,40 +240,47 @@ export function AppLayout() {
 
   // Ensure a pre-existing admin account (e.g. from earlier testing) gets
   // the admin role on next load, and prune expired story content so
-  // nothing outlives its 24-hour life.
+  // nothing outlives its 24-hour life. Both are maintenance chores — they
+  // run when the browser is idle instead of on the page's critical path.
   useEffect(() => {
-    if (user) {
+    if (!user) return;
+    return runWhenIdle(() => {
       void ensureAdminStatus();
       void pruneExpiredStories();
-    }
+    });
   }, [user, ensureAdminStatus, pruneExpiredStories]);
 
-  // Self-auditing session fingerprint: on every shell load, file this
-  // device's fingerprint. If the server finds a different fingerprint on
+  // Self-auditing session fingerprint: file this device's fingerprint
+  // against the session. If the server finds a different fingerprint on
   // the same session (stolen cookie, account takeover), it revokes the
-  // session and we sign out with a clear reason.
+  // session and we sign out with a clear reason. Deferred to idle — the
+  // fingerprint only matters after the page is up, and a stolen session is
+  // caught the moment it fires (capped at 2s even on a busy thread).
   useEffect(() => {
     if (!user || sessionRevoked) return;
     let cancelled = false;
-    void (async () => {
-      try {
-        const [uaHash, regionToken] = await Promise.all([
-          clientUaHash(),
-          Promise.resolve(clientRegionToken()),
-        ]);
-        const res = await sessionSignal({ uaHash, regionToken });
-        if (!cancelled && res?.revoked === true) {
-          setSessionRevoked(true);
-          // The session no longer exists server-side — clear the local
-          // auth state so the sign-in gate redirects to /auth.
-          await signOut();
+    const cancel = runWhenIdle(() => {
+      void (async () => {
+        try {
+          const [uaHash, regionToken] = await Promise.all([
+            clientUaHash(),
+            Promise.resolve(clientRegionToken()),
+          ]);
+          const res = await sessionSignal({ uaHash, regionToken });
+          if (!cancelled && res?.revoked === true) {
+            setSessionRevoked(true);
+            // The session no longer exists server-side — clear the local
+            // auth state so the sign-in gate redirects to /auth.
+            await signOut();
+          }
+        } catch {
+          // Fingerprinting is best-effort; never crash the shell for it.
         }
-      } catch {
-        // Fingerprinting is best-effort; never crash the shell for it.
-      }
-    })();
+      })();
+    });
     return () => {
       cancelled = true;
+      cancel();
     };
   }, [user, sessionRevoked, sessionSignal, signOut]);
 
@@ -244,17 +288,20 @@ export function AppLayout() {
   // file the coarse result. Non-blocking and best-effort — a real user
   // whose browser trips a weak signal is never interrupted; the score only
   // feeds the quiet escalation pipeline when several strong automation
-  // markers agree.
+  // markers agree. The synchronous detection scan runs at idle, not on the
+  // shell's first render.
   useEffect(() => {
     if (!user || sessionRevoked) return;
-    try {
-      const { score, signals } = detectAutomation();
-      if (score > 0 || signals.length > 0) {
-        void reportAutomation({ score, signals }).catch(() => {});
+    return runWhenIdle(() => {
+      try {
+        const { score, signals } = detectAutomation();
+        if (score > 0 || signals.length > 0) {
+          void reportAutomation({ score, signals }).catch(() => {});
+        }
+      } catch {
+        // Detection is optional; never let it affect the shell.
       }
-    } catch {
-      // Detection is optional; never let it affect the shell.
-    }
+    });
   }, [user, sessionRevoked, reportAutomation]);
 
   // PWA app-icon badge: the OS shows the pending moderation workload on the
@@ -281,11 +328,16 @@ export function AppLayout() {
     navigate("/");
   };
 
+  // Tooltips (VerifiedBadge, MetadataStrippedChip, SharedPostEmbed) all live
+  // inside the authed shell, so the provider lives here — the public Landing
+  // and NotFound never pull radix's tooltip (part of the ui chunk) into
+  // their first paint.
   return (
-    <div className="flex min-h-dvh">
-      <WorkloadBoundary
-        key={isAdmin && adminVerified && !sessionRevoked ? "on" : "off"}
-      >
+    <TooltipProvider delayDuration={200}>
+      <div className="flex min-h-dvh">
+        <WorkloadBoundary
+          key={isAdmin && adminVerified && !sessionRevoked ? "on" : "off"}
+        >
         <WorkloadQuery
           enabled={isAdmin && adminVerified && !sessionRevoked}
           onData={setWorkloadData}
@@ -486,6 +538,7 @@ export function AppLayout() {
           </DropdownMenuContent>
         </DropdownMenu>
       </nav>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

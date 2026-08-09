@@ -5,12 +5,10 @@ import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
 import { UpdateBanner } from "@convex-dev/static-hosting/react";
 
-import { AppLayout } from "@/components/AppLayout";
 import { ErrorBoundary, RouteError } from "@/components/ErrorBoundary";
+import { LazyToaster } from "@/components/LazyToaster";
 import { PageLoader } from "@/components/PageLoader";
 import { RequireAuth } from "@/components/RequireAuth";
-import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/index.css";
 import { applyDeviceAttributes } from "@/lib/device";
 import { PUBLIC_ROUTES } from "@/lib/routes";
@@ -21,11 +19,19 @@ import { PUBLIC_ROUTES } from "@/lib/routes";
 // iPhones.
 applyDeviceAttributes();
 
-// Entry and error pages stay eager for an instant first paint. Every other
-// route is code-split: the shell downloads once and the page body streams in
-// on demand, so the initial bundle stays small.
+// The public Landing stays eager, but it is self-contained (plain elements
+// + CSS — no radix UI kit, no framer-motion), so the entry bundle never
+// preloads the ui / motion / icons chunks on the critical path. The authed
+// shell and the 404 page are code-split like every other route: they pull
+// the ui/motion chunks on demand instead of shipping them to everyone.
 import { Landing } from "@/pages/Landing";
-import { NotFound } from "@/pages/NotFound";
+
+const AppLayout = lazy(() =>
+  import("@/components/AppLayout").then((m) => ({ default: m.AppLayout })),
+);
+const NotFound = lazy(() =>
+  import("@/pages/NotFound").then((m) => ({ default: m.NotFound })),
+);
 
 // Pages export named components, so each lazy factory remaps its named export
 // onto the `default` that React.lazy resolves.
@@ -153,24 +159,22 @@ createRoot(document.getElementById("root")!).render(
         boundary renders a reload fallback instead. */}
     <ErrorBoundary>
       <ConvexAuthProvider client={convex}>
-        <TooltipProvider delayDuration={200}>
-          <Suspense fallback={<PageLoader />}>
-            <RouterProvider router={router} />
-          </Suspense>
-          {/* Live-reload prompt when a new deployment ships. */}
-          <UpdateBanner
-            message="A new version of PureWire is available"
-            buttonText="Refresh"
-            className="brand-gradient-bg"
-            style={{
-              borderRadius: "999px",
-              padding: "0.65rem 0.75rem 0.65rem 1.25rem",
-              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)",
-              fontSize: "14px",
-            }}
-          />
-          <Toaster />
-        </TooltipProvider>
+        <Suspense fallback={<PageLoader />}>
+          <RouterProvider router={router} />
+        </Suspense>
+        {/* Live-reload prompt when a new deployment ships. */}
+        <UpdateBanner
+          message="A new version of PureWire is available"
+          buttonText="Refresh"
+          className="brand-gradient-bg"
+          style={{
+            borderRadius: "999px",
+            padding: "0.65rem 0.75rem 0.65rem 1.25rem",
+            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)",
+            fontSize: "14px",
+          }}
+        />
+        <LazyToaster />
       </ConvexAuthProvider>
     </ErrorBoundary>
   </StrictMode>,

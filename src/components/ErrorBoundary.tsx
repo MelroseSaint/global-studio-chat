@@ -1,8 +1,6 @@
 import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
 import { useRouteError } from "react-router";
 
-import { Button } from "@/components/ui/button";
-
 interface ErrorBoundaryProps {
   children: ReactNode;
 }
@@ -53,9 +51,17 @@ export function FallbackScreen() {
         An unexpected error interrupted this screen. Your account, posts,
         and files are safe — reloading fixes it.
       </p>
-      <Button onClick={() => window.location.reload()}>
+      {/* Plain button (no UI kit): this boundary renders when the app is
+          already failing, and it sits in the eager entry — importing the
+          radix Button here would drag the whole ui chunk onto every
+          page's critical path, including the public Landing. */}
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium whitespace-nowrap text-primary-foreground transition-colors outline-none hover:bg-primary/90 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:border-ring disabled:pointer-events-none disabled:opacity-50"
+      >
         Reload PureWire
-      </Button>
+      </button>
     </div>
   );
 }

@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import {
   ArrowRight,
   AtSign,
@@ -16,30 +15,82 @@ import {
   Sparkles,
   UserPlus,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import { UserAvatar } from "@/components/UserAvatar";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { cloudinaryImageUrl } from "@/lib/cloudinary-media";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 
 type LandingUser = NonNullable<ReturnType<typeof useAuth>["user"]>;
 
 /**
+ * The Landing page is deliberately self-contained: it imports no UI-kit or
+ * animation library (no radix components, no framer-motion), so the public
+ * start page's first paint never downloads or executes the app shell's ui /
+ * motion chunks. Buttons, cards, the account menu, and the fade-up motion
+ * are plain elements + CSS (`.animate-pw-fade-up` in index.css) that render
+ * identically. The authed shell (AppLayout) and lazy pages pull those chunks
+ * on demand instead.
+ */
+
+// The exact class strings from @/components/ui/button (variant + size), kept
+// inline so the hero/nav CTAs look byte-identical to the Button component.
+const BTN_BASE =
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+const BTN_DEFAULT = "bg-primary text-primary-foreground hover:bg-primary/90";
+const BTN_GHOST = "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50";
+const BTN_OUTLINE =
+  "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50";
+const BTN_SM = "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5";
+const BTN_LG = "h-10 rounded-md px-6 has-[>svg]:px-4";
+
+/** Plain-elements card, matching @/components/ui/card. */
+function LandingCard({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-6 rounded-xl border bg-card py-6 text-card-foreground shadow-sm",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function LandingCardContent({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div className={cn("flex flex-col gap-3 p-6", className)} {...props} />
+  );
+}
+
+/** The header avatar without the radix Avatar wrapper (see UserAvatar). */
+function LandingAvatar({ user }: { user: LandingUser }) {
+  const src =
+    user.avatarUrl !== undefined && user.avatarUrl !== null
+      ? (cloudinaryImageUrl(user.avatarUrl, 128) ?? user.avatarUrl)
+      : (user.image ?? undefined);
+  const label = user.name ?? user.username ?? "?";
+  return (
+    <div className="relative flex size-7 shrink-0 overflow-hidden rounded-full border border-border/60 select-none">
+      {src ? (
+        <img src={src} alt={label} className="aspect-square size-full" />
+      ) : (
+        <div className="flex size-full items-center justify-center rounded-full bg-primary/10 font-semibold text-primary">
+          {label.slice(0, 1).toUpperCase()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * The signed-in member's account menu on the landing header — the one place
  * on the PWA's start screen (start_url "/") where someone already signed in
  * can open the app, reach their profile, or sign out without having to
- * navigate into the app shell and hunt through the mobile More menu. The
- * same dropdown the app shell uses, so the experience is consistent.
+ * navigate into the app shell and hunt through the mobile More menu. A
+ * lightweight state-based menu (no radix dropdown) so the Landing stays
+ * free of the ui chunk; closes on outside click.
  */
 function LandingUserMenu({
   user,
@@ -49,54 +100,79 @@ function LandingUserMenu({
   onSignOut: () => void;
 }) {
   const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
   const username = user.username ?? "";
   const profileTo = username ? `/u/${username}` : "/settings";
+  const go = (to: string) => {
+    setOpen(false);
+    navigate(to);
+  };
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="flex cursor-pointer items-center gap-2 rounded-xl p-0.5 transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          aria-label="Account menu"
-        >
-          <UserAvatar user={user} className="size-7" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="font-normal">
-          <p className="text-sm font-medium">
-            {user.name ?? user.username ?? "Member"}
-            {user.verified ? " ✓" : ""}
-          </p>
-          <p className="text-xs text-muted-foreground">@{user.username}</p>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem className="cursor-pointer" onSelect={() => navigate("/home")}>
-          Home
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          className="cursor-pointer"
-          onSelect={() => navigate(profileTo)}
-        >
-          Profile
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          className="cursor-pointer"
-          onSelect={() => navigate("/settings")}
-        >
-          Settings
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          variant="destructive"
-          className="cursor-pointer"
-          onSelect={onSignOut}
-        >
-          <LogOut />
-          Sign out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="relative">
+      <button
+        type="button"
+        aria-label="Account menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex cursor-pointer items-center gap-2 rounded-xl p-0.5 transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <LandingAvatar user={user} />
+      </button>
+      {open ? (
+        <>
+          {/* Invisible backdrop: a click anywhere outside closes the menu. */}
+          <button
+            type="button"
+            aria-hidden
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-40 cursor-default"
+          />
+          <div
+            role="menu"
+            className="absolute right-0 z-50 mt-1 w-56 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+          >
+            <div className="px-2 py-1.5">
+              <p className="text-sm font-medium">
+                {user.name ?? user.username ?? "Member"}
+                {user.verified ? " ✓" : ""}
+              </p>
+              <p className="text-xs text-muted-foreground">@{user.username}</p>
+            </div>
+            <div className="my-1 h-px bg-border" />
+            {[
+              { label: "Home", to: "/home" },
+              { label: "Profile", to: profileTo },
+              { label: "Settings", to: "/settings" },
+            ].map((item) => (
+              <button
+                key={item.to}
+                type="button"
+                role="menuitem"
+                onClick={() => go(item.to)}
+                className="flex w-full cursor-pointer items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+              >
+                {item.label}
+              </button>
+            ))}
+            <div className="my-1 h-px bg-border" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onSignOut();
+              }}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+            >
+              <LogOut className="size-4" />
+              Sign out
+            </button>
+          </div>
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -297,22 +373,20 @@ export function Landing() {
             <span className="font-bold tracking-tight">PureWire</span>
           </Link>
           <nav className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="hidden sm:inline-flex"
+            <button
+              type="button"
               onClick={() => scrollToSection("features")}
+              className={cn(BTN_BASE, BTN_GHOST, BTN_SM, "hidden sm:inline-flex")}
             >
               Why PureWire
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="hidden sm:inline-flex"
+            </button>
+            <button
+              type="button"
               onClick={() => scrollToSection("standard")}
+              className={cn(BTN_BASE, BTN_GHOST, BTN_SM, "hidden sm:inline-flex")}
             >
               The Standard
-            </Button>
+            </button>
             {/* Session restore on refresh: while the stored token is still
                 resolving, don't render the auth CTAs — a signed-in member
                 would otherwise see "Sign in"/"Get started" flash for a
@@ -325,29 +399,35 @@ export function Landing() {
               />
             ) : isAuthenticated ? (
               <>
-                <Button size="sm" asChild>
-                  <Link to="/home" onClick={() => setNavigating(true)}>
-                    Open app
-                    <ArrowRight className="size-4" />
-                  </Link>
-                </Button>
+                <Link
+                  to="/home"
+                  onClick={() => setNavigating(true)}
+                  className={cn(BTN_BASE, BTN_DEFAULT, BTN_SM)}
+                >
+                  Open app
+                  <ArrowRight className="size-4" />
+                </Link>
                 {user ? (
                   <LandingUserMenu user={user} onSignOut={handleSignOut} />
                 ) : null}
               </>
             ) : (
               <>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link to="/auth" onClick={() => setNavigating(true)}>
-                    Sign in
-                  </Link>
-                </Button>
-                <Button size="sm" asChild>
-                  <Link to="/auth" onClick={() => setNavigating(true)}>
-                    Get started
-                    <ArrowRight className="size-4" />
-                  </Link>
-                </Button>
+                <Link
+                  to="/auth"
+                  onClick={() => setNavigating(true)}
+                  className={cn(BTN_BASE, BTN_GHOST, BTN_SM)}
+                >
+                  Sign in
+                </Link>
+                <Link
+                  to="/auth"
+                  onClick={() => setNavigating(true)}
+                  className={cn(BTN_BASE, BTN_DEFAULT, BTN_SM)}
+                >
+                  Get started
+                  <ArrowRight className="size-4" />
+                </Link>
               </>
             )}
           </nav>
@@ -366,11 +446,9 @@ export function Landing() {
             }}
           />
           <div className="relative mx-auto flex w-full max-w-6xl flex-col items-center gap-8 px-4 py-20 text-center sm:py-28">
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-              className="flex flex-col items-center gap-6"
+            <div
+              className="animate-pw-fade-up flex flex-col items-center gap-6"
+              style={{ animationDuration: "0.5s" }}
             >
               <span className="inline-flex items-center gap-1.5 rounded-full border border-oxide/30 bg-oxide/10 px-3 py-1 text-xs font-medium text-oxide dark:text-oxide-light">
                 <Quote className="size-3" />
@@ -395,23 +473,22 @@ export function Landing() {
                     className="h-11 w-44 animate-pulse rounded-md bg-muted/60"
                   />
                 ) : (
-                  <Button size="lg" asChild>
-                    <Link
-                      to={isAuthenticated ? "/home" : "/auth"}
-                      onClick={() => setNavigating(true)}
-                    >
-                      {isAuthenticated ? "Open your feed" : "Join PureWire"}
-                      <ArrowRight className="size-4" />
-                    </Link>
-                  </Button>
+                  <Link
+                    to={isAuthenticated ? "/home" : "/auth"}
+                    onClick={() => setNavigating(true)}
+                    className={cn(BTN_BASE, BTN_DEFAULT, BTN_LG)}
+                  >
+                    {isAuthenticated ? "Open your feed" : "Join PureWire"}
+                    <ArrowRight className="size-4" />
+                  </Link>
                 )}
-                <Button
-                  size="lg"
-                  variant="outline"
+                <button
+                  type="button"
                   onClick={() => scrollToSection("standard")}
+                  className={cn(BTN_BASE, BTN_OUTLINE, BTN_LG)}
                 >
                   See the PureWire Standard
-                </Button>
+                </button>
               </div>
               <p className="text-xs text-muted-foreground">
                 {isLoading
@@ -420,7 +497,7 @@ export function Landing() {
                     ? "Welcome back — your feed is waiting."
                     : "Sign up with just an email. Takes less than a minute."}
               </p>
-            </motion.div>
+            </div>
           </div>
         </section>
 
@@ -444,14 +521,9 @@ export function Landing() {
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-60px" }}
-                transition={{ duration: 0.4 }}
-              >
-                <Card className="h-full transition-transform hover:-translate-y-0.5">
-                  <CardContent className="flex flex-col gap-3 p-6">
+              <div className="animate-pw-fade-up">
+                <LandingCard className="h-full transition-transform hover:-translate-y-0.5">
+                  <LandingCardContent className="flex flex-col gap-3 p-6">
                     <div className="flex size-10 items-center justify-center rounded-xl brand-gradient-bg text-white">
                       <KeyRound className="size-5" />
                     </div>
@@ -462,17 +534,15 @@ export function Landing() {
                       Join with a password you choose. No third-party logins,
                       no social accounts, no one else in your account.
                     </p>
-                  </CardContent>
-                </Card>
-              </motion.div>
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-60px" }}
-                transition={{ duration: 0.4, delay: 0.1 }}
+                  </LandingCardContent>
+                </LandingCard>
+              </div>
+              <div
+                className="animate-pw-fade-up"
+                style={{ animationDelay: "0.1s" }}
               >
-                <Card className="h-full transition-transform hover:-translate-y-0.5">
-                  <CardContent className="flex flex-col gap-3 p-6">
+                <LandingCard className="h-full transition-transform hover:-translate-y-0.5">
+                  <LandingCardContent className="flex flex-col gap-3 p-6">
                     <div className="flex size-10 items-center justify-center rounded-xl brand-gradient-bg text-white">
                       <Mail className="size-5" />
                     </div>
@@ -484,9 +554,9 @@ export function Landing() {
                       account is really yours — and it&apos;s what earns your
                       verified badge.
                     </p>
-                  </CardContent>
-                </Card>
-              </motion.div>
+                  </LandingCardContent>
+                </LandingCard>
+              </div>
             </div>
             <p className="mt-8 text-center text-xs text-muted-foreground">
               No guest accounts, no throwaway signups — one inbox gets one
@@ -512,15 +582,13 @@ export function Landing() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((feature, i) => (
-              <motion.div
+              <div
                 key={feature.title}
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-80px" }}
-                transition={{ duration: 0.4, delay: i * 0.06 }}
+                className="animate-pw-fade-up"
+                style={{ animationDelay: `${i * 0.06}s` }}
               >
-                <Card className="h-full transition-transform hover:-translate-y-0.5">
-                  <CardContent className="flex flex-col gap-3 p-6">
+                <LandingCard className="h-full transition-transform hover:-translate-y-0.5">
+                  <LandingCardContent className="flex flex-col gap-3 p-6">
                     <div className="flex size-10 items-center justify-center rounded-xl brand-gradient-bg text-white">
                       <feature.icon className="size-5" />
                     </div>
@@ -530,9 +598,9 @@ export function Landing() {
                     <p className="text-sm text-muted-foreground">
                       {feature.description}
                     </p>
-                  </CardContent>
-                </Card>
-              </motion.div>
+                  </LandingCardContent>
+                </LandingCard>
+              </div>
             ))}
           </div>
         </section>
@@ -558,15 +626,13 @@ export function Landing() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {standard.map((item, i) => (
-                <motion.div
+                <div
                   key={item.title}
-                  initial={{ opacity: 0, y: 16 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-60px" }}
-                  transition={{ duration: 0.4, delay: i * 0.05 }}
+                  className="animate-pw-fade-up"
+                  style={{ animationDelay: `${i * 0.05}s` }}
                 >
-                  <Card className="h-full border-oxide/20">
-                    <CardContent className="flex h-full flex-col gap-2 p-5">
+                  <LandingCard className="h-full border-oxide/20">
+                    <LandingCardContent className="flex h-full flex-col gap-2 p-5">
                       <span className="flex size-7 items-center justify-center rounded-full bg-oxide/15 text-xs font-bold text-oxide dark:text-oxide-light">
                         {i + 1}
                       </span>
@@ -576,18 +642,20 @@ export function Landing() {
                       <p className="text-sm text-muted-foreground">
                         {item.detail}
                       </p>
-                    </CardContent>
-                  </Card>
-                </motion.div>
+                    </LandingCardContent>
+                  </LandingCard>
+                </div>
               ))}
             </div>
             <div className="mt-10 flex justify-center">
-              <Button variant="outline" size="lg" asChild>
-                <Link to="/support" onClick={() => setNavigating(true)}>
-                  Read the full Standard in Support
-                  <ArrowRight className="size-4" />
-                </Link>
-              </Button>
+              <Link
+                to="/support"
+                onClick={() => setNavigating(true)}
+                className={cn(BTN_BASE, BTN_OUTLINE, BTN_LG)}
+              >
+                Read the full Standard in Support
+                <ArrowRight className="size-4" />
+              </Link>
             </div>
           </div>
         </section>
@@ -602,13 +670,10 @@ export function Landing() {
             </div>
             <div className="grid gap-6 sm:grid-cols-3">
               {steps.map((step, i) => (
-                <motion.div
+                <div
                   key={step.title}
-                  initial={{ opacity: 0, y: 16 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-60px" }}
-                  transition={{ duration: 0.4, delay: i * 0.1 }}
-                  className="flex flex-col items-center gap-2 text-center"
+                  className="animate-pw-fade-up flex flex-col items-center gap-2 text-center"
+                  style={{ animationDelay: `${i * 0.1}s` }}
                 >
                   <span className="flex size-10 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
                     {i + 1}
@@ -617,19 +682,18 @@ export function Landing() {
                   <p className="max-w-xs text-sm text-muted-foreground">
                     {step.description}
                   </p>
-                </motion.div>
+                </div>
               ))}
             </div>
             <div className="mt-10 flex justify-center">
-              <Button size="lg" asChild>
-                <Link
-                  to={isAuthenticated ? "/home" : "/auth"}
-                  onClick={() => setNavigating(true)}
-                >
-                  {isAuthenticated ? "Back to your feed" : "Create your account"}
-                  <ArrowRight className="size-4" />
-                </Link>
-              </Button>
+              <Link
+                to={isAuthenticated ? "/home" : "/auth"}
+                onClick={() => setNavigating(true)}
+                className={cn(BTN_BASE, BTN_DEFAULT, BTN_LG)}
+              >
+                {isAuthenticated ? "Back to your feed" : "Create your account"}
+                <ArrowRight className="size-4" />
+              </Link>
             </div>
           </div>
         </section>
@@ -651,15 +715,14 @@ export function Landing() {
               people who get you — on a platform that works for you, not for
               advertisers.
             </p>
-            <Button size="lg" asChild>
-              <Link
-                to={isAuthenticated ? "/home" : "/auth"}
-                onClick={() => setNavigating(true)}
-              >
-                {isAuthenticated ? "Open PureWire" : "Get started free"}
-                <ArrowRight className="size-4" />
-              </Link>
-            </Button>
+            <Link
+              to={isAuthenticated ? "/home" : "/auth"}
+              onClick={() => setNavigating(true)}
+              className={cn(BTN_BASE, BTN_DEFAULT, BTN_LG)}
+            >
+              {isAuthenticated ? "Open PureWire" : "Get started free"}
+              <ArrowRight className="size-4" />
+            </Link>
           </div>
         </section>
       </main>

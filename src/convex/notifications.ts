@@ -3,10 +3,13 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { countUnreadDms } from "./dms";
 import { publicUser } from "./privacy";
 import { hiddenAuthorIds, silencedAuthorIds } from "./security";
 
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./_generated/server";
+
+import type { Id } from "./_generated/dataModel";
 
 export const listNotifications = query({
   args: { paginationOpts: paginationOptsValidator },
@@ -51,12 +54,40 @@ export const unreadCount = query({
     if (userId === null) {
       return 0;
     }
-    const unread = await ctx.db
-      .query("notifications")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("read"), false))
-      .collect();
-    return unread.length;
+    return await countUnreadNotifications(ctx, userId);
+  },
+});
+
+/** Unread notification rows for a user (shared by unreadCount + shellCounts). */
+async function countUnreadNotifications(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+): Promise<number> {
+  const unread = await ctx.db
+    .query("notifications")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .filter((q) => q.eq(q.field("read"), false))
+    .collect();
+  return unread.length;
+}
+
+/**
+ * Combined unread counts for the app shell's badges — notifications and
+ * DMs in ONE round trip instead of two, so every authenticated page load
+ * saves a request. Returns 0/0 for signed-out viewers, matching the
+ * individual queries.
+ */
+export const shellCounts = query({
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      return { unread: 0, dmUnread: 0 };
+    }
+    const [unread, dmUnread] = await Promise.all([
+      countUnreadNotifications(ctx, userId),
+      countUnreadDms(ctx, userId),
+    ]);
+    return { unread, dmUnread };
   },
 });
 

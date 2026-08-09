@@ -32,7 +32,7 @@ jobs:
       - run: npm run lint
 
   build:
-    name: Vite build
+    name: Vite build + critical-path guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +42,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # The size guard runs on the freshly built dist: every chunk the HTML
+      # preloads executes before first paint, so a regression like re-adding
+      # the ui/motion chunks to the entry (a ~150 kB hit to EVERY page load)
+      # must fail CI, not silently slow the site. Baseline + deliberate
+      # re-baseline: scripts/critical-path-baseline.json (--update).
+      - name: Guard the critical-path JS size
+        run: node scripts/check-critical-path.mjs
 
   seo-static-files:
     # The SEO basics must never regress silently. robots.txt is a static
