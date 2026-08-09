@@ -7,8 +7,10 @@ const crons = cronJobs();
 // Nightly: tell authors whose comment threads the auto-close policy closed
 // (age or comment count) and who haven't been told yet. The write-time
 // crossing in posts.addComment covers same-day notifications; this sweep
-// catches age-crossed posts with no new comments and any count that was
-// reconciled across the line. Idempotent via commentsAutoClosedNotifiedAt.
+// catches age-crossed posts with no new comments, any count that was
+// reconciled across the line, and re-closes after an opt-out revert.
+// Idempotent via commentsAutoClosedAt vs commentsAutoClosedNotifiedAt
+// plus the weekly cooldown (see posts.maybeNotifyAutoClosed).
 crons.interval(
   "notify-auto-closed-threads",
   { hours: 24 },

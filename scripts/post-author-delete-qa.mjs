@@ -32,9 +32,12 @@
  *      non-author can't close someone else's post.
  *  10. Auto-close policy: a 100-comment thread on an admin-authored post
  *      closes by itself (B 41 + C 59, both under the 60/hour budget),
- *      rejects new comments, heads-up notifies the author's bell once
- *      (re-closing never re-notifies), the author's per-post opt-out
- *      reopens it, and a non-author can't change the opt-out.
+ *      rejects new comments, heads-up notifies the author's bell once —
+ *      both in listNotifications AND the shell unread badge
+ *      (shellCounts), which the re-close never re-bumps while the weekly
+ *      cooldown is active — and after the cooldown (marker backdated past
+ *      8 days) the guard re-notifies exactly once. The author's per-post
+ *      opt-out reopens it, and a non-author can't change it.
  *
  * All fixtures (users, posts, comments, notifications) are erased at the
  * end, so the site is left exactly as found. Run:
@@ -485,6 +488,11 @@ async function main() {
         await sleep(60); // stay gentle on the shared backend
       }
     };
+    // Baseline for the shell unread badge — the flood below is what
+    // triggers the auto-close heads-up, so capture it first. The admin
+    // is a real account with real unread rows of its own, so the
+    // assertion is a delta, never an absolute count.
+    const baselineShell = await adm.query(api.notifications.shellCounts);
     await flood(bc, "b", 41);
     await flood(cc, "c", 59);
     const autoClosed = await adm.query(api.posts.getPost, {
@@ -514,6 +522,18 @@ async function main() {
       "the auto-close heads-up reached the author's bell once",
       firstNotifs.length === 1 && firstNotifs[0].read === false,
       `got ${firstNotifs.length}`,
+    );
+
+    // And the shell badge counts it: the combined unread query the app
+    // shell renders the bell badge from (shellCounts) must tick up by
+    // exactly one — same row, same read:false, counted once. B's and C's
+    // flood comments are test-actor pings (suppressed), so the auto-close
+    // heads-up is the only new unread row on the admin's account.
+    const shellAfter = await adm.query(api.notifications.shellCounts);
+    check(
+      "the shell unread badge counts the auto-close notification",
+      shellAfter.unread === baselineShell.unread + 1,
+      `${baselineShell.unread} -> ${shellAfter.unread}`,
     );
 
     let autoRejected = false;
@@ -567,11 +587,43 @@ async function main() {
     );
     const afterRevert = await adminAutoCloseNotifs();
     check(
-      "re-closing does not re-notify the author",
+      "re-closing does not re-notify the author (weekly cooldown)",
       afterRevert.length === firstNotifs.length,
       `count ${firstNotifs.length} -> ${afterRevert.length}`,
     );
-    adminNotifIds = afterRevert.map((n) => n._id);
+
+    // Weekly cooldown: an opted-out-then-reverted thread MAY notify again
+    // once the week is up. Backdate the last-notified marker past the
+    // cooldown and drive the exact guard the nightly sweep runs — it must
+    // re-notify; an immediate re-run (cooldown reset) must stay quiet.
+    const cooldown = await client.mutation(
+      api.testHarness.recheckAutoClosedNotification,
+      {
+        postId: autoClosePostId,
+        secret: HARNESS_SECRET,
+        backdateNotifiedMs: 8 * 24 * 60 * 60 * 1000,
+      },
+    );
+    check(
+      "after the weekly cooldown a re-closed thread notifies again",
+      cooldown.notified === true,
+    );
+    const cooldownAgain = await client.mutation(
+      api.testHarness.recheckAutoClosedNotification,
+      { postId: autoClosePostId, secret: HARNESS_SECRET },
+    );
+    check(
+      "an immediate re-check stays quiet (cooldown reset)",
+      cooldownAgain.notified === false,
+    );
+    const shellCooldown = await adm.query(api.notifications.shellCounts);
+    check(
+      "the shell unread badge counts exactly one cooldown re-ping",
+      shellCooldown.unread === baselineShell.unread + 2,
+      `${baselineShell.unread} -> ${shellCooldown.unread}`,
+    );
+    // Re-capture so cleanup removes BOTH heads-up rows.
+    adminNotifIds = (await adminAutoCloseNotifs()).map((n) => n._id);
 
     let thirdPartyOptOut = false;
     try {

@@ -239,10 +239,19 @@ const schema = defineSchema({
     // open forever (the default closes threads after a set age or comment
     // count — see posts.isCommentThreadClosed). Absent = policy applies.
     autoCloseComments: v.optional(v.boolean()),
-    // When the author was notified that this thread auto-closed (unix ms;
-    // see posts.maybeNotifyAutoClosed). Absent = not yet told. Guards both
-    // the write-time crossing and the nightly sweep from re-notifying.
+    // When the author was last notified that this thread auto-closed (unix
+    // ms; see posts.maybeNotifyAutoClosed). Absent = never told. The weekly
+    // cooldown (posts.COMMENT_AUTO_CLOSE_NOTIFY_COOLDOWN_MS) is measured
+    // from here, so an opted-out-then-reverted thread can notify again —
+    // but never more than once per week.
     commentsAutoClosedNotifiedAt: v.optional(v.number()),
+    // When this thread most recently BECAME auto-closed (unix ms; see
+    // posts.maybeNotifyAutoClosed). Set at the write-time crossing, on
+    // opt-out revert (setAutoCloseComments), and by the nightly sweep's
+    // first observation. Compared against commentsAutoClosedNotifiedAt to
+    // tell a NEW close (re-notify after the cooldown) from a thread that
+    // simply stayed closed (already pinged — stay silent).
+    commentsAutoClosedAt: v.optional(v.number()),
     // Optional place the post was shared from — powers the Local feed.
     location: v.optional(
       v.object({

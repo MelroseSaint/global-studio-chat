@@ -4,6 +4,7 @@ import { SignJWT, importPKCS8 } from "jose";
 
 import { ADMIN_EMAIL } from "./auth";
 import { eraseAccount } from "./account";
+import { maybeNotifyAutoClosed } from "./posts";
 import { internal } from "./_generated/api";
 
 import { sweepCommentLikes } from "./mediaCleanup";
@@ -151,6 +152,39 @@ export const deleteNotification = mutation({
       await ctx.db.delete(notificationId);
     }
     return { deleted: row !== null };
+  },
+});
+
+/**
+ * Drive the auto-close notification guard for a single post — the exact
+ * logic the nightly sweep runs per post — with an optional backdate of
+ * the last-notified marker. Lets the QA test the weekly cooldown without
+ * waiting a week: backdate the marker past the cooldown and the guard
+ * re-notifies; call again immediately and it stays quiet. Gated by the
+ * same harness env pair as everything else in this module.
+ */
+export const recheckAutoClosedNotification = mutation({
+  args: {
+    postId: v.id("posts"),
+    secret: v.string(),
+    backdateNotifiedMs: v.optional(v.number()),
+  },
+  handler: async (ctx, { postId, secret, backdateNotifiedMs }) => {
+    requireHarness(secret);
+    let post = await ctx.db.get(postId);
+    if (post === null) {
+      throw new Error("Post not found");
+    }
+    if (backdateNotifiedMs !== undefined) {
+      await ctx.db.patch(postId, {
+        commentsAutoClosedNotifiedAt: Date.now() - backdateNotifiedMs,
+      });
+      post = await ctx.db.get(postId);
+      if (post === null) {
+        throw new Error("Post not found");
+      }
+    }
+    return { notified: await maybeNotifyAutoClosed(ctx, post) };
   },
 });
 

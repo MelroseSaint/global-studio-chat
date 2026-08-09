@@ -847,6 +847,9 @@ export const createPostInternal = internalMutation({
  */
 export const COMMENT_AUTO_CLOSE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const COMMENT_AUTO_CLOSE_COUNT = 100;
+// An author who opts out and reverts can re-close a thread repeatedly —
+// but never gets pinged more than once per week (see maybeNotifyAutoClosed).
+export const COMMENT_AUTO_CLOSE_NOTIFY_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * True when a thread accepts no new comments: the author locked it, or
@@ -883,18 +886,39 @@ export function isCommentThreadAutoClosed(
 }
 
 /**
- * Tell the author that their thread auto-closed, exactly once. Fires only
- * when the auto-close policy (not the author) closed the thread, the
- * author hasn't opted out, and they haven't already been told — the
- * commentsAutoClosedNotifiedAt marker makes both the write-time crossing
- * and the nightly sweep idempotent. QA-harness authors stay silent.
+ * Tell the author that their thread auto-closed — at most once per week.
+ * Fires only when the auto-close policy (not the author) closed the
+ * thread, the author hasn't opted out, and either they've never been
+ * told, or the thread has RE-closed since the last ping (commentsAuto
+ * ClosedAt newer than commentsAutoClosedNotifiedAt) AND the weekly
+ * cooldown has passed. The two markers together make both the write-time
+ * crossing and the nightly sweep idempotent: a thread that stays closed
+ * is never re-pinged (closedAt <= notifiedAt), while an opted-out-then-
+ * reverted thread can notify again once the week is up. QA-harness
+ * authors stay silent.
  */
-async function maybeNotifyAutoClosed(
+export async function maybeNotifyAutoClosed(
   ctx: MutationCtx,
   post: Doc<"posts">,
 ): Promise<boolean> {
-  if (post.commentsAutoClosedNotifiedAt !== undefined) return false;
   if (!isCommentThreadAutoClosed(post)) return false;
+  // First time we've observed this thread closed — record when it closed
+  // so future re-closes can be told apart from "still closed". Legacy
+  // posts that were already notified inherit their last ping as the close
+  // time, so they are never re-pinged spuriously.
+  let closedAt = post.commentsAutoClosedAt;
+  if (closedAt === undefined) {
+    closedAt = post.commentsAutoClosedNotifiedAt ?? Date.now();
+    await ctx.db.patch(post._id, { commentsAutoClosedAt: closedAt });
+  }
+  const lastNotified = post.commentsAutoClosedNotifiedAt;
+  // No NEW close since the last ping (a thread that stays closed is done).
+  if (lastNotified !== undefined && closedAt <= lastNotified) return false;
+  // Weekly cooldown: never more than one ping per week, even across
+  // opt-out/revert cycles.
+  if (lastNotified !== undefined && Date.now() - lastNotified < COMMENT_AUTO_CLOSE_NOTIFY_COOLDOWN_MS) {
+    return false;
+  }
   if (await isTestAccount(ctx, post.authorId)) return false;
   await ctx.db.insert("notifications", {
     userId: post.authorId,
@@ -952,6 +976,10 @@ export const setAutoCloseComments = mutation({
     await ctx.db.patch(postId, {
       // undefined = default policy; only a true value persists the opt-out.
       autoCloseComments: keepOpen ? true : undefined,
+      // Reverting re-closes the thread — record the re-close so the
+      // notification guard sees a NEW close (eligible again after the
+      // weekly cooldown) instead of the original one (already pinged).
+      commentsAutoClosedAt: keepOpen ? undefined : Date.now(),
     });
   },
 });
