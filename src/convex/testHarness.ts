@@ -1148,15 +1148,15 @@ export const purgeTestTraces = mutation({
 });
 
 /**
- * Purge dangling notification rows — bell entries whose post, actor, or
- * recipient no longer exists. These are always test debris or dead weight:
- * a real notification always points at a live post/actor, and the account
- * erasure cascade already removes notifications for deleted users, so a
- * row surviving with a missing postId/actorId can only be a QA flood
- * leftover on a REAL bell (e.g. comments a deleted test account left on a
- * deleted test post) or an orphan. Deleting them also un-inflates the
- * recipient's unread badge. Gated by the same two env gates as the rest
- * of the module.
+ * Purge dangling notification rows — bell entries whose post, shared
+ * post, actor, or recipient no longer exists. These are always test
+ * debris or dead weight: a real notification always points at a live
+ * post/actor, and the account erasure cascade already removes
+ * notifications for deleted users, so a row surviving with a missing
+ * postId/actorId/sharedPostId can only be a QA flood leftover on a REAL
+ * bell (e.g. comments a deleted test account left on a deleted test post)
+ * or an orphan. Deleting them also un-inflates the recipient's unread
+ * badge. Gated by the same two env gates as the rest of the module.
  */
 export const purgeDanglingNotifications = mutation({
   args: { secret: v.string() },
@@ -1175,6 +1175,15 @@ export const purgeDanglingNotifications = mutation({
         if (row.postId !== undefined) {
           const post = await ctx.db.get(row.postId);
           if (post === null) reason = "missing-post";
+        }
+        // dm-share / comment-share rows preview the SHARED post, which
+        // rides in sharedPostId while postId stays the host (thread or DM
+        // the share landed in). The host can survive while the shared post
+        // is gone — the preview then dangles even though every other
+        // reference resolves. Sweep that class too.
+        if (reason === null && row.sharedPostId !== undefined) {
+          const shared = await ctx.db.get(row.sharedPostId);
+          if (shared === null) reason = "missing-shared-post";
         }
         if (reason === null && row.actorId !== undefined) {
           const actor = await ctx.db.get(row.actorId);
