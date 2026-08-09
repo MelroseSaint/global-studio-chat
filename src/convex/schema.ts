@@ -425,6 +425,9 @@ const schema = defineSchema({
       // plain comment so the bell can say "shared a post in your post's
       // comments" and preview the shared post (see posts.addComment).
       v.literal("comment-share"),
+      // The post's author removed one of your comments (see
+      // posts.deleteComment) — moderation isn't silent.
+      v.literal("comment-deleted"),
     ),
     actorId: v.optional(v.id("users")),
     postId: v.optional(v.id("posts")),

@@ -209,7 +209,7 @@ export function PostCard({
       toast.success(
         post.commentsLocked
           ? "Comments reopened."
-          : "Comments locked — no new replies.",
+          : "Comments closed — no new replies.",
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update.");
@@ -332,7 +332,7 @@ export function PostCard({
                     <Lock className="size-4" />
                     {post.commentsLocked
                       ? "Reopen comments"
-                      : "Lock comments"}
+                      : "Close comments"}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => void handleDelete()}>
                     <Trash2 className="size-4 text-destructive" />

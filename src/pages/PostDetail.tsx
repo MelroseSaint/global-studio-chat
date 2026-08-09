@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   Loader2,
+  Lock,
   MessageCircle,
   MoreHorizontal,
   Pencil,
@@ -51,6 +52,9 @@ function CommentMenu({
   postId,
   comment,
   isMine,
+  // True when the viewer owns the post this comment hangs under — they
+  // can remove a comment by someone else (moderation), but never edit it.
+  canModerate,
   onEdit,
   onDelete,
 }: {
@@ -60,6 +64,7 @@ function CommentMenu({
     content: string;
   };
   isMine?: boolean;
+  canModerate?: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
@@ -123,12 +128,14 @@ function CommentMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {isMine && (
+        {(isMine || canModerate) && (
           <>
-            <DropdownMenuItem onClick={() => onEdit?.()}>
-              <Pencil className="size-4" />
-              Edit comment
-            </DropdownMenuItem>
+            {isMine && (
+              <DropdownMenuItem onClick={() => onEdit?.()}>
+                <Pencil className="size-4" />
+                Edit comment
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={() => void onDelete?.()}>
               <Trash2 className="size-4 text-destructive" />
               Delete comment
@@ -361,55 +368,73 @@ export function PostDetail() {
     <div className="pb-20 lg:pb-0">
       <PostCard post={post as unknown as PostItem} />
 
-      {/* Comment composer */}
-      <div className="flex gap-3 border-b px-4 py-3 sm:px-5">
-        <UserAvatar user={user} className="size-9" />
-        <div className="flex flex-1 items-end gap-2">
-          <Textarea
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            placeholder="Write a comment…"
-            rows={1}
-            maxLength={500}
-            className="min-h-10 resize-none"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-          />
-          <Button
-            size="icon"
-            className="shrink-0 rounded-full"
-            disabled={(!comment.trim() && !sharingPostId) || submitting}
-            onClick={() => void submit()}
-            aria-label="Send comment"
-          >
-            {submitting ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Send className="size-4" />
-            )}
-          </Button>
+      {/* Comment composer — hidden entirely while the author has closed
+          comments on the post; a notice takes its place. */}
+      {post.commentsLocked ? (
+        <div className="flex items-center gap-2 border-b px-4 py-3 sm:px-5">
+          <Lock className="size-4 shrink-0 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Comments are closed on this post.
+          </p>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="flex gap-3 border-b px-4 py-3 sm:px-5">
+            <UserAvatar user={user} className="size-9" />
+            <div className="flex flex-1 items-end gap-2">
+              <Textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder="Write a comment…"
+                rows={1}
+                maxLength={500}
+                className="min-h-10 resize-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    void submit();
+                  }
+                }}
+              />
+              <Button
+                size="icon"
+                className="shrink-0 rounded-full"
+                disabled={(!comment.trim() && !sharingPostId) || submitting}
+                onClick={() => void submit()}
+                aria-label="Send comment"
+              >
+                {submitting ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Send className="size-4" />
+                )}
+              </Button>
+            </div>
+          </div>
 
-      {/* Attach a post to the comment (or show the live preview of one
-          being shared in from the Share dialog's ?share= deep link). */}
-      <div className="px-4 sm:px-5">
-        <SharedPostComposer
-          value={sharingPostId}
-          onChange={setSharingPostId}
-          text={comment}
-          onTextChange={setComment}
-        />
-      </div>
+          {/* Attach a post to the comment (or show the live preview of one
+              being shared in from the Share dialog's ?share= deep link). */}
+          <div className="px-4 sm:px-5">
+            <SharedPostComposer
+              value={sharingPostId}
+              onChange={setSharingPostId}
+              text={comment}
+              onTextChange={setComment}
+            />
+          </div>
+        </>
+      )}
 
       <div className="flex items-center justify-between gap-2 px-5 py-3">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <MessageCircle className="size-4 text-muted-foreground" />
           Comments
+          {post.commentsLocked ? (
+            <span className="flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              <Lock className="size-3" />
+              Closed
+            </span>
+          ) : null}
         </div>
         <div
           aria-label="Sort comments"
@@ -586,6 +611,7 @@ export function PostDetail() {
                     parentId={c._id as Id<"comments">}
                     replyCount={c.replyCount ?? 0}
                     viewerId={user?._id}
+                    postAuthorId={post.author?._id}
                     powChallenge={powChallenge}
                   />
                 </div>
@@ -593,6 +619,10 @@ export function PostDetail() {
               postId={postIdTyped}
               comment={c}
               isMine={c.author?._id === user?._id}
+              canModerate={
+                c.author?._id !== user?._id &&
+                post.author?._id === user?._id
+              }
               onEdit={() => {
                 setEditingId(c._id);
                 setEditText(c.content);

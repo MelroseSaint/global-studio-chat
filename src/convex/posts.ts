@@ -1681,9 +1681,11 @@ export const listReplies = query({
 });
 
 /**
- * Remove a comment. Only its author (or an admin) may delete it; the
- * post's denormalized commentCount is kept honest so the badge on the
- * card and the thread page agree.
+ * Remove a comment. Its author, the post's author (moderating their own
+ * thread), or an admin may delete it; the post's denormalized
+ * commentCount is kept honest so the badge on the card and the thread
+ * page agree. Every comment row carries the root postId (replies too),
+ * so the post-author check covers the whole thread under a post.
  */
 export const deleteComment = mutation({
   args: { commentId: v.id("comments") },
@@ -1697,10 +1699,37 @@ export const deleteComment = mutation({
       return;
     }
     const user = await ctx.db.get(userId);
-    if (comment.authorId !== userId && user?.role !== "admin") {
-      throw new Error("You can only delete your own comments.");
-    }
     const post = await ctx.db.get(comment.postId);
+    const isPostAuthor = post !== null && post.authorId === userId;
+    if (
+      comment.authorId !== userId &&
+      !isPostAuthor &&
+      user?.role !== "admin"
+    ) {
+      throw new Error(
+        "You can only delete your own comments or comments on your posts.",
+      );
+    }
+    // Moderation isn't silent: when the POST author removes a comment
+    // written by someone else, that member gets a bell ping naming the
+    // deleter and the post the comment lived on. Self-deletes and admin
+    // removals stay silent, and a QA-harness deleter never pings a real
+    // member (the same !testActor suppression every other notification
+    // uses — a test run erasing a comment can't ring a real user's bell).
+    // Swept replies are collateral of deleting the thread root — only the
+    // directly targeted comment's author is notified, so one call can
+    // never fan out a burst.
+    if (isPostAuthor && comment.authorId !== userId) {
+      if (!(await isTestAccount(ctx, userId))) {
+        await ctx.db.insert("notifications", {
+          userId: comment.authorId,
+          type: "comment-deleted",
+          actorId: userId,
+          postId: comment.postId,
+          read: false,
+        });
+      }
+    }
     // Replies die with their parent — each sweeps its own likes first — and
     // every removed row is accounted in the post's commentCount below. The
     // bounded sweep loop (not a collect) matches the erasure path, so a

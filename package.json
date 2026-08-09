@@ -70,7 +70,9 @@
     "qa:ios-layout": "node scripts/qa-ios-layout.mjs",
     "qa:pwa-install-hint": "node scripts/pwa-install-hint-qa.mjs",
     "qa:shared-video-autoplay": "node scripts/shared-video-autoplay-qa.mjs",
-    "qa:email-domains": "node scripts/disposable-email-qa.mjs"
+    "qa:email-domains": "node scripts/disposable-email-qa.mjs",
+    "qa:critical-path": "node scripts/check-critical-path.mjs",
+    "qa:post-author-delete": "node scripts/post-author-delete-qa.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"

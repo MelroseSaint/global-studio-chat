@@ -13,6 +13,7 @@ import {
   Repeat2,
   Reply,
   Share2,
+  Trash2,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -42,6 +43,7 @@ const ICONS = {
   dm: Mail,
   "dm-share": Share2,
   "comment-share": Share2,
+  "comment-deleted": Trash2,
 } as const;
 
 export function Notifications() {
@@ -148,6 +150,12 @@ export function Notifications() {
         return (
           <>
             <b>{who}</b> shared a post in your post&apos;s comments
+          </>
+        );
+      case "comment-deleted":
+        return (
+          <>
+            <b>{who}</b> removed your comment
           </>
         );
       case "ticket":

@@ -80,11 +80,14 @@ interface PreviewComment {
 function CommentPreview({
   postId,
   viewerId,
+  postAuthorId,
   powChallenge,
   onDeleted,
 }: {
   postId: Id<"posts">;
   viewerId?: string;
+  // The post's author — they can delete any comment on their post.
+  postAuthorId?: string;
   powChallenge?: PowChallenge;
   onDeleted?: () => void;
 }) {
@@ -162,6 +165,9 @@ function CommentPreview({
       <div className="mt-2 space-y-2.5">
         {comments.map((c) => {
           const isMine = c.author?._id === viewerId;
+          // Post author moderating their own thread: delete only, no edit.
+          const canModerate =
+            !isMine && postAuthorId !== undefined && postAuthorId === viewerId;
           const isEditing = editingId === c._id;
           return (
             <div key={c._id} className="flex gap-2">
@@ -238,7 +244,7 @@ function CommentPreview({
                         </button>
                       </div>
                     </div>
-                    {isMine && (
+                    {(isMine || canModerate) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -251,15 +257,17 @@ function CommentPreview({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setEditingId(c._id);
-                              setEditText(c.content);
-                            }}
-                          >
-                            <Pencil className="size-4" />
-                            Edit
-                          </DropdownMenuItem>
+                          {isMine && (
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEditingId(c._id);
+                                setEditText(c.content);
+                              }}
+                            >
+                              <Pencil className="size-4" />
+                              Edit
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onClick={() => void handleDelete(c)}>
                             <Trash2 className="size-4 text-destructive" />
                             Delete
@@ -287,6 +295,7 @@ function CommentPreview({
                   parentId={c._id as Id<"comments">}
                   replyCount={c.replyCount ?? 0}
                   viewerId={viewerId}
+                  postAuthorId={postAuthorId}
                   powChallenge={powChallenge}
                 />
               </div>
@@ -390,7 +399,7 @@ export function CommentDialog({
         {locked ? (
           <p className="flex items-center gap-2 rounded-lg border border-muted bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground">
             <Lock className="size-4 shrink-0" />
-            Comments are locked on this post.
+            Comments are closed on this post.
           </p>
         ) : (
           <div className="flex gap-3">
@@ -482,6 +491,7 @@ export function CommentDialog({
           <CommentPreview
             postId={post._id}
             viewerId={user?._id}
+            postAuthorId={post.author?._id}
             powChallenge={powChallenge}
             onDeleted={onCommentDeleted}
           />

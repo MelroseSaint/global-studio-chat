@@ -176,12 +176,15 @@ export function CommentReplies({
   parentId,
   replyCount,
   viewerId,
+  // The post's author — they can delete replies on their post too.
+  postAuthorId,
   powChallenge,
 }: {
   postId: Id<"posts">;
   parentId: Id<"comments">;
   replyCount: number;
   viewerId?: string;
+  postAuthorId?: string;
   powChallenge?: PowChallenge;
 }) {
   const [open, setOpen] = useState(false);
@@ -275,6 +278,9 @@ export function CommentReplies({
         <div className="mt-2 space-y-2.5 border-l-2 border-muted pl-3">
           {replies.map((r) => {
             const isMine = r.author?._id === viewerId;
+            // Post author moderating their own thread: delete only, no edit.
+            const canModerate =
+              !isMine && postAuthorId !== undefined && postAuthorId === viewerId;
             return (
               <div key={r._id} className="flex gap-2">
                 <UserAvatar user={r.author} className="size-7" />
@@ -325,7 +331,7 @@ export function CommentReplies({
                             {r.editedAt ? " · edited" : ""}
                           </span>
                         </p>
-                        {isMine ? (
+                        {isMine || canModerate ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button
@@ -338,15 +344,17 @@ export function CommentReplies({
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setEditingId(r._id);
-                                  setEditText(r.content);
-                                }}
-                              >
-                                <Pencil className="size-4" />
-                                Edit
-                              </DropdownMenuItem>
+                              {isMine && (
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setEditingId(r._id);
+                                    setEditText(r.content);
+                                  }}
+                                >
+                                  <Pencil className="size-4" />
+                                  Edit
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem
                                 onClick={() => void handleDelete(r)}
                               >
