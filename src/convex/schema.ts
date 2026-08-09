@@ -462,7 +462,14 @@ const schema = defineSchema({
     sharedPostId: v.optional(v.id("posts")),
     message: v.optional(v.string()),
     read: v.boolean(),
-  }).index("by_user", ["userId"]),
+  })
+    .index("by_user", ["userId"])
+    // Delete-time engagement sweeps look rows up by the referenced post
+    // (sweepPostEngagement): postId for the host the bell entry points at,
+    // sharedPostId for comment-share preview rows. Indexed so a deletion
+    // never scans the whole table.
+    .index("by_post", ["postId"])
+    .index("by_shared_post", ["sharedPostId"]),
   supportTickets: defineTable({
     userId: v.id("users"),
     subject: v.string(),

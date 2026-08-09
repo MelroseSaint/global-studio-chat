@@ -135,7 +135,23 @@ export async function sweepPostEngagement(
   for (;;) {
     const rows = await ctx.db
       .query("notifications")
-      .filter((q) => q.eq(q.field("postId"), postId))
+      .withIndex("by_post", (q) => q.eq("postId", postId))
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+  }
+  // Notifications that PREVIEW this post as a shared post (comment-share
+  // rows whose sharedPostId points here) die with it too. Their postId is
+  // the surviving host thread, so the sweep above can't see them — without
+  // this pass the preview row would dangle on the recipient's bell until
+  // the nightly dangling-row purge ran. Deleting the shared post removes
+  // them at delete time, exactly like every other row above.
+  for (;;) {
+    const rows = await ctx.db
+      .query("notifications")
+      .withIndex("by_shared_post", (q) => q.eq("sharedPostId", postId))
       .take(500);
     if (rows.length === 0) break;
     for (const row of rows) {

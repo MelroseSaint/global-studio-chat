@@ -24,13 +24,14 @@
  *   A Vercel Security Checkpoint (bot-protection 403 page served to
  *   headless browsers) marks the browser half as skipped — it isn't the
  *   app and can't produce a signal, so it must not red the gate.
- *   7. Real-account share + dangling shared-post sweep: the real admin
- *      (a non-test actor) shares a post into a comment on a test-authored
+ *   7. Real-account share + shared-post deletion: the real admin (a
+ *      non-test actor) shares a post into a comment on a test-authored
  *      host thread, landing a real comment-share row on the host author's
- *      bell. Deleting the SHARED post leaves the preview row dangling —
- *      its postId is the surviving host, so sweepPostEngagement can't see
- *      it — and purgeDanglingNotifications must sweep it via
- *      sharedPostId, returning the bell and unread badge to baseline.
+ *      bell. Deleting the SHARED post must sweep that preview row AT
+ *      DELETE TIME (sweepPostEngagement removes sharedPostId-keyed rows
+ *      even though the row's postId is the surviving host), returning the
+ *      bell and unread badge to baseline immediately — and the
+ *      dangling-row purge then finds zero.
  *
  * Run:
  *   TEST_HARNESS_SECRET=<secret> npm run qa:comment-share
@@ -283,18 +284,17 @@ async function browserChecks(client, fx) {
 }
 
 /**
- * 3. Real-account share whose shared post later dies — the preview row
- * dangles and the purge sweeps it. Test-actor shares are suppressed by
- * the isolation layer, so the SHARER here is the real admin: their
- * comment with a sharedPostId on a test-authored host post lands a real
- * "comment-share" row on the host author's bell. Deleting the SHARED
- * post must NOT take the row — its postId is the surviving host, so the
- * post-deletion sweep can't see it — which is exactly the dangling
- * preview class. purgeDanglingNotifications must then sweep it via
- * sharedPostId ("missing-shared-post"), returning the recipient's bell
- * and unread badge to baseline. Self-cleaning: the admin's comment is
- * swept with the host post, the host is deleted, and the test account
- * erased.
+ * 3. Real-account share whose shared post is later deleted — the preview
+ * row must die WITH the post at delete time. Test-actor shares are
+ * suppressed by the isolation layer, so the SHARER here is the real
+ * admin: their comment with a sharedPostId on a test-authored host post
+ * lands a real "comment-share" row on the host author's bell. Deleting
+ * the SHARED post must sweep that row immediately — its postId is the
+ * surviving host, so only the sharedPostId-keyed pass of
+ * sweepPostEngagement can see it — returning the bell and unread badge
+ * to baseline with no dangling window, and the dangling-row purge then
+ * finds zero. Self-cleaning: the admin's comment is swept with the host
+ * post, the host is deleted, and the test account erased.
  */
 async function danglingShareChecks(client) {
   console.log("\n3. Real-account share + dangling shared-post sweep");
@@ -404,45 +404,33 @@ async function danglingShareChecks(client) {
       `${baseline.unread} -> ${shellAfter.unread}`,
     );
 
-    // Delete the SHARED post. The host survives, so the row must too —
-    // sweepPostEngagement only removes postId-keyed rows, and the row's
-    // postId is the host. This is the dangling preview class: the bell
-    // renders a preview of a post that no longer exists.
+    // Delete the SHARED post — the preview row must die WITH it, at
+    // delete time (sweepPostEngagement's sharedPostId-keyed pass, since
+    // the row's postId is the surviving host). The recipient's bell and
+    // unread badge return to baseline immediately, with no dangling
+    // window.
     await dc.mutation(api.posts.deletePost, { postId: sharedPostId });
     const afterDelete = await bell();
     check(
-      "deleting the shared post leaves the preview row (host survives)",
-      afterDelete.length === 1 &&
-        afterDelete[0].type === "comment-share" &&
-        afterDelete[0].sharedPostId === sharedPostId &&
-        afterDelete[0].read === false,
+      "deleting the shared post sweeps the preview row at delete time",
+      afterDelete.length === 0,
       `got ${afterDelete.length}`,
     );
     check(
-      "the unread badge is unchanged while the row dangles",
-      (await dc.query(api.notifications.shellCounts)).unread === baseline.unread + 1,
+      "the host author's unread badge returned to baseline immediately",
+      (await dc.query(api.notifications.shellCounts)).unread === baseline.unread,
     );
 
-    // The dangling-row purge sweeps the preview row via sharedPostId
-    // ("missing-shared-post"), and the bell + badge return to baseline.
+    // And the dangling-row purge finds nothing — the delete-time sweep
+    // already removed the sharedPostId class, and no other class dangles.
     const { total, byReason } = await purgeAllDanglingNotifications(
       client,
       HARNESS_SECRET,
     );
     check(
-      "the purge swept exactly the dangling shared-post row",
-      total === 1 && byReason["missing-shared-post"] === 1,
+      "zero dangling notification rows remain after the delete-time sweep",
+      total === 0,
       `total ${total}, reasons ${JSON.stringify(byReason)}`,
-    );
-    const afterPurge = await bell();
-    check(
-      "the preview row is gone from the host author's bell",
-      afterPurge.length === 0,
-      `got ${afterPurge.length}`,
-    );
-    check(
-      "the host author's unread badge returned to baseline",
-      (await dc.query(api.notifications.shellCounts)).unread === baseline.unread,
     );
   } finally {
     // Host post first (sweeps the admin's share comment), then the
