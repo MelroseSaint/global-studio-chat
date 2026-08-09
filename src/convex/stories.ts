@@ -13,6 +13,7 @@ import {
   hiddenAuthorIds,
   isSandboxed,
   silencedAuthorIds,
+  testExclusionIds,
 } from "./security";
 
 import { paginationOptsValidator } from "convex/server";
@@ -279,6 +280,11 @@ export const listStories = query({
     const authorIds = new Set([userId, ...follows.map((f) => f.followingId)]);
     const hidden = await hiddenAuthorIds(ctx, userId);
     const silenced = await silencedAuthorIds(ctx, userId);
+    // Viewer-aware test exclusion: a live test run's stories never appear
+    // on a real member's ring (a real member can't follow a QA account,
+    // and even a stale follow row can't leak them), while QA accounts see
+    // each other's fixtures.
+    const testIds = new Set(await testExclusionIds(ctx, userId));
     const excluded = [...hidden, ...silenced];
     const me = await ctx.db.get(userId);
     const isAdmin = me?.role === "admin";
@@ -290,6 +296,7 @@ export const listStories = query({
     const mine = stories.filter(
       (s) =>
         authorIds.has(s.authorId) &&
+        !testIds.has(s.authorId) &&
         !excluded.includes(s.authorId) &&
         // Stories awaiting a human AI-review stay on the author's own ring
         // only — everyone else (admins included) sees them once approved.

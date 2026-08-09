@@ -1353,8 +1353,9 @@ export const qaIsolationSnapshot = query({
     testUserId: v.id("users"),
     testUsername: v.string(),
     testPostId: v.id("posts"),
+    testStoryId: v.optional(v.id("stories")),
   },
-  handler: async (ctx, { secret, testUserId, testUsername, testPostId }) => {
+  handler: async (ctx, { secret, testUserId, testUsername, testPostId, testStoryId }) => {
     requireHarness(secret);
     // Explicitly shaped (the established links.ts / media.ts pattern): the
     // handler's return type must not flow through the generated `internal`
@@ -1367,13 +1368,50 @@ export const qaIsolationSnapshot = query({
       { id: Id<"posts">; lastmod: number }[],
       { username: string; lastmod: number }[],
     ];
+    // The story row must still EXIST (so the isolation checks aren't
+    // vacuous) while every production surface hides it.
+    const story =
+      testStoryId !== undefined ? await ctx.db.get(testStoryId) : null;
     return {
       postInSitemap: posts.some((p) => p.id === testPostId),
       userInSitemap: users.some((u) => u.username === testUsername),
       sitemapPostCount: posts.length,
       sitemapUserCount: users.length,
+      storyExists: story !== null,
       testUserId,
     };
+  },
+});
+
+/**
+ * Harness-gated: every QA/throwaway account, for the nightly cleanup sweep
+ * (scripts/cleanup-test-users.mjs). The sweep previously found its targets
+ * by paging the admin's listUsers — but listUsers now hides QA accounts
+ * from the admin surface, so the maintenance path gets its own dedicated
+ * (secret-gated) reader instead. Same reserved prefixes as testAuthorIds.
+ */
+export const listTestAccountsForSweep = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const [qa, pw] = await Promise.all([
+      ctx.db
+        .query("users")
+        .withIndex("by_username", (q) => q.gte("username", "qa_").lt("username", "qb_"))
+        .take(1000),
+      ctx.db
+        .query("users")
+        .withIndex("by_username", (q) =>
+          q.gte("username", "pwtest").lt("username", "pwtf"),
+        )
+        .take(1000),
+    ]);
+    return [...qa, ...pw].map((u) => ({
+      userId: u._id,
+      username: u.username ?? null,
+      name: u.name ?? null,
+      creationTime: u._creationTime,
+    }));
   },
 });
 

@@ -11,6 +11,7 @@ import { assertAdminIpVerified } from "./adminIp";
 import { eraseAccount } from "./account";
 import { cleanupMediaItems, sweepPostEngagement } from "./mediaCleanup";
 import { publicUser } from "./privacy";
+import { isTestUsername, testAuthorIds } from "./security";
 
 import { api, internal } from "./_generated/api";
 import { action, mutation, query, type QueryCtx } from "./_generated/server";
@@ -57,7 +58,12 @@ export async function requireAdmin(ctx: QueryCtx) {
 
 export const dashboardStats = query({
   handler: async (ctx) => {
-    await requireAdmin(ctx);
+    const adminId = await requireAdmin(ctx);
+    // QA-harness accounts never count toward the dashboard's totals — a
+    // live test run's users/posts/stories/engagement must not inflate the
+    // numbers the admin reads (isolation invariant, same as every other
+    // production surface).
+    const testIds = new Set(await testAuthorIds(ctx, adminId));
     const [users, posts, stories, tickets, follows, comments, aiReview, racismReview, flagged, aiReviewStories] =
       await Promise.all([
         ctx.db.query("users").collect(),
@@ -92,18 +98,23 @@ export const dashboardStats = query({
           .collect(),
       ]);
     return {
-      users: users.length,
-      posts: posts.length,
-      stories: stories.length,
+      users: users.filter((u) => !testIds.has(u._id)).length,
+      posts: posts.filter((p) => !testIds.has(p.authorId)).length,
+      stories: stories.filter((s) => !testIds.has(s.authorId)).length,
       tickets: tickets.length,
       openTickets: tickets.filter((t) => t.status === "open").length,
-      follows: follows.length,
-      comments: comments.length,
-      likes: (await ctx.db.query("likes").collect()).length,
-      aiReview: aiReview.length,
-      racismReview: racismReview.length,
-      security: flagged.length,
-      aiReviewStories: aiReviewStories.length,
+      // A follow row is test-correlated when EITHER end is a QA account.
+      follows: follows.filter(
+        (f) => !testIds.has(f.followerId) && !testIds.has(f.followingId),
+      ).length,
+      comments: comments.filter((c) => !testIds.has(c.authorId)).length,
+      likes: (await ctx.db.query("likes").collect()).filter(
+        (l) => !testIds.has(l.userId),
+      ).length,
+      aiReview: aiReview.filter((p) => !testIds.has(p.authorId)).length,
+      racismReview: racismReview.filter((p) => !testIds.has(p.authorId)).length,
+      security: flagged.filter((u) => !testIds.has(u._id)).length,
+      aiReviewStories: aiReviewStories.filter((s) => !testIds.has(s.authorId)).length,
     };
   },
 });
@@ -117,7 +128,9 @@ export const dashboardStats = query({
  */
 export const moderationWorkload = query({
   handler: async (ctx) => {
-    await requireAdmin(ctx);
+    const adminId = await requireAdmin(ctx);
+    // QA posts awaiting review must not inflate the admin nav badge.
+    const testIds = new Set(await testAuthorIds(ctx, adminId));
     const [openTickets, aiReview] = await Promise.all([
       ctx.db
         .query("supportTickets")
@@ -130,7 +143,7 @@ export const moderationWorkload = query({
     ]);
     return {
       openTickets: openTickets.length,
-      aiReview: aiReview.length,
+      aiReview: aiReview.filter((p) => !testIds.has(p.authorId)).length,
     };
   },
 });
@@ -145,12 +158,18 @@ export const listUsers = query({
       .paginate(paginationOpts);
     return {
       ...result,
-      // Flag the owner account so the admin UI can mark its row protected
-      // and disable every control on it.
-      page: result.page.map((u) => ({
-        ...publicUser(u),
-        isOwner: u.email === ADMIN_EMAIL,
-      })),
+      // QA-harness accounts never appear in the admin member list (the
+      // nightly cleanup sweep finds them through the harness's own query
+      // instead — see testHarness.listTestAccountsForSweep). Filtering
+      // after paginate keeps the cursor bound to a stable query shape.
+      page: result.page
+        .filter((u) => !isTestUsername(u.username))
+        .map((u) => ({
+          ...publicUser(u),
+          // Flag the owner account so the admin UI can mark its row
+          // protected and disable every control on it.
+          isOwner: u.email === ADMIN_EMAIL,
+        })),
     };
   },
 });
@@ -300,13 +319,15 @@ export const listRemovals = query({
 export const listRecentPosts = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
-    await requireAdmin(ctx);
+    const adminId = await requireAdmin(ctx);
+    const testIds = new Set(await testAuthorIds(ctx, adminId));
     const result = await ctx.db
       .query("posts")
       .order("desc")
       .paginate(paginationOpts);
     const page = await Promise.all(
-      result.page.map(async (p) => {
+      // QA-authored posts never appear on the admin's recent-posts panel.
+      result.page.filter((p) => !testIds.has(p.authorId)).map(async (p) => {
         const author = await ctx.db.get(p.authorId);
         return {
           ...p,
@@ -375,14 +396,16 @@ export const moderatePost = mutation({
 export const listAiReview = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
-    await requireAdmin(ctx);
+    const adminId = await requireAdmin(ctx);
+    const testIds = new Set(await testAuthorIds(ctx, adminId));
     const result = await ctx.db
       .query("posts")
       .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
       .order("desc")
       .paginate(paginationOpts);
     const page = await Promise.all(
-      result.page.map(async (p) => {
+      // A live test run's flagged posts never enter the human review queue.
+      result.page.filter((p) => !testIds.has(p.authorId)).map(async (p) => {
         const author = await ctx.db.get(p.authorId);
         return {
           ...p,
@@ -439,7 +462,8 @@ export const resolveAiReviewBatch = mutation({
 export const listRacismReview = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
-    await requireAdmin(ctx);
+    const adminId = await requireAdmin(ctx);
+    const testIds = new Set(await testAuthorIds(ctx, adminId));
     const result = await ctx.db
       .query("posts")
       .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
@@ -447,7 +471,7 @@ export const listRacismReview = query({
       .order("desc")
       .paginate(paginationOpts);
     const page = await Promise.all(
-      result.page.map(async (p) => {
+      result.page.filter((p) => !testIds.has(p.authorId)).map(async (p) => {
         const author = await ctx.db.get(p.authorId);
         return {
           ...p,
@@ -506,14 +530,15 @@ export const resolveRacismReviewBatch = mutation({
 export const listAiReviewStories = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, { paginationOpts }) => {
-    await requireAdmin(ctx);
+    const adminId = await requireAdmin(ctx);
+    const testIds = new Set(await testAuthorIds(ctx, adminId));
     const result = await ctx.db
       .query("stories")
       .withIndex("by_ai_status", (q) => q.eq("aiStatus", "review"))
       .order("desc")
       .paginate(paginationOpts);
     const page = await Promise.all(
-      result.page.map(async (s) => {
+      result.page.filter((s) => !testIds.has(s.authorId)).map(async (s) => {
         const author = await ctx.db.get(s.authorId);
         return {
           ...s,

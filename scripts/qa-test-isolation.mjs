@@ -120,6 +120,30 @@ async function run() {
   }
   const postId = postRes.postId;
 
+  // A story fixture too — the isolation layer must hide it from real
+  // members' story rings (and the admin's), not just the feed.
+  const MINI_PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const ticket = await ac.action(api.media.prepareUpload, {
+    contentType: "image/png",
+  });
+  const targetUrl =
+    ticket.mode === "convex" ? ticket.uploadUrl : ticket.fallbackUrl;
+  const upRes = await fetch(targetUrl, {
+    method: "POST",
+    headers: { "Content-Type": "image/png" },
+    body: new Blob([MINI_PNG], { type: "image/png" }),
+  });
+  const upData = await upRes.json();
+  const storyRes = await ac.action(api.stories.createStory, {
+    media: { storageId: upData.storageId, kind: "image", stripped: false },
+    caption: `Isolation story fixture ${stamp}`,
+  });
+  check("A created the isolation story", storyRes.ok === true, storyRes.error ?? "");
+  const storyId = storyRes.ok === true ? storyRes.storyId : undefined;
+
   // A real post of the admin's to engage with (admin client sees all).
   const { admin, adminClient } = await mintAdmin();
   const posts = await adminClient.query(api.posts.listUserPosts, {
@@ -209,11 +233,62 @@ async function run() {
     `before ${beforeUnread}, after ${afterUnread}`,
   );
 
+  // ── New isolation surfaces ─────────────────────────────────────────────
+  // The profile, its posts, and the story ring are all closed to real
+  // members, and the admin's member-facing lists stay free of QA rows.
+  const profile = await adminClient.query(api.users.getProfile, {
+    username,
+  });
+  check("A's profile is invisible to a real member (direct URL)", profile === null);
+
+  const ownPosts = await adminClient.query(api.posts.listUserPosts, {
+    userId: a.userId,
+    paginationOpts: { numItems: 50, cursor: null },
+  });
+  check(
+    "A's posts are invisible on its profile for a real member",
+    (ownPosts.page ?? []).length === 0,
+  );
+
+  let followRejected = false;
+  try {
+    await adminClient.mutation(api.users.follow, { username });
+  } catch {
+    followRejected = true;
+  }
+  check(
+    "a real member cannot follow a QA account (story-ring leak closed)",
+    followRejected === true,
+  );
+
+  const storiesRes = await adminClient.query(api.stories.listStories);
+  check(
+    "A's story is absent from the admin's story ring",
+    !(storiesRes ?? []).some((s) => s.authorId === a.userId),
+  );
+
+  const adminUsers = await adminClient.query(api.admin.listUsers, {
+    paginationOpts: { numItems: 50, cursor: null },
+  });
+  check(
+    "A is absent from the admin member list",
+    !(adminUsers.page ?? []).some((u) => u.username === username),
+  );
+
+  const recentPosts = await adminClient.query(api.admin.listRecentPosts, {
+    paginationOpts: { numItems: 50, cursor: null },
+  });
+  check(
+    "A's post is absent from the admin recent-posts panel",
+    !(recentPosts.page ?? []).some((p) => p._id === postId),
+  );
+
   const snap = await harness.query(api.testHarness.qaIsolationSnapshot, {
     secret: HARNESS_SECRET,
     testUserId: a.userId,
     testUsername: username,
     testPostId: postId,
+    testStoryId: storyId,
   });
   check(
     "A's post is absent from the sitemap source query",
@@ -224,6 +299,10 @@ async function run() {
     "A's profile is absent from the sitemap source query",
     snap.userInSitemap === false,
     `sitemap has ${snap.sitemapUserCount} users`,
+  );
+  check(
+    "A's story row exists (fixture is real, not vacuous)",
+    snap.storyExists === true,
   );
 
   // 4. A's own viewpoint: self-exclusion keeps QA flows working.

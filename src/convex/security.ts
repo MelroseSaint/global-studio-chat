@@ -651,6 +651,25 @@ export async function testAuthorIds(
     .map((u) => u._id);
 }
 
+/**
+ * The test-account exclusion set for a READ surface, viewer-aware. Real
+ * members (and anonymous viewers) get every QA account excluded — a live
+ * test run's fixtures are invisible to them by construction. A viewer who
+ * is ITSELF a test account gets no exclusion: QA flows routinely pair up
+ * two throwaway accounts as "author" and "viewer" (reinstate-qa, the
+ * story QAs), so the fixtures must stay visible to each other. This is the
+ * convention every member-facing read gate uses.
+ */
+export async function testExclusionIds(
+  ctx: QueryCtx,
+  viewerId: Id<"users"> | null,
+): Promise<Id<"users">[]> {
+  if (viewerId !== null && (await isTestAccount(ctx, viewerId))) {
+    return [];
+  }
+  return testAuthorIds(ctx, viewerId);
+}
+
 export const isBlocked = query({
   args: { username: v.string() },
   handler: async (ctx, { username }) => {

@@ -116,6 +116,24 @@ export const getProfile = query({
         return null;
       }
     }
+    // A QA-harness account's profile is invisible to real members (and
+    // anonymous viewers) — only the account itself, other QA accounts, and
+    // admins looking at a SHADOWBANNED fixture (moderation verification
+    // needs to open it) see it, so a live test run's active fixtures never
+    // surface on a production profile URL. Discovery already blocks them
+    // from search; this closes the direct-link path.
+    if (isTestUsername(user.username)) {
+      const viewer = viewerId !== null ? await ctx.db.get(viewerId) : null;
+      const viewerIsTest =
+        viewerId !== null && (await isTestAccount(ctx, viewerId));
+      if (
+        viewerId !== user._id &&
+        !viewerIsTest &&
+        !(viewer?.role === "admin" && user.shadowban === true)
+      ) {
+        return null;
+      }
+    }
     let isFollowing = false;
     let isSelf = false;
     if (viewerId !== null) {
@@ -509,6 +527,14 @@ export const follow = mutation({
     }
     if (target._id === followerId) {
       throw new Error("You cannot follow yourself");
+    }
+    // Real members can never follow a QA-harness account — the follow row
+    // (and the story ring it would grant) is exactly the kind of test
+    // trace the isolation layer must prevent. Reported as "User not found"
+    // so a test handle is indistinguishable from a nonexistent one. Test
+    // accounts may still follow anyone (their engagement fixtures need it).
+    if (isTestUsername(target.username) && !(await isTestAccount(ctx, followerId))) {
+      throw new Error("User not found");
     }
     const existing = await ctx.db
       .query("follows")

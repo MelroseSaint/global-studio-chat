@@ -61,29 +61,18 @@ async function main() {
   // backend-observed IP or removeAccount's requireAdmin gate refuses.
   await assertAdminIpVerified({ convexUrl: CONVEX_URL, token: admin.token });
 
-  // Paginate every user, collecting qa_* usernames.
-  const targets = [];
-  let cursor = null;
-  for (let page = 0; page < 200; page++) {
-    const res = await adminClient.query(api.admin.listUsers, {
-      paginationOpts: { numItems: 100, cursor },
-    });
-    for (const u of res.page) {
-      const username = (u.username ?? "").toLowerCase();
-      // The reserved test prefixes every QA script uses: qa_ (harness) and
-      // pw_e2e_ (signup e2e). A real account can never match these.
-      if (username.startsWith("qa_") || username.startsWith("pw_e2e_")) {
-        targets.push(u);
-      }
-    }
-    if (res.isDone) break;
-    cursor = res.continueCursor;
-  }
+  // Collect every QA account through the harness's dedicated reader. The
+  // admin's listUsers now hides QA accounts from the production surface
+  // (isolation invariant), so the sweep must not page it to find its
+  // targets — listTestAccountsForSweep is the maintenance path instead.
+  const targets = await client.query(api.testHarness.listTestAccountsForSweep, {
+    secret: HARNESS_SECRET,
+  });
 
   if (targets.length > 0) {
     console.log(`Found ${targets.length} test user(s) to erase:`);
     for (const u of targets) {
-      console.log(`  - @${u.username} (${u.name ?? "no name"}, joined ${new Date(u._creationTime).toISOString()})`);
+      console.log(`  - @${u.username} (${u.name ?? "no name"}, joined ${new Date(u.creationTime).toISOString()})`);
     }
 
     // Erase each with the full removeAccount sweep, citing a Standard
@@ -93,7 +82,7 @@ async function main() {
     for (const u of targets) {
       try {
         const res = await adminClient.mutation(api.admin.removeAccount, {
-          userId: u._id,
+          userId: u.userId,
           standardId: "no-spam",
           note: "Automated cleanup of leftover QA test account.",
         });

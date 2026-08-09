@@ -33,8 +33,10 @@ import {
   hiddenAuthorIds,
   isSandboxed,
   isTestAccount,
+  isTestUsername,
   silencedAuthorIds,
   testAuthorIds,
+  testExclusionIds,
 } from "./security";
 
 import type { Doc, Id } from "./_generated/dataModel";
@@ -1176,7 +1178,10 @@ export const feed = query({
     // used to unmount every card (and any open comment popup) mid-read.
     const hiddenIds = await hiddenAuthorIds(ctx, viewerId);
     const silencedIds = await silencedAuthorIds(ctx, viewerId);
-    const testIds = await testAuthorIds(ctx, viewerId);
+    // Viewer-aware: a viewer who is itself a QA account sees other QA
+    // fixtures (QA flows pair up throwaways as author + viewer); real
+    // members and anonymous viewers see none of them.
+    const testIds = await testExclusionIds(ctx, viewerId);
     const excludedIds = new Set([...hiddenIds, ...silencedIds, ...testIds]);
     // Posts awaiting a human AI-review stay out of public feeds — except
     // for their author, who sees their own review posts with an "under
@@ -1563,7 +1568,9 @@ export const listComments = query({
     const viewerId = await getAuthUserId(ctx);
     const hidden = await hiddenAuthorIds(ctx, viewerId);
     const silenced = await silencedAuthorIds(ctx, viewerId);
-    const test = await testAuthorIds(ctx, viewerId);
+    // Viewer-aware test exclusion (see testExclusionIds) — QA fixtures
+    // stay visible to other QA accounts but never to real members.
+    const test = await testExclusionIds(ctx, viewerId);
     const excluded = [...hidden, ...silenced, ...test];
     const result =
       sort === "top"
@@ -1627,7 +1634,9 @@ export const listReplies = query({
     const viewerId = await getAuthUserId(ctx);
     const hidden = await hiddenAuthorIds(ctx, viewerId);
     const silenced = await silencedAuthorIds(ctx, viewerId);
-    const test = await testAuthorIds(ctx, viewerId);
+    // Viewer-aware test exclusion (see testExclusionIds) — QA fixtures
+    // stay visible to other QA accounts but never to real members.
+    const test = await testExclusionIds(ctx, viewerId);
     const excluded = [...hidden, ...silenced, ...test];
     const result =
       sort === "top"
@@ -2182,6 +2191,22 @@ export const listUserPosts = query({
     const silencedIds = await silencedAuthorIds(ctx, viewerId);
     const hidden = hiddenIds.includes(userId) || silencedIds.includes(userId);
     if (hidden && viewer?.role !== "admin") {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    // QA-harness accounts' posts are invisible to real members — only the
+    // account itself, other QA accounts, and admins looking at a
+    // SHADOWBANNED fixture (moderation verification) see them, so a
+    // direct profile visit can never surface a live test run's posts.
+    const targetUser = await ctx.db.get(userId);
+    const viewerIsTest =
+      viewerId !== null && (await isTestAccount(ctx, viewerId));
+    if (
+      targetUser !== null &&
+      isTestUsername(targetUser.username) &&
+      viewerId !== userId &&
+      !viewerIsTest &&
+      !(viewer?.role === "admin" && targetUser.shadowban === true)
+    ) {
       return { page: [], isDone: true, continueCursor: "" };
     }
     const canSeePending = viewerId === userId || viewer?.role === "admin";
