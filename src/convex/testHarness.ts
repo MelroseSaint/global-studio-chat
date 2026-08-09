@@ -1148,6 +1148,53 @@ export const purgeTestTraces = mutation({
 });
 
 /**
+ * Purge dangling notification rows — bell entries whose post, actor, or
+ * recipient no longer exists. These are always test debris or dead weight:
+ * a real notification always points at a live post/actor, and the account
+ * erasure cascade already removes notifications for deleted users, so a
+ * row surviving with a missing postId/actorId can only be a QA flood
+ * leftover on a REAL bell (e.g. comments a deleted test account left on a
+ * deleted test post) or an orphan. Deleting them also un-inflates the
+ * recipient's unread badge. Gated by the same two env gates as the rest
+ * of the module.
+ */
+export const purgeDanglingNotifications = mutation({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const purged: Array<{
+      id: Id<"notifications">;
+      type: string;
+      reason: string;
+    }> = [];
+    for (;;) {
+      const rows = await ctx.db.query("notifications").take(500);
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        let reason: string | null = null;
+        if (row.postId !== undefined) {
+          const post = await ctx.db.get(row.postId);
+          if (post === null) reason = "missing-post";
+        }
+        if (reason === null && row.actorId !== undefined) {
+          const actor = await ctx.db.get(row.actorId);
+          if (actor === null) reason = "missing-actor";
+        }
+        if (reason === null) {
+          const recipient = await ctx.db.get(row.userId);
+          if (recipient === null) reason = "missing-recipient";
+        }
+        if (reason !== null) {
+          await ctx.db.delete(row._id);
+          purged.push({ id: row._id, type: row.type, reason });
+        }
+      }
+    }
+    return { purgedCount: purged.length, purged };
+  },
+});
+
+/**
  * Count reserved-prefix test traces across the tables QA touches: users
  * and one-way removal-log entries. The "never keep test stuff on the site"
  * gate — CI asserts every count is zero, so a leftover qa_ account or a

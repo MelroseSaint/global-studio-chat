@@ -507,15 +507,15 @@ async function main() {
     );
 
     // The author was told once: exactly one comment-auto-closed row on
-    // their bell pointing at this post.
+    // their bell pointing at this post. (The filter also captures any
+    // flood comment row on the same post, so cleanup below removes every
+    // notification this section created on the real admin's bell — not
+    // just the heads-up.)
     const adminAutoCloseNotifs = async () => {
       const r = await adm.query(api.notifications.listNotifications, {
         paginationOpts: { numItems: 50, cursor: null },
       });
-      return r.page.filter(
-        (n) =>
-          n.type === "comment-auto-closed" && n.postId === autoClosePostId,
-      );
+      return r.page.filter((n) => n.postId === autoClosePostId);
     };
     const firstNotifs = await adminAutoCloseNotifs();
     check(

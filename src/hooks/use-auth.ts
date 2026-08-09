@@ -1,6 +1,6 @@
 import { useAuthActions, useAuthToken } from "@convex-dev/auth/react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 
@@ -12,6 +12,16 @@ const CONVEX_AUTH_NAMESPACE = (import.meta.env.VITE_CONVEX_URL ?? "").replace(
   /[^a-zA-Z0-9]/g,
   "",
 );
+
+// Dead-session confirmation windows (see clearStaleSession in useAuth): a
+// `user === null` observation is only trusted after the query stays null
+// past the first grace window AND is still null after a second confirm
+// window — each check reads the LIVE query result, so a session that
+// recovers mid-window (the deploy settles, the socket reconnects) cancels
+// the sign-out. A deploy swap can transiently null the `me` query; these
+// windows make that self-healing instead of logging the member out.
+const STALE_SESSION_GRACE_MS = 5000;
+const STALE_SESSION_CONFIRM_MS = 8000;
 
 /**
  * Auth state hook. Use this everywhere instead of reaching into
@@ -63,6 +73,13 @@ export function useAuth() {
     isAuthenticated ? undefined : "skip",
   );
 
+  // Live mirror of `user` for the deferred sign-out check: the effect's
+  // closure captures `user` at schedule time, but the confirm timer fires
+  // later — it must see the CURRENT value, not the value from when the
+  // null was first observed (the query may have recovered meanwhile).
+  const userRef = useRef(user);
+  userRef.current = user;
+
   /**
    * Self-healing session: only one state is truly unrecoverable — the
    * account a session belongs to was deleted server-side (the query
@@ -76,19 +93,53 @@ export function useAuth() {
    * last effectively forever. Treating expiry as a dead session is what
    * logged members out automatically — every hour, and on every tab
    * refocus after the token turned over.
+   *
+   * A `user === null` observation is NOT proof the session is dead by
+   * itself: during a deploy the backend is swapped mid-flight, so the `me`
+   * query can transiently resolve null (the new deployment momentarily
+   * rejecting the old JWT, the socket reconnecting) and then recover on
+   * its own once the swap settles. Signing out on that FIRST null would
+   * permanently erase the stored tokens — logging every member out over a
+   * deploy blip. So the sign-out is CONFIRMED: wait a grace window, then
+   * RE-CHECK the live query result (not the closure) before erasing, and
+   * give it one more confirm window if still null. The `me` query
+   * re-runs automatically when the deployment settles, so a recovered
+   * session updates `userRef.current` while the timer is still pending
+   * and the sign-out is skipped. Only a null that persists through both
+   * windows — a genuinely deleted account — erases the session.
    */
   useEffect(() => {
     // A stale session can also appear while the tab sits in the background:
     // the account is deleted server-side. Browsers suspend background
     // tabs, so the query never resolves until the tab regains focus —
     // re-run the check on `visibilitychange` so the dead session is
-    // cleared immediately instead of lingering until the next navigation.
-    // The check is idempotent, so running it on both paths is harmless.
+    // cleared (after the same confirmation) instead of lingering until the
+    // next navigation. The check is idempotent, so running it on both
+    // paths is harmless.
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const clearStaleSession = () => {
       if (!isAuthenticated || !token) return;
-      if (user === null) {
-        void signOut();
-      }
+      if (user !== null) return; // healthy — nothing to clear
+      // `user === null`: don't erase on the first observation. Wait a
+      // grace window (a deploy swap is sub-second to a few seconds; the
+      // query re-resolves once the new deployment settles), then confirm
+      // the session is REALLY dead by re-checking the CURRENT query
+      // result. If it recovered, the user stays logged in — the shell
+      // simply re-renders with the fresh user document.
+      if (timer !== undefined) return; // already scheduled
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (cancelled || userRef.current !== null) return;
+        // Still null after the grace window — could be a slower deploy.
+        // One more confirm window, re-checking live again, before the
+        // final sign-out.
+        timer = setTimeout(() => {
+          timer = undefined;
+          if (cancelled || userRef.current !== null) return;
+          void signOut();
+        }, STALE_SESSION_CONFIRM_MS);
+      }, STALE_SESSION_GRACE_MS);
     };
     clearStaleSession();
     const onVisibilityChange = () => {
@@ -98,6 +149,8 @@ export function useAuth() {
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [isAuthenticated, token, user, signOut]);

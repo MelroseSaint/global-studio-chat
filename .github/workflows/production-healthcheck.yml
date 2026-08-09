@@ -132,6 +132,16 @@ jobs:
       - name: Dynamic rendering guard (Googlebot vs browser)
         run: npm run qa:dynamic-render
 
+      # Live PWA guard: the deployed /sw.js must serve real, rendered
+      # JavaScript with a versioned cache name that matches the deployed
+      # precache-manifest.json, and every manifest asset must come back as
+      # real JS/CSS — never the SPA shell (the vercel.json catch-all used
+      # to mask missing /assets/* as 200 HTML). A regression here means
+      # refreshes silently lose their cache and the PWA/offline story dies
+      # on the live site, even if the build output looks fine.
+      - name: Live PWA guard (sw.js + precache manifest + asset types)
+        run: npm run qa:pwa-output:live
+
       # Alerting: GitHub already emails on failed runs. This also opens a
       # single persistent issue (label prod-healthcheck) so a failing nightly
       # check is visible on the repo and never silently lost — and never
@@ -2421,6 +2431,132 @@ jobs:
                 state_reason: "completed",
               });
               console.log(`Closed INP alert issue #${issue.number}.`);
+            }
+
+  refresh-timing-qa:
+    # Measures the two refresh-speed changes on the live site with a real
+    # browser (scripts/refresh-timing-qa.mjs): (1) the service-worker
+    # navigation SWR — a WARM reload serves the cached shell instead of
+    # waiting a network round trip for the HTML, gated on first contentful
+    # paint; (2) the parallel auth gate — a signed-in reload mounts the
+    # shell immediately (no spinner waiting on the `me` query), gated on
+    # time-to-shell and time-to-feed-content. Cold vs warm deltas are
+    # reported for both anonymous and signed-in paths. Fails when a warm
+    # reload exceeds the FCP/shell/feed budgets or the service worker never
+    # takes control, so a refresh-speed regression can't ship silently.
+    name: Refresh timing QA (live, SWR + parallel gate)
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the refresh-timing QA
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: npm run qa:refresh-timing 2>&1 | tee refresh-timing.log
+
+      - name: Upload the refresh-timing log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-timing-log
+          path: refresh-timing.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a slow refresh doesn't piggyback on another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-refresh-timing";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Refresh-speed regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "A warm reload on the live site exceeded the refresh budgets (FCP,",
+                "time-to-shell, or time-to-feed-content) or the service worker",
+                "failed to take control.",
+                "",
+                "The QA measures in-document via Paint + MutationObserver (no wall-",
+                "clock jitter), runs each scenario N times and gates on the best",
+                "run — so a real regression pushes even the best run over the",
+                "budget. The signed-in path uses a fresh throwaway qa_ account,",
+                "erased afterwards.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the refresh-timing-log artifact for the measured deltas. This",
+                "issue is closed automatically on the next passing audit.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-refresh-timing";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open refresh-timing alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed refresh-timing alert issue #${issue.number}.`);
             }
 
   ios-layout-qa:

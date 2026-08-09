@@ -114,6 +114,26 @@ async function main() {
       ? `Removal-log test entries purged: ${purgedCount}.`
       : "Removal log already free of test entries.",
   );
+
+  // Bell rows referencing deleted content (a post, actor, or recipient
+  // that no longer exists) are fake notifications — QA flood debris that
+  // survived on a real account's bell. Erase them so no unread badge is
+  // inflated by a row nothing can render, and the shell badge stays
+  // honest after any sweep.
+  const { purgedCount: notifCount, purged: purgedNotifs } =
+    await client.mutation(api.testHarness.purgeDanglingNotifications, {
+      secret: HARNESS_SECRET,
+    });
+  if (notifCount > 0) {
+    console.log(`Dangling notifications purged: ${notifCount}.`);
+    const byReason = {};
+    for (const n of purgedNotifs) {
+      byReason[n.reason] = (byReason[n.reason] ?? 0) + 1;
+    }
+    console.log(`  ${JSON.stringify(byReason)}`);
+  } else {
+    console.log("No dangling notifications found.");
+  }
 }
 
 main().catch((err) => {

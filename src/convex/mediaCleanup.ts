@@ -126,6 +126,22 @@ export async function sweepPostEngagement(
       await ctx.db.delete(row._id);
     }
   }
+  // Notifications referencing the post (comment / reply / share / like
+  // rows pointing at it) die with it. Without this sweep, deleting a post
+  // leaves every bell row that links to it dangling — the notification
+  // renders with a missing post, and recipients' unread badges stay
+  // inflated forever. Deleting the post makes those rows dead weight, so
+  // they are removed exactly like the likes/comments/shares.
+  for (;;) {
+    const rows = await ctx.db
+      .query("notifications")
+      .filter((q) => q.eq(q.field("postId"), postId))
+      .take(500);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+  }
 }
 
 /** Shape of a user row's artwork fields, for cleanupUserArtwork. */
