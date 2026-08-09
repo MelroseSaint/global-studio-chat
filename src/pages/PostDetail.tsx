@@ -432,6 +432,8 @@ export function PostDetail() {
               <AutoCloseHint
                 commentCount={post.commentCount}
                 threshold={post.commentsAutoCloseCount}
+                ageMs={post.commentsAutoCloseAgeMs}
+                createdAt={post._creationTime}
               />
             </div>
           ) : null}
