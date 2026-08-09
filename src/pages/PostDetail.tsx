@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { canonicalBase, seoExcerpt, usePageMeta } from "@/lib/seo";
+import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import { PostCard, type PostItem } from "@/components/PostCard";
@@ -260,6 +261,11 @@ export function PostDetail() {
     );
   }
 
+  // The author (or an admin) is the one who can act on the auto-close
+  // policy, so only they see the "nearing the limit" hint on the composer.
+  const isAuthorOrAdmin =
+    post.author?._id === user?._id || user?.role === "admin";
+
   const comments = results as unknown as {
     _id: string;
     author: {
@@ -368,9 +374,10 @@ export function PostDetail() {
     <div className="pb-20 lg:pb-0">
       <PostCard post={post as unknown as PostItem} />
 
-      {/* Comment composer — hidden entirely while the author has closed
-          comments on the post; a notice takes its place. */}
-      {post.commentsLocked ? (
+      {/* Comment composer — hidden entirely while the thread is closed
+          (author lock or the auto-close policy); a notice takes its
+          place. */}
+      {post.commentsClosed ? (
         <div className="flex items-center gap-2 border-b px-4 py-3 sm:px-5">
           <Lock className="size-4 shrink-0 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
@@ -412,6 +419,17 @@ export function PostDetail() {
             </div>
           </div>
 
+          {/* Heads-up that the thread is close to auto-closing, so the
+              author can opt it out before the policy closes it. */}
+          {isAuthorOrAdmin ? (
+            <div className="px-4 pb-1 pt-1.5 sm:px-5">
+              <AutoCloseHint
+                commentCount={post.commentCount}
+                threshold={post.commentsAutoCloseCount}
+              />
+            </div>
+          ) : null}
+
           {/* Attach a post to the comment (or show the live preview of one
               being shared in from the Share dialog's ?share= deep link). */}
           <div className="px-4 sm:px-5">
@@ -429,10 +447,17 @@ export function PostDetail() {
         <div className="flex items-center gap-2 text-sm font-semibold">
           <MessageCircle className="size-4 text-muted-foreground" />
           Comments
-          {post.commentsLocked ? (
-            <span className="flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+          {post.commentsClosed ? (
+            <span
+              className="flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+              title={
+                post.commentsAutoClosed
+                  ? "Auto-closed after 30 days or 100 comments"
+                  : "Closed by the post author"
+              }
+            >
               <Lock className="size-3" />
-              Closed
+              {post.commentsAutoClosed ? "Auto-closed" : "Closed"}
             </span>
           ) : null}
         </div>

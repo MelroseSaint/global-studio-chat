@@ -839,6 +839,50 @@ export const createPostInternal = internalMutation({
 });
 
 /**
+ * Auto-close policy: a thread closes by itself once it's old enough or
+ * busy enough — 30 days old, or 100 comments — unless the author opted
+ * out per-post (autoCloseComments: true). Lazy: eligibility is computed
+ * at read/write time, so there's no nightly sweep and a reopened thread
+ * can't silently re-close from a stale flag.
+ */
+export const COMMENT_AUTO_CLOSE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+export const COMMENT_AUTO_CLOSE_COUNT = 100;
+
+/**
+ * True when a thread accepts no new comments: the author locked it, or
+ * the auto-close policy closed it and the author hasn't opted out.
+ */
+export function isCommentThreadClosed(
+  post: Pick<
+    Doc<"posts">,
+    "commentsLocked" | "autoCloseComments" | "commentCount" | "_creationTime"
+  >,
+): boolean {
+  if (post.commentsLocked === true) return true;
+  if (post.autoCloseComments === true) return false;
+  return isCommentThreadAutoClosed(post);
+}
+
+/**
+ * True only when the AUTO-CLOSE policy (not the author) has closed the
+ * thread — used to label the state and to know that "reopen" means the
+ * author opting the post out of auto-close.
+ */
+export function isCommentThreadAutoClosed(
+  post: Pick<
+    Doc<"posts">,
+    "commentsLocked" | "autoCloseComments" | "commentCount" | "_creationTime"
+  >,
+): boolean {
+  if (post.commentsLocked === true || post.autoCloseComments === true) {
+    return false;
+  }
+  const tooOld = Date.now() - post._creationTime >= COMMENT_AUTO_CLOSE_AGE_MS;
+  const tooMany = (post.commentCount ?? 0) >= COMMENT_AUTO_CLOSE_COUNT;
+  return tooOld || tooMany;
+}
+
+/**
  * Author (or admin) control: lock or unlock comments on a post. When
  * locked, no new comments can be added (existing ones stay readable).
  */
@@ -858,6 +902,32 @@ export const setCommentsLocked = mutation({
     await ctx.db.patch(postId, {
       commentsLocked: locked,
       commentsLockedAt: locked ? Date.now() : undefined,
+    });
+  },
+});
+
+/**
+ * Author (or admin) control: opt a post in or out of the auto-close
+ * policy. keepOpen=true means this thread never auto-closes (the author's
+ * per-post opt-out); keepOpen=false reverts to the default policy (and if
+ * the post already qualifies, it closes again).
+ */
+export const setAutoCloseComments = mutation({
+  args: { postId: v.id("posts"), keepOpen: v.boolean() },
+  handler: async (ctx, { postId, keepOpen }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    const post = await ctx.db.get(postId);
+    if (post === null) return;
+    const user = await ctx.db.get(userId);
+    if (post.authorId !== userId && user?.role !== "admin") {
+      throw new Error("You can only change this on your own posts.");
+    }
+    await ctx.db.patch(postId, {
+      // undefined = default policy; only a true value persists the opt-out.
+      autoCloseComments: keepOpen ? true : undefined,
     });
   },
 });
@@ -966,6 +1036,13 @@ interface PostView extends Omit<Doc<"posts">, "location"> {
   mediaUrls: MediaWithUrl[] | undefined;
   taggedUsers: TaggedUserView[] | undefined;
   sharedFrom: PostView | null | undefined;
+  // Effective thread state: closed when the author locked it or the
+  // auto-close policy closed it; autoClosed when the policy did it.
+  commentsClosed: boolean;
+  commentsAutoClosed: boolean;
+  // The auto-close policy's count threshold, so the client can show a
+  // "nearing the limit" hint without duplicating the server constant.
+  commentsAutoCloseCount: number;
 }
 
 async function withAuthor(
@@ -996,6 +1073,11 @@ async function withAuthor(
         })),
       )
     : undefined;
+  // The effective thread state: closed (manual or auto) and whether the
+  // auto-close policy alone is what closed it. Computed once per post here
+  // so every surface (feed, post page, popup) agrees on the same answer.
+  const commentsClosed = isCommentThreadClosed(post);
+  const commentsAutoClosed = isCommentThreadAutoClosed(post);
   // Tags: lightweight previews of every tagged user (kept in sync with the
   // mention notifications fired at creation), so the client can render the
   // "with @alice and @bob" line without a second query.
@@ -1062,6 +1144,11 @@ async function withAuthor(
     mediaUrls,
     taggedUsers,
     sharedFrom,
+    // The effective thread state, computed above (see the helpers near
+    // setCommentsLocked).
+    commentsClosed,
+    commentsAutoClosed,
+    commentsAutoCloseCount: COMMENT_AUTO_CLOSE_COUNT,
   };
 }
 
@@ -1393,11 +1480,12 @@ export const addComment = mutation({
     ) {
       throw new Error("That post is no longer available");
     }
-    // Comment control: a locked post stops ALL new comments (top-level and
-    // replies). The author or an admin turned it off; the thread stays
+    // Comment control: a closed thread stops ALL new comments (top-level
+    // and replies) — whether the author locked it manually or the
+    // auto-close policy closed it (age/comment-count). The thread stays
     // readable but nothing new can be added.
     const lockPost = await ctx.db.get(postId);
-    if (lockPost !== null && lockPost.commentsLocked === true) {
+    if (lockPost !== null && isCommentThreadClosed(lockPost)) {
       throw new Error("Comments are disabled on this post.");
     }
     // Threaded replies: the parent must exist on the same post, and a reply

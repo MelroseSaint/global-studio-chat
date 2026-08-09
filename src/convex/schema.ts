@@ -235,6 +235,10 @@ const schema = defineSchema({
     // When the author disabled comments (unix ms). Shown as "Comments
     // disabled" on the post; null/absent = comments still open.
     commentsLockedAt: v.optional(v.number()),
+    // Per-post opt-out of the auto-close policy: true = this thread stays
+    // open forever (the default closes threads after a set age or comment
+    // count — see posts.isCommentThreadClosed). Absent = policy applies.
+    autoCloseComments: v.optional(v.boolean()),
     // Optional place the post was shared from — powers the Local feed.
     location: v.optional(
       v.object({

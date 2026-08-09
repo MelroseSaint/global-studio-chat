@@ -19,6 +19,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import type { PostItem } from "@/components/PostCard";
@@ -337,7 +338,8 @@ export function CommentDialog({
   const [sharingPostId, setSharingPostId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const locked = !!post.commentsLocked;
+  // Effective state: author lock or the auto-close policy (age/count).
+  const locked = !!post.commentsClosed;
   const author = post.author;
   const authorName =
     author?.name ??
@@ -438,6 +440,14 @@ export function CommentDialog({
                 text={comment}
                 onTextChange={setComment}
               />
+              {/* The author (or an admin) is the one who can act on the
+                  auto-close policy, so only they see the nearing hint. */}
+              {post.author?._id === user?._id || user?.role === "admin" ? (
+                <AutoCloseHint
+                  commentCount={post.commentCount}
+                  threshold={post.commentsAutoCloseCount}
+                />
+              ) : null}
             </div>
           </div>
         )}

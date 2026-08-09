@@ -30,6 +30,10 @@
  *   9. A closes comments via setCommentsLocked — B's addComment is
  *      rejected while closed, accepted again after reopen, and a
  *      non-author can't close someone else's post.
+ *  10. Auto-close policy: a 100-comment thread closes by itself (B 41 +
+ *      C 59, both under the 60/hour budget), rejects new comments, and
+ *      the author's per-post opt-out (setAutoCloseComments) reopens it —
+ *      reverting re-closes, and a non-author can't change the opt-out.
  *
  * All fixtures (users, posts, comments, notifications) are erased at the
  * end, so the site is left exactly as found. Run:
@@ -93,6 +97,7 @@ async function main() {
   let admin = null;
   let adminPostId = null;
   let closePostId = null;
+  let autoClosePostId = null;
   const users = [];
 
   try {
@@ -167,6 +172,11 @@ async function main() {
       "commentCount returned to zero",
       (postAfter?.commentCount ?? -1) === 0,
       `got ${postAfter?.commentCount}`,
+    );
+    check(
+      "the auto-close count threshold is hydrated on posts",
+      postAfter?.commentsAutoCloseCount === 100,
+      `got ${postAfter?.commentsAutoCloseCount}`,
     );
 
     // ── 2. Negative: a third party cannot delete ───────────────────────
@@ -438,6 +448,108 @@ async function main() {
       nonAuthorRejected = true;
     }
     check("only the author can close comments", nonAuthorRejected);
+
+    // ── 5. Auto-close policy (age/comment-count) + per-post opt-out ─────
+    // The count leg of the policy: a post that crosses the comment-count
+    // threshold (100) closes by itself. Each run mints fresh users, so the
+    // 60-comments-per-hour budget is clean — B adds 41 and C adds 59
+    // (both under 60), reaching exactly 100 on the post.
+    console.log("\n5. Auto-close policy + per-post opt-out");
+    const autoClosePost = await ac.action(api.posts.createPost, {
+      creatorDisclosure: "human-made",
+      content: `Auto-close QA ${stamp}`,
+      ...(await powProof(client)),
+    });
+    check(
+      "A created a post for the auto-close check",
+      autoClosePost.ok === true,
+      autoClosePost.error ?? "",
+    );
+    if (!autoClosePost.ok) throw new Error("auto-close post creation failed");
+    autoClosePostId = autoClosePost.postId;
+
+    const flood = async (client, prefix, n) => {
+      for (let i = 0; i < n; i++) {
+        await client.mutation(api.posts.addComment, {
+          postId: autoClosePostId,
+          content: `${prefix}-${i} ${stamp}`,
+          ...(await powProof(client)),
+        });
+        await sleep(60); // stay gentle on the shared backend
+      }
+    };
+    await flood(bc, "b", 41);
+    await flood(cc, "c", 59);
+    const autoClosed = await ac.query(api.posts.getPost, {
+      postId: autoClosePostId,
+    });
+    check(
+      "100-comment thread auto-closed by the policy",
+      autoClosed?.commentCount === 100 &&
+        autoClosed?.commentsClosed === true &&
+        autoClosed?.commentsAutoClosed === true,
+      `count ${autoClosed?.commentCount}`,
+    );
+
+    let autoRejected = false;
+    try {
+      await bc.mutation(api.posts.addComment, {
+        postId: autoClosePostId,
+        content: `over the auto-close limit ${stamp}`,
+        ...(await powProof(client)),
+      });
+    } catch {
+      autoRejected = true;
+    }
+    check("new comments rejected while auto-closed", autoRejected);
+
+    // Per-post opt-out: the author keeps this thread open forever.
+    await ac.mutation(api.posts.setAutoCloseComments, {
+      postId: autoClosePostId,
+      keepOpen: true,
+    });
+    const optedOut = await ac.query(api.posts.getPost, {
+      postId: autoClosePostId,
+    });
+    check(
+      "author opt-out reopens the thread",
+      optedOut?.autoCloseComments === true && optedOut?.commentsClosed === false,
+    );
+    const afterOptOut = await bc.mutation(api.posts.addComment, {
+      postId: autoClosePostId,
+      content: `accepted after opt-out ${stamp}`,
+      ...(await powProof(client)),
+    });
+    check(
+      "comments accepted after the opt-out",
+      afterOptOut.ok === true,
+      afterOptOut.error ?? "",
+    );
+
+    // Reverting the opt-out re-closes (the count still qualifies).
+    await ac.mutation(api.posts.setAutoCloseComments, {
+      postId: autoClosePostId,
+      keepOpen: false,
+    });
+    const reverted = await ac.query(api.posts.getPost, {
+      postId: autoClosePostId,
+    });
+    check(
+      "reverting the opt-out re-closes the thread",
+      reverted?.autoCloseComments === undefined &&
+        reverted?.commentsClosed === true,
+    );
+
+    let thirdPartyOptOut = false;
+    try {
+      await cc.mutation(api.posts.setAutoCloseComments, {
+        postId: autoClosePostId,
+        keepOpen: true,
+      });
+    } catch {
+      thirdPartyOptOut = true;
+    }
+    check("only the author can change the opt-out", thirdPartyOptOut);
   } finally {
     // ── Cleanup: admin post first (so the feed never lingers on it), ───
     // then the qa_ accounts (cascade erases posts, comments, likes,
@@ -451,13 +563,22 @@ async function main() {
         /* best-effort */
       }
     }
-    // The close-check post is A's — delete it through A's session so the
-    // fixture never lingers on the feed while the account erasure runs.
-    if (closePostId && users[0]?.token) {
+    // The close-check and auto-close posts are A's — delete them through
+    // A's session so the fixtures never linger on the feed while the
+    // account erasure runs.
+    const authorPosts = [closePostId, autoClosePostId];
+    if (users[0]?.token) {
       try {
         const aCleanup = new ConvexHttpClient(CONVEX_URL);
         aCleanup.setAuth(users[0].token);
-        await aCleanup.mutation(api.posts.deletePost, { postId: closePostId });
+        for (const postId of authorPosts) {
+          if (!postId) continue;
+          try {
+            await aCleanup.mutation(api.posts.deletePost, { postId });
+          } catch {
+            /* best-effort */
+          }
+        }
       } catch {
         /* best-effort */
       }

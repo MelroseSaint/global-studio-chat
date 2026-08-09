@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   Flag,
   Heart,
+  Hourglass,
   Link2,
   Lock,
   MapPin,
@@ -98,6 +99,15 @@ export interface PostItem {
       }[]
     | null;
   commentsLocked?: boolean | null;
+  // Effective thread state, computed server-side (see posts.ts): closed
+  // when the author locked it OR the auto-close policy closed it, and
+  // autoClosed when the policy (not the author) is what closed it.
+  commentsClosed?: boolean | null;
+  commentsAutoClosed?: boolean | null;
+  // The auto-close policy's count threshold (server-owned constant).
+  commentsAutoCloseCount?: number | null;
+  // The author's per-post opt-out of the auto-close policy.
+  autoCloseComments?: boolean | null;
   originalityVerified?: boolean | null;
   likedByMe: boolean;
   mediaUrls?: PostMedia[] | null;
@@ -136,6 +146,7 @@ export function PostCard({
   const unlikePost = useMutation(api.posts.unlikePost);
   const deletePost = useMutation(api.posts.deletePost);
   const setCommentsLocked = useMutation(api.posts.setCommentsLocked);
+  const setAutoCloseComments = useMutation(api.posts.setAutoCloseComments);
   const createTicket = useMutation(api.support.createTicket);
 
   const [liked, setLiked] = useState(post.likedByMe);
@@ -200,8 +211,16 @@ export function PostCard({
   };
 
   // Author control: lock (or reopen) the comment thread on this post.
+  // When the AUTO-CLOSE policy closed the thread (nobody locked it),
+  // "reopen" means opting the post out of auto-close — the only lever that
+  // opens it back up.
   const handleLockComments = async () => {
     try {
+      if (post.commentsAutoClosed) {
+        await setAutoCloseComments({ postId: post._id, keepOpen: true });
+        toast.success("Comments reopened — this post stays open.");
+        return;
+      }
       await setCommentsLocked({
         postId: post._id,
         locked: !post.commentsLocked,
@@ -210,6 +229,21 @@ export function PostCard({
         post.commentsLocked
           ? "Comments reopened."
           : "Comments closed — no new replies.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update.");
+    }
+  };
+
+  // Author control: the per-post opt-out of the auto-close policy.
+  const handleAutoCloseComments = async () => {
+    try {
+      const keepOpen = !post.autoCloseComments;
+      await setAutoCloseComments({ postId: post._id, keepOpen });
+      toast.success(
+        keepOpen
+          ? "Comments stay open on this post."
+          : "Auto-close comments enabled again.",
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update.");
@@ -330,10 +364,24 @@ export function PostCard({
                 <>
                   <DropdownMenuItem onClick={() => void handleLockComments()}>
                     <Lock className="size-4" />
-                    {post.commentsLocked
+                    {post.commentsClosed
                       ? "Reopen comments"
                       : "Close comments"}
                   </DropdownMenuItem>
+                  {/* The auto-close opt-out — hidden while the author has
+                      manually locked the thread (that's the Lock item's
+                      domain). On an auto-closed thread this is how the
+                      author reopens it for good. */}
+                  {!post.commentsLocked && (
+                    <DropdownMenuItem
+                      onClick={() => void handleAutoCloseComments()}
+                    >
+                      <Hourglass className="size-4" />
+                      {post.autoCloseComments
+                        ? "Auto-close comments"
+                        : "Keep comments open"}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem onClick={() => void handleDelete()}>
                     <Trash2 className="size-4 text-destructive" />
                     Delete post
