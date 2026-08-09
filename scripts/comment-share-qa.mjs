@@ -24,6 +24,13 @@
  *   A Vercel Security Checkpoint (bot-protection 403 page served to
  *   headless browsers) marks the browser half as skipped — it isn't the
  *   app and can't produce a signal, so it must not red the gate.
+ *   7. Real-account share + dangling shared-post sweep: the real admin
+ *      (a non-test actor) shares a post into a comment on a test-authored
+ *      host thread, landing a real comment-share row on the host author's
+ *      bell. Deleting the SHARED post leaves the preview row dangling —
+ *      its postId is the surviving host, so sweepPostEngagement can't see
+ *      it — and purgeDanglingNotifications must sweep it via
+ *      sharedPostId, returning the bell and unread badge to baseline.
  *
  * Run:
  *   TEST_HARNESS_SECRET=<secret> npm run qa:comment-share
@@ -36,6 +43,7 @@ import { chromium } from "playwright";
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
+import { purgeAllDanglingNotifications } from "./lib/qa-notifs.mjs";
 import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
@@ -274,6 +282,194 @@ async function browserChecks(client, fx) {
   }
 }
 
+/**
+ * 3. Real-account share whose shared post later dies — the preview row
+ * dangles and the purge sweeps it. Test-actor shares are suppressed by
+ * the isolation layer, so the SHARER here is the real admin: their
+ * comment with a sharedPostId on a test-authored host post lands a real
+ * "comment-share" row on the host author's bell. Deleting the SHARED
+ * post must NOT take the row — its postId is the surviving host, so the
+ * post-deletion sweep can't see it — which is exactly the dangling
+ * preview class. purgeDanglingNotifications must then sweep it via
+ * sharedPostId ("missing-shared-post"), returning the recipient's bell
+ * and unread badge to baseline. Self-cleaning: the admin's comment is
+ * swept with the host post, the host is deleted, and the test account
+ * erased.
+ */
+async function danglingShareChecks(client) {
+  console.log("\n3. Real-account share + dangling shared-post sweep");
+  const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  let host = null;
+  let hostPostId = null;
+  let sharedPostId = null;
+  try {
+    host = await client.mutation(api.testHarness.createTestUser, {
+      name: `QA CShareHost ${stamp}`,
+      username: `qa_csharehost_${stamp}`,
+      secret: HARNESS_SECRET,
+    });
+    check(
+      "created the host author (qa_ account)",
+      Boolean(host?.token && host?.userId),
+    );
+    if (!host?.userId || !host?.token) throw new Error("host mint failed");
+    const dc = new ConvexHttpClient(CONVEX_URL);
+    dc.setAuth(host.token);
+
+    // The host author owns both posts: the host thread and the post that
+    // will be shared into it. Test-authored, so neither ever surfaces on
+    // the feed. Disjoint word sets so the near-duplicate gate can't flag
+    // the QA's own fixture as stolen.
+    const hostRes = await dc.action(api.posts.createPost, {
+      content: `Amber fieldstone chapel meadow larkspur ${stamp}`,
+      creatorDisclosure: "human-made",
+      ...(await powProof(client)),
+    });
+    check(
+      "the host author created the host post",
+      hostRes.ok === true,
+      hostRes.error ?? "",
+    );
+    if (!hostRes.ok) throw new Error("host post creation failed");
+    hostPostId = hostRes.postId;
+    const sharedRes = await dc.action(api.posts.createPost, {
+      content: `Cobalt monorail overpass graffiti murals ${stamp}`,
+      creatorDisclosure: "human-made",
+      ...(await powProof(client)),
+    });
+    check(
+      "the host author created the shared post",
+      sharedRes.ok === true,
+      sharedRes.error ?? "",
+    );
+    if (!sharedRes.ok) throw new Error("shared post creation failed");
+    sharedPostId = sharedRes.postId;
+
+    // Baseline the recipient's bell + unread badge (delta assertions).
+    const baseline = await dc.query(api.notifications.shellCounts);
+    const bell = async () => {
+      const r = await dc.query(api.notifications.listNotifications, {
+        paginationOpts: { numItems: 50, cursor: null },
+      });
+      return r.page.filter((n) => n.postId === hostPostId);
+    };
+    check("the host author's bell starts clean", (await bell()).length === 0);
+
+    // The real admin (a non-test actor) shares the post into a comment on
+    // the host thread — one real comment-share row lands on the host
+    // author's bell. Clear the admin's comment budget first so an
+    // overlapping healthcheck run in the same hour can't trip the rate
+    // limiter.
+    const admin = await client.mutation(api.testHarness.mintAdminSession, {
+      secret: HARNESS_SECRET,
+    });
+    check(
+      "minted a real admin session (non-test actor)",
+      Boolean(admin?.token && admin?.userId),
+    );
+    if (!admin?.token || !admin?.userId) throw new Error("admin mint failed");
+    await client.mutation(api.testHarness.clearRateLimitBudget, {
+      secret: HARNESS_SECRET,
+      userId: admin.userId,
+      action: "comment",
+    });
+    const adm = new ConvexHttpClient(CONVEX_URL);
+    adm.setAuth(admin.token);
+    const shareRes = await adm.mutation(api.posts.addComment, {
+      postId: hostPostId,
+      content: `Shared into the thread ${stamp}`,
+      sharedPostId,
+      ...(await powProof(client)),
+    });
+    check(
+      "the real admin's share comment posted",
+      shareRes.ok === true,
+      shareRes.error ?? "",
+    );
+    if (!shareRes.ok) throw new Error("share comment failed");
+
+    const afterShare = await bell();
+    const shellAfter = await dc.query(api.notifications.shellCounts);
+    check(
+      "the share landed one comment-share row on the host author's bell",
+      afterShare.length === 1 &&
+        afterShare[0].type === "comment-share" &&
+        afterShare[0].sharedPostId === sharedPostId &&
+        afterShare[0].read === false,
+      `got ${afterShare.length}`,
+    );
+    check(
+      "the host author's unread badge rose by one",
+      shellAfter.unread === baseline.unread + 1,
+      `${baseline.unread} -> ${shellAfter.unread}`,
+    );
+
+    // Delete the SHARED post. The host survives, so the row must too —
+    // sweepPostEngagement only removes postId-keyed rows, and the row's
+    // postId is the host. This is the dangling preview class: the bell
+    // renders a preview of a post that no longer exists.
+    await dc.mutation(api.posts.deletePost, { postId: sharedPostId });
+    const afterDelete = await bell();
+    check(
+      "deleting the shared post leaves the preview row (host survives)",
+      afterDelete.length === 1 &&
+        afterDelete[0].type === "comment-share" &&
+        afterDelete[0].sharedPostId === sharedPostId &&
+        afterDelete[0].read === false,
+      `got ${afterDelete.length}`,
+    );
+    check(
+      "the unread badge is unchanged while the row dangles",
+      (await dc.query(api.notifications.shellCounts)).unread === baseline.unread + 1,
+    );
+
+    // The dangling-row purge sweeps the preview row via sharedPostId
+    // ("missing-shared-post"), and the bell + badge return to baseline.
+    const { total, byReason } = await purgeAllDanglingNotifications(
+      client,
+      HARNESS_SECRET,
+    );
+    check(
+      "the purge swept exactly the dangling shared-post row",
+      total === 1 && byReason["missing-shared-post"] === 1,
+      `total ${total}, reasons ${JSON.stringify(byReason)}`,
+    );
+    const afterPurge = await bell();
+    check(
+      "the preview row is gone from the host author's bell",
+      afterPurge.length === 0,
+      `got ${afterPurge.length}`,
+    );
+    check(
+      "the host author's unread badge returned to baseline",
+      (await dc.query(api.notifications.shellCounts)).unread === baseline.unread,
+    );
+  } finally {
+    // Host post first (sweeps the admin's share comment), then the
+    // account. The shared post was already deleted in-section; the
+    // best-effort guard here is a no-op for it.
+    if (hostPostId && host?.token) {
+      try {
+        const dc = new ConvexHttpClient(CONVEX_URL);
+        dc.setAuth(host.token);
+        await dc.mutation(api.posts.deletePost, { postId: hostPostId });
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (host?.userId) {
+      try {
+        await client.mutation(api.testHarness.deleteTestUser, {
+          userId: host.userId,
+          secret: HARNESS_SECRET,
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+}
+
 async function main() {
   if (!HARNESS_SECRET) {
     console.log(
@@ -293,7 +489,10 @@ async function main() {
   let fx = null;
   try {
     fx = await backendChecks(client);
-    if (fx) await browserChecks(client, fx);
+    if (fx) {
+      await browserChecks(client, fx);
+      await danglingShareChecks(client);
+    }
   } finally {
     // Sweep fixtures: the destination post (cascades its comments) and the
     // shared post (author session still valid), then the users. deleteTestUser
