@@ -49,6 +49,17 @@ jobs:
       # re-baseline: scripts/critical-path-baseline.json (--update).
       - name: Guard the critical-path JS size
         run: node scripts/check-critical-path.mjs
+      # The PWA outputs are the reason refreshes are fast: main.tsx
+      # registers /sw.js in production, and the precacheManifest plugin
+      # emits BOTH sw.js (versioned cache name) and precache-manifest.json
+      # (every chunk the SW precaches). If either goes missing from the
+      # build, production silently 404s the SW and every refresh falls
+      # back to the network — fail CI instead of shipping that. Also
+      # asserts the sw.js cache name and manifest version agree (a
+      # mismatch would precache and purge different caches) and that every
+      # manifest asset exists on disk.
+      - name: Guard the PWA build outputs
+        run: node scripts/check-pwa-output.mjs
 
   seo-static-files:
     # The SEO basics must never regress silently. robots.txt is a static

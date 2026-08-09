@@ -72,7 +72,8 @@
     "qa:shared-video-autoplay": "node scripts/shared-video-autoplay-qa.mjs",
     "qa:email-domains": "node scripts/disposable-email-qa.mjs",
     "qa:critical-path": "node scripts/check-critical-path.mjs",
-    "qa:post-author-delete": "node scripts/post-author-delete-qa.mjs"
+    "qa:post-author-delete": "node scripts/post-author-delete-qa.mjs",
+    "qa:pwa-output": "node scripts/check-pwa-output.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"

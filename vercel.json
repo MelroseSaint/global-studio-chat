@@ -3,7 +3,7 @@
   "framework": "vite",
   "routes": [
     { "handle": "filesystem" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|assets/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
