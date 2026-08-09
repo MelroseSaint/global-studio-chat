@@ -17,6 +17,10 @@
  * view and resumes when it returns, so off-screen videos don't keep
  * decoding frames (src/components/SharedPostEmbed.tsx AutoPauseVideo).
  *
+ * The iPhone blocks assert the no-autoplay card is never a dark box: a
+ * tap-to-play overlay ("Play video" button) is shown, the client-side
+ * poster capture lands, and tapping the overlay actually starts playback.
+ *
  * Run:
  *   TEST_HARNESS_SECRET=<secret> npm run qa:shared-video-autoplay
  *   # locally, against a production preview: PROBE_SITE_URL=http://localhost:4173 ...
@@ -183,6 +187,29 @@ async function main() {
   // autoplay, so an iOS/cellular viewer knows the video waits for a tap.
   const chipVisible = (page) =>
     page.evaluate(() => document.body.innerText.includes("Autoplay off"));
+  // When autoplay is disabled the card must not be a dark box: a tap-to-
+  // play overlay ("Play video" button) plus a captured poster frame.
+  const playOverlayVisible = (page) =>
+    page.evaluate(() => document.querySelector('[aria-label="Play video"]') != null);
+  const posterReady = (page) =>
+    page.evaluate(() => {
+      const v = document.querySelector("video");
+      return v ? (v.getAttribute("poster") || "").length > 0 : false;
+    });
+  const videoPlaying = (page) =>
+    page.evaluate(() => {
+      const v = document.querySelector("video");
+      return v ? !v.paused : false;
+    });
+  // Poll a predicate for up to ~10s (poster capture needs the video to
+  // load metadata, seek, and draw before the data-URL poster appears).
+  const poll = async (page, fn) => {
+    for (let i = 0; i < 25; i++) {
+      if (await fn(page)) return true;
+      await page.waitForTimeout(400);
+    }
+    return false;
+  };
 
   try {
     // iPhone: autoplay must be OFF (policy default).
@@ -201,6 +228,7 @@ async function main() {
       const v = await videoAutoplay(page);
       check("iPhone: shared video does NOT autoplay", v === false, `autoplay=${v}`);
       check("iPhone: 'Autoplay off' chip is shown", (await chipVisible(page)) === true);
+      check("iPhone: shared tap-to-play overlay is shown", (await playOverlayVisible(page)) === true);
       await ctx.close();
     }
 
@@ -236,6 +264,23 @@ async function main() {
       const v = await videoAutoplay(page);
       check("iPhone: feed video does NOT autoplay", v === false, `autoplay=${v}`);
       check("iPhone: feed 'Autoplay off' chip is shown", (await chipVisible(page)) === true);
+
+      // The no-autoplay card must not be a dark box: a real poster frame
+      // is captured client-side (first frame -> canvas -> data URL) and
+      // the tap-to-play overlay starts playback on tap.
+      check(
+        "iPhone: feed video gets a poster frame",
+        (await poll(page, posterReady)) === true,
+      );
+      check(
+        "iPhone: feed tap-to-play overlay is shown",
+        (await playOverlayVisible(page)) === true,
+      );
+      await page.click('[aria-label="Play video"]');
+      check(
+        "iPhone: tapping the overlay starts playback",
+        (await poll(page, videoPlaying)) === true,
+      );
       await ctx.close();
     }
 

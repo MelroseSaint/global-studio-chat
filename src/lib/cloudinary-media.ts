@@ -74,8 +74,21 @@ export function cloudinaryVideoUrl(
  * The attribute set for a responsive <img>: a transformed src plus a
  * srcSet across common viewport widths. Convex-storage fallback URLs get
  * plain `src` only.
+ *
+ * `sizes` MUST describe the real rendered width or the browser will pick a
+ * candidate that is far too large — a feed-column image rendered at ~600px
+ * that advertises `100vw` downloads the biggest candidate on desktop, and
+ * a DPR-3 phone asking for 1125px would grab a 1600px image for a ~350px
+ * slot. Defaults to `100vw` (correct for the fullscreen story viewer);
+ * call sites pass honest values for smaller slots. The candidate list caps
+ * at 1280 because no render slot in the app is wider than ~640 CSS px (the
+ * max the 1280 candidate covers at DPR 2) — nothing ever needs a 1600px
+ * download.
  */
-export function responsiveImageAttrs(url: string | null | undefined): {
+export function responsiveImageAttrs(
+  url: string | null | undefined,
+  sizes = "100vw",
+): {
   src?: string;
   srcSet?: string;
   sizes?: string;
@@ -83,9 +96,9 @@ export function responsiveImageAttrs(url: string | null | undefined): {
   if (!isCloudinaryImageUrl(url)) {
     return { src: url ?? undefined };
   }
-  const widths = [320, 640, 1080, 1600];
+  const widths = [320, 480, 640, 960, 1280];
   const srcSet = widths
     .map((w) => `${cloudinaryImageUrl(url, w)} ${w}w`)
     .join(", ");
-  return { src: cloudinaryImageUrl(url, 1080) ?? undefined, srcSet, sizes: "100vw" };
+  return { src: cloudinaryImageUrl(url, 960) ?? undefined, srcSet, sizes };
 }

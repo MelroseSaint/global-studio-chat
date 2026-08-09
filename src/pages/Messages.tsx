@@ -843,7 +843,10 @@ export function Messages() {
                                   </div>
                                 ) : m.media.kind === "image" ? (
                                   <img
-                                    {...responsiveImageAttrs(mediaUrl)}
+                                    {...responsiveImageAttrs(
+                                      mediaUrl,
+                                      "(min-width: 640px) 640px, 100vw",
+                                    )}
                                     alt=""
                                     className="max-h-72 rounded-lg object-cover"
                                   />

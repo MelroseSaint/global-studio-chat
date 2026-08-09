@@ -2,11 +2,12 @@ import {
   AudioLines,
   Heart,
   MessageCircle,
+  Play,
   Repeat2,
   Share2,
   VideoOff,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
@@ -102,6 +103,12 @@ function AutoplayOffChip() {
  * autoplay is permitted (muted inline playback; a user-gesture-started
  * video on iOS resumes via the same gesture permission it already holds,
  * and a rejected play() just stays paused).
+ *
+ * When autoplay is disabled (iOS/cellular — see src/lib/video-autoplay.ts)
+ * the card must not be a dark box: the component captures the video's
+ * first frame client-side (hidden CORS element → canvas) and shows it as
+ * the poster, plus a tap-to-play overlay. Tapping anywhere on the video
+ * starts playback and hands over to the native controls.
  */
 function AutoPauseVideo({
   src,
@@ -113,6 +120,16 @@ function AutoPauseVideo({
   autoPlay?: boolean;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
+  // A real poster frame for the no-autoplay case. Captured from a hidden
+  // CORS element — Convex storage and Cloudinary both send
+  // access-control-allow-origin — so no server-side thumbnail is needed.
+  // If the capture is blocked (CORS/codec), the play overlay's gradient
+  // still keeps the card from being a flat black box.
+  const [poster, setPoster] = useState<string>();
+  // True once the user tapped play (or autoplay started): the tap-to-play
+  // overlay gives way to the native controls from then on.
+  const [started, setStarted] = useState(false);
+
   useEffect(() => {
     const el = ref.current;
     if (el === null) return;
@@ -151,16 +168,96 @@ function AutoPauseVideo({
     };
   }, []);
 
+  // Capture the first frame for the poster when autoplay is disabled.
+  useEffect(() => {
+    if (autoPlay) return;
+    let cancelled = false;
+    const cap = document.createElement("video");
+    cap.crossOrigin = "anonymous";
+    cap.preload = "metadata";
+    cap.muted = true;
+    cap.playsInline = true;
+    cap.src = src;
+
+    const draw = () => {
+      if (cancelled) return;
+      try {
+        const w = cap.videoWidth;
+        const h = cap.videoHeight;
+        if (w === 0 || h === 0) return;
+        const scale = Math.min(1, 640 / w);
+        const cw = Math.round(w * scale);
+        const ch = Math.round(h * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        const ctx = canvas.getContext("2d");
+        if (ctx === null) return;
+        ctx.drawImage(cap, 0, 0, cw, ch);
+        setPoster(canvas.toDataURL("image/jpeg", 0.72));
+      } catch {
+        // Capture blocked (CORS or codec) — the play overlay's gradient
+        // still gives the card something to look at.
+      }
+    };
+    const seek = () => {
+      if (cancelled) return;
+      const t = Math.min(0.1, (cap.duration || 0) * 0.5);
+      try {
+        cap.currentTime = t;
+      } catch {
+        draw();
+        return;
+      }
+      // If the seek never lands, capture the current frame anyway.
+      window.setTimeout(draw, 1200);
+    };
+    cap.addEventListener("loadeddata", seek);
+    cap.addEventListener("seeked", draw);
+    return () => {
+      cancelled = true;
+      cap.removeEventListener("loadeddata", seek);
+      cap.removeEventListener("seeked", draw);
+      cap.removeAttribute("src");
+      cap.load();
+    };
+  }, [autoPlay, src]);
+
+  // The overlay anchors to the nearest positioned ancestor (the media
+  // container), which is exactly the video's box — see the call sites.
+  const showPlayOverlay = !autoPlay && !started;
   return (
-    <video
-      ref={ref}
-      src={src}
-      controls
-      autoPlay={autoPlay}
-      muted={autoPlay}
-      playsInline={autoPlay}
-      className={className}
-    />
+    <>
+      <video
+        ref={ref}
+        src={src}
+        poster={poster}
+        controls={autoPlay || started}
+        autoPlay={autoPlay}
+        muted={autoPlay}
+        playsInline
+        className={className}
+        onPlay={() => setStarted(true)}
+      />
+      {showPlayOverlay ? (
+        <button
+          type="button"
+          aria-label="Play video"
+          onClick={() => {
+            const v = ref.current;
+            if (v !== null) {
+              const p = v.play();
+              if (p) p.catch(() => {});
+            }
+          }}
+          className="absolute inset-0 flex cursor-pointer items-center justify-center border-0 bg-gradient-to-b from-black/5 to-black/30 p-0"
+        >
+          <span className="flex size-14 items-center justify-center rounded-full bg-white/90 text-black shadow-lg transition-transform hover:scale-105">
+            <Play className="size-7 translate-x-0.5 fill-current" />
+          </span>
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -196,7 +293,7 @@ export function PostMediaGrid({
           // format/quality) — the CDN serves the right size per screen
           // instead of the original file; Convex-storage URLs pass through.
           <img
-            {...responsiveImageAttrs(m.url)}
+            {...responsiveImageAttrs(m.url, "(min-width: 640px) 640px, 100vw")}
             alt=""
             className="max-h-[480px] w-full object-cover"
             loading="lazy"
@@ -234,11 +331,11 @@ export function PostMediaGrid({
         {media.map((m, i) => (
           <div
             key={i}
-            className="aspect-square overflow-hidden rounded-xl border bg-muted/40"
+            className="relative aspect-square overflow-hidden rounded-xl border bg-muted/40"
           >
             {m.kind === "image" && m.url ? (
               <img
-                {...responsiveImageAttrs(m.url)}
+                {...responsiveImageAttrs(m.url, "(min-width: 640px) 320px, 50vw")}
                 alt=""
                 className="size-full object-cover"
                 loading="lazy"
