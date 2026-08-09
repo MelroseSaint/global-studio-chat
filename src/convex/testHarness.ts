@@ -163,6 +163,41 @@ export const deleteNotification = mutation({
  * re-notifies; call again immediately and it stays quiet. Gated by the
  * same harness env pair as everything else in this module.
  */
+/**
+ * Clear a user's rolling activity budget for one action (the rateLimits
+ * bookkeeping rows checkRateLimit counts against). QA needs a real
+ * (non-test) actor for notification paths, and the only such account the
+ * harness can mint is the real admin — whose comment budget is shared
+ * with real usage and every other QA run in the same hour. A flood that
+ * draws on it can collide with an overlapping run and spuriously red the
+ * healthcheck, so the QA clears the admin's budget for the exact action
+ * before flooding, making the flood deterministic. Only deletes
+ * rate-limit bookkeeping — never touches the account or its data — and
+ * is gated by the same harness env pair as everything else in this
+ * module.
+ */
+export const clearRateLimitBudget = mutation({
+  args: { secret: v.string(), userId: v.id("users"), action: v.string() },
+  handler: async (ctx, { secret, userId, action }) => {
+    requireHarness(secret);
+    let cleared = 0;
+    for (;;) {
+      const rows = await ctx.db
+        .query("rateLimits")
+        .withIndex("by_user_action", (q) =>
+          q.eq("userId", userId).eq("action", action),
+        )
+        .take(500);
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+        cleared++;
+      }
+    }
+    return { cleared };
+  },
+});
+
 export const recheckAutoClosedNotification = mutation({
   args: {
     postId: v.id("posts"),

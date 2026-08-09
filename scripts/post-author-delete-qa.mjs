@@ -45,10 +45,10 @@
  *      a test-authored post — 12 real "comment" rows land on the
  *      author's bell and the unread badge ticks up by exactly 12. Deleting
  *      the post sweeps every one of them (bell + unread badge back to
- *      baseline), and the dangling-row purge finds zero. (12, not a larger
- *      flood: the admin's comments draw on the real account's 60/hour
- *      comment budget, so the flood stays modest enough that a nightly run
- *      plus occasional manual re-runs never trip it.)
+ *      baseline), and the dangling-row purge finds zero. (The harness
+ *      clears the admin's comment budget first, so the flood is
+ *      deterministic even when other healthcheck runs in the same hour
+ *      share the admin account.)
  *
  * All fixtures (users, posts, comments, notifications) are erased at the
  * end, so the site is left exactly as found. Run:
@@ -703,12 +703,18 @@ async function main() {
 
     // The flood: the REAL admin (a non-test actor) comments 12 times on
     // the recipient's post — every one lands a real "comment" row on the
-    // recipient's bell, exactly the leak class that used to dangle. 12 is
-    // a real flood but stays modest against the admin's 60-comments/hour
-    // budget, so a nightly run plus occasional manual re-runs in the same
-    // hour never trip it. (Admins are exempt from AI escalation, and the
-    // content mirrors the generic flood pattern the auto-close section
-    // already uses.)
+    // recipient's bell, exactly the leak class that used to dangle.
+    // (Admins are exempt from AI escalation, and the content mirrors the
+    // generic flood pattern the auto-close section already uses.) The
+    // admin's comment budget is shared with real usage and every other
+    // healthcheck run in the same hour — an overlapping run can leave too
+    // few units free and spuriously red the gate — so the harness clears
+    // the admin's comment budget first, making the flood deterministic.
+    await client.mutation(api.testHarness.clearRateLimitBudget, {
+      secret: HARNESS_SECRET,
+      userId: admin.userId,
+      action: "comment",
+    });
     const FLOOD_N = 12;
     for (let i = 0; i < FLOOD_N; i++) {
       await adm.mutation(api.posts.addComment, {
