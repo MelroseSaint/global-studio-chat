@@ -104,8 +104,9 @@ export interface PostItem {
   // autoClosed when the policy (not the author) is what closed it.
   commentsClosed?: boolean | null;
   commentsAutoClosed?: boolean | null;
-  // The auto-close policy's count threshold (server-owned constant).
+  // The auto-close policy's thresholds (server-owned constants).
   commentsAutoCloseCount?: number | null;
+  commentsAutoCloseAgeMs?: number | null;
   // The author's per-post opt-out of the auto-close policy.
   autoCloseComments?: boolean | null;
   originalityVerified?: boolean | null;

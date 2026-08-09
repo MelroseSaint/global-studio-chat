@@ -1040,9 +1040,11 @@ interface PostView extends Omit<Doc<"posts">, "location"> {
   // auto-close policy closed it; autoClosed when the policy did it.
   commentsClosed: boolean;
   commentsAutoClosed: boolean;
-  // The auto-close policy's count threshold, so the client can show a
-  // "nearing the limit" hint without duplicating the server constant.
+  // The auto-close policy's thresholds, so the client can describe the
+  // policy (notice copy, nearing hint) without duplicating the server
+  // constants.
   commentsAutoCloseCount: number;
+  commentsAutoCloseAgeMs: number;
 }
 
 async function withAuthor(
@@ -1149,6 +1151,7 @@ async function withAuthor(
     commentsClosed,
     commentsAutoClosed,
     commentsAutoCloseCount: COMMENT_AUTO_CLOSE_COUNT,
+    commentsAutoCloseAgeMs: COMMENT_AUTO_CLOSE_AGE_MS,
   };
 }
 

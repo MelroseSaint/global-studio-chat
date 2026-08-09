@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { canonicalBase, seoExcerpt, usePageMeta } from "@/lib/seo";
+import { autoClosePolicyPhrase } from "@/lib/comment-policy";
 import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
@@ -381,7 +382,12 @@ export function PostDetail() {
         <div className="flex items-center gap-2 border-b px-4 py-3 sm:px-5">
           <Lock className="size-4 shrink-0 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
-            Comments are closed on this post.
+            {post.commentsAutoClosed
+              ? `Comments are closed on this post — threads auto-close ${autoClosePolicyPhrase(
+                  post.commentsAutoCloseAgeMs,
+                  post.commentsAutoCloseCount,
+                )}.`
+              : "Comments are closed on this post."}
           </p>
         </div>
       ) : (

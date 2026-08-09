@@ -21,6 +21,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
+import { autoClosePolicyPhrase } from "@/lib/comment-policy";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import type { PostItem } from "@/components/PostCard";
 import { SharedPostCard } from "@/components/SharedPostCard";
@@ -401,7 +402,12 @@ export function CommentDialog({
         {locked ? (
           <p className="flex items-center gap-2 rounded-lg border border-muted bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground">
             <Lock className="size-4 shrink-0" />
-            Comments are closed on this post.
+            {post.commentsAutoClosed
+              ? `Comments are closed on this post — threads auto-close ${autoClosePolicyPhrase(
+                  post.commentsAutoCloseAgeMs,
+                  post.commentsAutoCloseCount,
+                )}.`
+              : "Comments are closed on this post."}
           </p>
         ) : (
           <div className="flex gap-3">

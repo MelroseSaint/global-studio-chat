@@ -46,6 +46,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { autoClosePolicyPhrase } from "@/lib/comment-policy";
 import { timeAgo } from "@/lib/format";
 import { standardById, STANDARD_PRINCIPLES } from "@/lib/standard";
 
@@ -445,6 +446,10 @@ export function Support() {
             {
               q: "How do I share a post in a comment?",
               a: "Two ways. From the Share dialog on any post, tap \"Share in a comment\" and pick the post you want to comment on. Or, in any comment box (post page, comment popup, or replies), tap \"Attach a post\". You can even just paste a PureWire post link straight into the comment text — it's detected automatically and an \"Attach as card\" offer appears with a live preview. Attach turns the link into a preview card (and removes the link from your text); Dismiss hides the offer. Post the comment and everyone sees the card.",
+            },
+            {
+              q: "Why are comments closed on some posts?",
+              a: `A post's author can close comments anytime from the ⋯ menu — that closes the thread for everyone, and "Reopen comments" brings it back. Threads also close on their own once they pass a set age or comment count (${autoClosePolicyPhrase()}) so old, crowded threads stay readable. On a post you wrote, "Keep comments open" opts that thread out of auto-closing, and "Reopen comments" opens a thread back up. When a thread is closed you'll see a lock notice in place of the comment box.`,
             },
             {
               q: "How do I block someone?",

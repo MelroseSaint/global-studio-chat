@@ -174,9 +174,10 @@ async function main() {
       `got ${postAfter?.commentCount}`,
     );
     check(
-      "the auto-close count threshold is hydrated on posts",
-      postAfter?.commentsAutoCloseCount === 100,
-      `got ${postAfter?.commentsAutoCloseCount}`,
+      "the auto-close thresholds are hydrated on posts",
+      postAfter?.commentsAutoCloseCount === 100 &&
+        postAfter?.commentsAutoCloseAgeMs === 30 * 24 * 60 * 60 * 1000,
+      `count ${postAfter?.commentsAutoCloseCount}, age ${postAfter?.commentsAutoCloseAgeMs}`,
     );
 
     // ── 2. Negative: a third party cannot delete ───────────────────────
