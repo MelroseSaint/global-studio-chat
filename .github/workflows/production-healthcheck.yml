@@ -1585,6 +1585,10 @@ jobs:
     # the static gate; the job is skipped on repositories that haven't
     # configured the harness yet, and runs on the same schedule as the
     # auth loop (every push to main + nightly + manual dispatch).
+    # Serialized after post-author-delete — both mint the SAME admin
+    # account's session, and running them in parallel tripped rate-limit
+    # budgets and session contention, producing transient CI flakes.
+    needs: post-author-delete
     name: Moderation reinstate loop
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -2305,7 +2309,7 @@ jobs:
     # source, so a parallel run would let the sync pick up the QA's live test
     # feed (a documented 10/11 flake from this exact race). Running them in
     # order keeps the nightly gate deterministic.
-    needs: blocklist-sync
+    needs: blocklist-sync, moderation-reinstate
     # The blocklist engine's full 54-check QA against production:
     # scripts/blocklist-qa.mjs seeds the core adult list, adds a domain and
     # asserts it blocks across every surface, verifies IDN->punycode and
