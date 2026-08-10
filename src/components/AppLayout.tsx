@@ -348,11 +348,19 @@ export function AppLayout() {
           labels at lg+. Below sm the bottom nav takes over. */}
       <aside className="sticky top-0 hidden h-[calc(100dvh-env(safe-area-inset-top))] w-20 shrink-0 flex-col border-r bg-sidebar pt-[env(safe-area-inset-top)] sm:flex lg:w-64">
         <div className="flex h-16 items-center px-4 sm:justify-center lg:justify-start lg:px-6">
-          <NavLink to="/home" className="flex items-center gap-2.5">
-            <img src="/logo.svg" alt="PureWire" className="size-8 rounded-xl" />
-            <span className="hidden font-bold tracking-tight lg:inline">
-              PureWire
-            </span>
+          <NavLink to="/home" className="flex items-center">
+            {/* Compact emblem in the icon-only rail; the full lockup once
+                the sidebar widens at lg+. */}
+            <img
+              src="/logo.svg"
+              alt="PureWire"
+              className="size-8 rounded-xl lg:hidden"
+            />
+            <img
+              src="/lockup.svg"
+              alt="PureWire — say it anyway"
+              className="hidden h-9 w-auto lg:block"
+            />
           </NavLink>
         </div>
         <nav className="flex flex-1 flex-col gap-1 p-3">
@@ -431,9 +439,12 @@ export function AppLayout() {
             carries the logo) and desktops the full sidebar, so showing
             this bar there would duplicate the brand mark. */}
         <header className="sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center border-b bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur sm:hidden">
-          <NavLink to="/home" className="flex items-center gap-2">
-            <img src="/logo.svg" alt="PureWire" className="size-7 rounded-lg" />
-            <span className="font-bold tracking-tight">PureWire</span>
+          <NavLink to="/home" className="flex items-center">
+            <img
+              src="/lockup.svg"
+              alt="PureWire — say it anyway"
+              className="h-8 w-auto"
+            />
           </NavLink>
         </header>
 

@@ -175,9 +175,12 @@ export function Privacy() {
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-4 py-4">
-          <Link to="/" className="flex items-center gap-2">
-            <img src="/logo.svg" alt="PureWire" className="size-8 rounded-xl" />
-            <span className="font-bold tracking-tight">PureWire</span>
+          <Link to="/" className="flex items-center">
+            <img
+              src="/lockup.svg"
+              alt="PureWire — say it anyway"
+              className="h-10 w-auto"
+            />
           </Link>
           <Button size="sm" asChild>
             <Link to={isAuthenticated ? "/home" : "/auth"}>
