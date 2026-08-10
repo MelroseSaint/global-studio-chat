@@ -76,62 +76,6 @@ jobs:
           name: healthcheck-log
           path: healthcheck.log
 
-      # SEO basics guard: every URL-bearing meta tag on the live homepage
-      # must resolve to the EXPECTED_SITE_URL host (never the Convex
-      # static-hosting mirror or a stale VITE_SITE_URL dashboard var), the
-      # OG locale must be present, and robots.txt + the XML sitemap must be
-      # served. A regression here is silent, so it fails the job and the
-      # alert step below opens an issue.
-      - name: SEO basics guard (canonical host, OG tags, robots, sitemap)
-        env:
-          # The one true host. Bump this here when a custom domain lands
-          # (and the PUREWIRE_SITE_URL default in vite.config.ts).
-          EXPECTED_SITE_URL: https://purewire.vercel.app
-        run: |
-          set -euo pipefail
-          html="$(curl -fsSL "$EXPECTED_SITE_URL/")"
-          for tag in \
-            'rel="canonical" href="' \
-            'property="og:url" content="' \
-            'property="og:image" content="' \
-            'name="twitter:image" content="' \
-            '"url": "' ; do
-            echo "$html" | grep -qF "${tag}${EXPECTED_SITE_URL}" \
-              || { echo "::error::tag '${tag}' does not resolve to $EXPECTED_SITE_URL"; exit 1; }
-          done
-          echo "$html" | grep -q 'property="og:locale"' \
-            || { echo "::error::og:locale meta is missing"; exit 1; }
-          curl -fsSL "$EXPECTED_SITE_URL/robots.txt" | grep -qi "sitemap:" \
-            || { echo "::error::robots.txt is not served"; exit 1; }
-          curl -fsSL "$EXPECTED_SITE_URL/sitemap.xml" | grep -q "<urlset" \
-            || { echo "::error::sitemap.xml is not served"; exit 1; }
-          echo "SEO basics OK: canonical + OG/twitter tags on $EXPECTED_SITE_URL"
-
-      # Sitemap URL health: the dynamic sitemap only earns its place if the
-      # URLs it submits actually render. Sample the newest posts + profiles
-      # (plus the fixed pages) and assert each returns 200 with REAL content
-      # — server-rendered Article/ProfilePage JSON-LD for posts/profiles,
-      # never a 404 or the SPA shell — so a visibility regression can never
-      # silently submit dead URLs. A failure here fails the job and opens
-      # the alert issue below.
-      - name: Sitemap URL health (sampled posts + profiles)
-        run: |
-          if [ "${{ github.event.inputs.full_sweep }}" = "true" ]; then
-            npm run qa:sitemap-urls:all
-          else
-            npm run qa:sitemap-urls
-          fi
-
-      # Dynamic rendering guard: a Googlebot fetch of the newest /post/:id
-      # and /u/:handle must return the server-rendered OG page (Article /
-      # ProfilePage JSON-LD) — never the SPA shell — while a plain browser
-      # must still get the SPA. A regression here means search engines see
-      # a blank app and every OG/JSON-LD investment is dead (or the reverse:
-      # browsers get a non-interactive page). Fails the job and opens the
-      # alert issue below, on every push to main + nightly.
-      - name: Dynamic rendering guard (Googlebot vs browser)
-        run: npm run qa:dynamic-render
-
       # Live PWA guard: the deployed /sw.js must serve real, rendered
       # JavaScript with a versioned cache name that matches the deployed
       # precache-manifest.json, and every manifest asset must come back as
@@ -214,6 +158,166 @@ jobs:
                 state_reason: "completed",
               });
               console.log(`Closed alert issue #${issue.number}.`);
+            }
+
+  seo-live-guard:
+    # The SEO checks used to live inside the auth-loop job AFTER its signup
+    # E2E step — so a failed E2E silently skipped all three of them, and an
+    # SEO regression went unmeasured on exactly the runs where the site was
+    # already struggling. They are now their own job: the SEO basics guard
+    # (canonical/OG tags, robots, sitemap), the sitemap URL health sweep,
+    # and the dynamic-rendering guard run on every push + nightly REGARDLESS
+    # of the auth loop's outcome, and open their own deduplicated alert
+    # issue (prod-seo-live) when any of them fails.
+    name: SEO live guard (basics + sitemap health + dynamic render)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # SEO basics guard: every URL-bearing meta tag on the live homepage
+      # must resolve to the EXPECTED_SITE_URL host (never the Convex
+      # static-hosting mirror or a stale VITE_SITE_URL dashboard var), the
+      # OG locale must be present, and robots.txt + the XML sitemap must be
+      # served. A regression here is silent, so it fails the job and opens
+      # the alert issue below.
+      - name: SEO basics guard (canonical host, OG tags, robots, sitemap)
+        env:
+          # The one true host. Bump this here when a custom domain lands
+          # (and the PUREWIRE_SITE_URL default in vite.config.ts).
+          EXPECTED_SITE_URL: ${{ vars.EXPECTED_SITE_URL || 'https://purewire.vercel.app' }}
+        run: |
+          set -euo pipefail
+          html="$(curl -fsSL "$EXPECTED_SITE_URL/")"
+          for tag in \
+            'rel="canonical" href="' \
+            'property="og:url" content="' \
+            'property="og:image" content="' \
+            'name="twitter:image" content="' \
+            '"url": "' ; do
+            echo "$html" | grep -qF "${tag}${EXPECTED_SITE_URL}" \
+              || { echo "::error::tag '${tag}' does not resolve to $EXPECTED_SITE_URL"; exit 1; }
+          done
+          echo "$html" | grep -q 'property="og:locale"' \
+            || { echo "::error::og:locale meta is missing"; exit 1; }
+          curl -fsSL "$EXPECTED_SITE_URL/robots.txt" | grep -qi "sitemap:" \
+            || { echo "::error::robots.txt is not served"; exit 1; }
+          curl -fsSL "$EXPECTED_SITE_URL/sitemap.xml" | grep -q "<urlset" \
+            || { echo "::error::sitemap.xml is not served"; exit 1; }
+          echo "SEO basics OK: canonical + OG/twitter tags on $EXPECTED_SITE_URL"
+
+      # Sitemap URL health: the dynamic sitemap only earns its place if the
+      # URLs it submits actually render. Sample the newest posts + profiles
+      # (plus the fixed pages) and assert each returns 200 with REAL content
+      # — server-rendered Article/ProfilePage JSON-LD for posts/profiles,
+      # never a 404 or the SPA shell — so a visibility regression can never
+      # silently submit dead URLs. Zero-dependency script (no npm ci).
+      - name: Sitemap URL health (sampled posts + profiles)
+        env:
+          SITEMAP_SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+          EXPECTED_SITEMAP_HOST: ${{ vars.EXPECTED_SITE_URL || 'https://purewire.vercel.app' }}
+        run: |
+          if [ "${{ github.event.inputs.full_sweep }}" = "true" ]; then
+            node scripts/sitemap-url-health.mjs --all
+          else
+            node scripts/sitemap-url-health.mjs
+          fi
+
+      # Dynamic rendering guard: a Googlebot fetch of the newest /post/:id,
+      # /u/:handle, and /about must return the server-rendered OG page
+      # (Article / ProfilePage / AboutPage JSON-LD, and the About page's
+      # fee text) — never the SPA shell — while a plain browser must still
+      # get the SPA. A regression here means search engines see a blank app
+      # and every OG/JSON-LD investment is dead.
+      - name: Dynamic rendering guard (Googlebot vs browser)
+        env:
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: node scripts/dynamic-render-check.mjs
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-seo-live";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `SEO live guard regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "One of the live SEO checks failed against production:",
+                "- SEO basics: a canonical/OG/twitter tag no longer resolves",
+                "  to the canonical host, og:locale is missing, or robots.txt /",
+                "  sitemap.xml are not served;",
+                "- sitemap URL health: a sitemap URL returned a 404 or the SPA",
+                "  shell, or its canonical/og:url drifted from the sitemap URL;",
+                "- dynamic rendering: a Googlebot fetch got the SPA shell",
+                "  instead of the server-rendered page (or a browser got the",
+                "  OG page).",
+                "",
+                "These checks are decoupled from the auth-loop E2E, so they run",
+                "on every push and nightly regardless of the signup step's",
+                "outcome.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Run the three checks locally to see which failed:",
+                "  node scripts/sitemap-url-health.mjs",
+                "  node scripts/dynamic-render-check.mjs",
+                "plus the SEO basics curl block in this workflow. This issue is",
+                "closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-seo-live";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open SEO live alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed SEO live alert issue #${issue.number}.`);
             }
 
   vercel-env-guard:
