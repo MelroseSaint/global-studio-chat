@@ -14,6 +14,7 @@
     "data:check": "node scripts/sync-blocklist-data.mjs && git diff --exit-code -- data public/data",
     "qa:shadowban": "node scripts/shadowban-qa.mjs",
     "qa:phishing": "node scripts/phishing-qa.mjs",
+    "qa:adult-content": "node scripts/adult-content-qa.mjs",
     "qa:blocklist": "node scripts/blocklist-qa.mjs",
     "qa:blocklist-sync": "node scripts/blocklist-sync-prod.mjs",
     "qa:follows": "node scripts/follows-e2e.mjs",

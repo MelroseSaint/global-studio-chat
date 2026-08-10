@@ -882,6 +882,38 @@ jobs:
               console.log(`Closed phishing alert issue #${issue.number}.`);
             }
 
+  adult-content-qa:
+    # Proves the sexual-solicitation detection layer works end-to-end:
+    # solicitation-flagged posts, comments, bios, and stories are rejected
+    # by the live deployment, while innocent text and verb forms pass.
+    # Also verifies circumvention normalization defeats zero-width chars,
+    # repeated characters, and separator insertion.
+    name: Adult-content policy QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: phishing-scan
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run the adult-content QA
+        if: env.TEST_HARNESS_SECRET != ''
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+        run: bash scripts/retry-once.sh adult-content.log npm run qa:adult-content
+      - name: Upload the adult-content QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adult-content-log
+          path: adult-content.log
+
   pwa-install-hint:
     # Verifies the PWA "Add to Home Screen" hint (PwaInstallHint.tsx)
     # renders where it should on the live site: iPhone + iPad (including
@@ -891,7 +923,7 @@ jobs:
     name: PWA install hint (live)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: phishing-scan
+    needs: adult-content-qa
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:

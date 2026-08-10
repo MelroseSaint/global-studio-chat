@@ -9,6 +9,7 @@ import { scanForRacism } from "@/lib/racism-guard";
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
 import { requireProof } from "./pow";
 import { scanBlockedContent } from "./blocklist";
+import { scanAdultContent } from "./adultContent";
 import { cloudinaryConfig } from "./mediaStorage";
 import { parseUrlHost } from "./phishing";
 import {
@@ -694,6 +695,16 @@ export const createPostInternal = internalMutation({
         error:
           phishScan.message ??
           "That looks like a phishing or scam link — nothing on PureWire may try to steal accounts, money, or personal information.",
+      };
+    }
+    // Sexual-solicitation gate: runs after the domain/URL blocklist so
+    // solicitation language is caught even when no link is present.
+    const adultScan = scanAdultContent(text);
+    if (adultScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "adult-solicitation-post");
+      return {
+        ok: false,
+        error: adultScan.message ?? "Sexual solicitation is not allowed on PureWire.",
       };
     }
     // If media is present but no scan verdict was provided (e.g. a client
@@ -1653,6 +1664,14 @@ export const addComment = mutation({
           "This link can't be posted as-is — share the direct link instead.",
       };
     }
+    const adultScan = scanAdultContent(text);
+    if (adultScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "adult-solicitation-comment");
+      return {
+        ok: false,
+        error: adultScan.message ?? "Sexual solicitation is not allowed on PureWire.",
+      };
+    }
     // Racism scan: comments get the same check. Blocked is rejected;
     // review-tier is also rejected — comments have no human queue.
     const racismCommentScan = scanForRacism(text);
@@ -2036,6 +2055,14 @@ export const editComment = mutation({
         ok: false,
         error:
           "This link can't be posted as-is — share the direct link instead.",
+      };
+    }
+    const adultScan = scanAdultContent(text);
+    if (adultScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "adult-solicitation-comment");
+      return {
+        ok: false,
+        error: adultScan.message ?? "Sexual solicitation is not allowed on PureWire.",
       };
     }
     const racismScan = scanForRacism(text);

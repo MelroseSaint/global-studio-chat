@@ -16,6 +16,7 @@ import {
   detectReciprocalFollow,
 } from "./farmNetwork";
 import { scanBlockedContent } from "./blocklist";
+import { scanAdultContent } from "./adultContent";
 import { scanForRacism } from "@/lib/racism-guard";
 import {
   enforceActive,
@@ -306,6 +307,14 @@ export const updateProfile = mutation({
               ? (bioScan.message ??
                 "That bio looks like a phishing or scam message — it can't be saved.")
               : "That bio can't be saved as-is — please rephrase. Some links and phrases aren't allowed on profiles for your safety.",
+        };
+      }
+      const adultBioScan = scanAdultContent(args.bio);
+      if (adultBioScan.status === "blocked") {
+        await escalateSilently(ctx, userId, 3, "scam", "adult-solicitation-profile");
+        return {
+          ok: false,
+          error: adultBioScan.message ?? "Sexual solicitation is not allowed on PureWire.",
         };
       }
     }

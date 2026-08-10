@@ -165,7 +165,7 @@ export function Support() {
               "Don't spam the platform.",
               "Don't use freedom as an excuse to take someone else's freedom away.",
               "No AI-generated content — say it yourself.",
-              "No adult platforms — don't share, post, or link to adult subscription, cam, video, clip, or chat sites.",
+              "No adult platforms or sexual solicitation — don't share, post, or link to adult sites or advertise sexual services anywhere on the platform.",
             ].map((rule, i) => (
               <li key={rule} className="flex items-start gap-2.5">
                 <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-oxide/15 text-[11px] font-bold text-oxide dark:text-oxide-light">

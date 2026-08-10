@@ -279,9 +279,9 @@ const standard = [
     detail: "Say it yourself. Text, images, audio, and video must be made by human hands.",
   },
   {
-    title: "No adult platforms.",
+    title: "No adult platforms or sexual solicitation.",
     detail:
-      "Adult subscription, cam, video, and chat sites can't be shared, posted, or linked on PureWire.",
+      "Adult sites and sexual-service advertising can't be shared, posted, or linked on PureWire.",
   },
 ];
 

@@ -4,6 +4,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 import { AI_MEDIA_STATUS, scanText } from "./aiContent";
 import { scanBlockedContent } from "./blocklist";
+import { scanAdultContent } from "./adultContent";
 import { scanForRacism } from "@/lib/racism-guard";
 import { publicUser } from "./privacy";
 import {
@@ -186,6 +187,14 @@ export const createStoryInternal = internalMutation({
         error:
           phishScan.message ??
           "That looks like a phishing or scam link — nothing on PureWire may try to steal accounts, money, or personal information.",
+      };
+    }
+    const adultScan = caption !== undefined ? scanAdultContent(caption) : null;
+    if (adultScan?.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "adult-solicitation-story");
+      return {
+        ok: false,
+        error: adultScan.message ?? "Sexual solicitation is not allowed on PureWire.",
       };
     }
     // Racism scan on the story caption: same three-tier pipeline as posts.

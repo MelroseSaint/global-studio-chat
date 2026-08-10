@@ -153,6 +153,7 @@ const standard = [
   "Don't use freedom as an excuse to take someone else's freedom away.",
   "No AI-generated content — say it yourself.",
   "No adult platforms — don't share, post, or link to adult subscription, cam, video, clip, or chat sites.",
+  "No sexual solicitation — don't advertise or offer sexual services, escorting, or pornographic content.",
 ];
 
 // ── Content policies at a glance ────────────────────────────
@@ -166,9 +167,9 @@ const policies = [
   },
   {
     icon: ShieldAlert,
-    title: "Prohibited domains & scams",
+    title: "Prohibited domains, scams & sexual solicitation",
     detail:
-      "Adult platforms and known scam patterns are blocked site-wide — in posts, comments, stories, bios, profile links, and before direct messages are encrypted. Links are resolved through redirect chains and obfuscation before a decision is made.",
+      "Adult platforms, known scam patterns, and sexual solicitation are blocked site-wide — in posts, comments, stories, bios, profile links, usernames, and before direct messages are encrypted. Links are resolved through redirect chains and obfuscation before a decision is made. Solicitation language is normalized to defeat circumvention (zero-width chars, repeated letters, separator insertion) and checked against a server-side policy applied identically to every content surface.",
   },
   {
     icon: Compass,

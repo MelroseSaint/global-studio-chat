@@ -3,6 +3,7 @@ import { v } from "convex/values";
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 
+import { scanAdultContent } from "./adultContent";
 import { cleanupMediaItems } from "./mediaCleanup";
 import { requireProof } from "./pow";
 import { publicUser } from "./privacy";
@@ -449,6 +450,18 @@ export const sendMessage = mutation({
       throw new Error("That post is no longer available");
     }
     await enforceRateLimit(ctx, me, "dm");
+    // Scan DM media URLs against the adult-content policy. The ciphertext
+    // is E2E-encrypted and never inspected — only server-visible metadata
+    // (media URLs) is checked. A blocked media URL rejects the message.
+    if (media?.url) {
+      const dmAdultScan = scanAdultContent(media.url);
+      if (dmAdultScan.status === "blocked") {
+        throw new Error(
+          dmAdultScan.message ??
+            "That media link isn't allowed on PureWire.",
+        );
+      }
+    }
     const now = Date.now();
     const messageId = await ctx.db.insert("dmMessages", {
       conversationId,
