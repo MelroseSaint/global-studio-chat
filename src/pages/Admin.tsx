@@ -584,11 +584,48 @@ const EXTRA_STAT_CARDS = [
   { key: "security", label: "Security", icon: ShieldAlert },
 ] as const;
 
+/** Valid section keys for the admin dropdown. */
+const ADMIN_TABS = [
+  "users",
+  "tickets",
+  "posts",
+  "aiReview",
+  "racismReview",
+  "storyReview",
+  "security",
+  "silenced",
+  "blocklist",
+  "announcements",
+] as const;
+
+/** Per-device persistence key for the last admin section (localStorage). */
+const ADMIN_TAB_STORAGE_KEY = "purewire_admin_section";
+
 function AdminDashboard({ meId }: { meId: string }) {
   const raw = useQuery(api.admin.dashboardStats);
   // Map backend key names to frontend tab keys where they differ.
   const stats = raw === undefined ? undefined : { ...raw };
-  const [tab, setTab] = useState("users");
+  // Restore the moderator's last section so a reload lands on the panel
+  // they were using — validated against the known keys (a stale value just
+  // falls back to Users). Same per-device localStorage discipline as the
+  // other UI preferences.
+  const [tab, setTab] = useState<string>(() => {
+    try {
+      const saved = window.localStorage.getItem(ADMIN_TAB_STORAGE_KEY);
+      return saved !== null && (ADMIN_TABS as readonly string[]).includes(saved)
+        ? saved
+        : "users";
+    } catch {
+      return "users";
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ADMIN_TAB_STORAGE_KEY, tab);
+    } catch {
+      // Private-mode storage can throw — persistence is best-effort.
+    }
+  }, [tab]);
   const [showMoreStats, setShowMoreStats] = useState(false);
   const [previewRunning, setPreviewRunning] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
