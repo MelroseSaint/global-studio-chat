@@ -35,20 +35,22 @@ export interface SolicitationVerdict {
 /** Zero-width and invisible characters used to bypass filters. */
 const ZERO_WIDTH_CHARS = /[\u200B\u200C\u200D\uFEFF\u00AD\u2060\u180E]/g;
 
-/** Characters commonly inserted between letters to dodge keyword filters. */
-const SEPARATOR_CHARS = /[\s._\-|*·•]+/g;
+/** Characters inserted between letters to dodge filters — removed entirely. */
+const SEPARATOR_CHARS = /[._\-|*·•]+/g;
 
-/** Repeated-character spam: "eeeeessssccccoooorrrrtttt" → "escort". */
+/** Repeated-character spam: "eeeessssccccoooorrrrtttt" → "escort". */
 function collapseRepeats(text: string): string {
-  return text.replace(/(.)\1{2,}/g, "$1$1");
+  return text.replace(/(.)\1+/g, "$1");
 }
 
-/** Strip zero-width chars, collapse repeats, squeeze separators. */
+/** Strip zero-width chars, collapse repeats, remove letter separators. */
 export function normalizeCircumvention(text: string): string {
   let cleaned = text.replace(ZERO_WIDTH_CHARS, "");
   cleaned = cleaned.toLowerCase().trim();
-  cleaned = cleaned.replace(SEPARATOR_CHARS, " ");
+  // Remove separator characters entirely (join "e.s.c.o.r.t" → "escort")
+  cleaned = cleaned.replace(SEPARATOR_CHARS, "");
   cleaned = collapseRepeats(cleaned);
+  // Normalize whitespace (multiple spaces → one)
   cleaned = cleaned.replace(/\s{2,}/g, " ").trim();
   return cleaned;
 }
