@@ -64,9 +64,19 @@ jobs:
           # The Resend key is required — the script reads the OTP codes from
           # Resend's API. Add it under Settings > Secrets > Actions.
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          # Overridable via repository variables; default to production.
-          SITE_URL: ${{ vars.SITE_URL || 'https://outgoing-seal-727.convex.site' }}
+          # The E2E must run against the MAIN host (purewire.vercel.app): the
+          # mirror (outgoing-seal-727.convex.site) serves a static bundle that
+          # can predate the Cloudinary signed-upload code, which would make
+          # the media checks fail for the wrong reason. Default to production;
+          # overridable via repository variables.
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+          # Cloudinary creds enable the signed-destroy confirmation step —
+          # without them the final "asset is gone" check can't verify the
+          # app's cleanup actually destroyed the uploaded media.
+          CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME || 'saintscloud' }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         run: bash scripts/retry-once.sh healthcheck.log npm run qa:signup-e2e
 
       - name: Upload the E2E log

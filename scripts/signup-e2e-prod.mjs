@@ -36,7 +36,10 @@
  *
  *   RESEND_API_KEY=<key> npm run qa:signup-e2e
  *
- * Overrides: SITE_URL (default https://outgoing-seal-727.convex.site),
+ * Overrides: SITE_URL (default https://purewire.vercel.app — the MAIN host,
+ * which serves the current bundle with the Cloudinary signed-upload code;
+ * the mirror's static bundle can predate it and would fail the media
+ * checks for the wrong reason),
  * CONVEX_URL (default the same deployment's backend), RESEND_API_URL
  * (default https://api.resend.com), HEADED=1 to watch the browser on
  * screen, BROWSER_TIMEOUT_MS (default 20000).
@@ -55,7 +58,7 @@ import { api } from "../src/convex/_generated/api.js";
 
 import { deflateSync } from "node:zlib";
 
-const SITE_URL = process.env.SITE_URL ?? "https://outgoing-seal-727.convex.site";
+const SITE_URL = process.env.SITE_URL ?? "https://purewire.vercel.app";
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
 const RESEND_API_URL = process.env.RESEND_API_URL ?? "https://api.resend.com";
