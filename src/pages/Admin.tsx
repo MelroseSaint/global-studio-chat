@@ -30,9 +30,9 @@ import {
   UserCheck,
   Users,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useInView } from "react-intersection-observer";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
@@ -637,11 +637,12 @@ function AdminDashboard({ meId }: { meId: string }) {
   const raw = useQuery(api.admin.dashboardStats);
   // Map backend key names to frontend tab keys where they differ.
   const stats = raw === undefined ? undefined : { ...raw };
-  // Restore the moderator's last section so a reload lands on the panel
-  // they were using — validated against the known keys (a stale value just
-  // falls back to Users). Same per-device localStorage discipline as the
-  // other UI preferences.
-  const [tab, setTab] = useState<string>(() => {
+  // The active section lives in the URL (?section=...) so a deep link to
+  // any panel works and back/forward moves between sections. A validated
+  // URL param wins; a param-less URL falls back to per-device memory
+  // (kept in lockstep by the save effect below), then Users.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [memoryTab] = useState<string>(() => {
     try {
       const saved = window.localStorage.getItem(ADMIN_TAB_STORAGE_KEY);
       return saved !== null && (ADMIN_TABS as readonly string[]).includes(saved)
@@ -651,6 +652,24 @@ function AdminDashboard({ meId }: { meId: string }) {
       return "users";
     }
   });
+  const urlSection = searchParams.get("section");
+  const tab =
+    urlSection !== null && (ADMIN_TABS as readonly string[]).includes(urlSection)
+      ? urlSection
+      : memoryTab;
+  const setTab = useCallback(
+    (next: string) => {
+      const target = (ADMIN_TABS as readonly string[]).includes(next)
+        ? next
+        : "users";
+      const params = new URLSearchParams(searchParams);
+      params.set("section", target);
+      // Default navigation pushes, so every switch becomes a history entry
+      // and back/forward moves between sections.
+      setSearchParams(params);
+    },
+    [searchParams, setSearchParams]
+  );
   useEffect(() => {
     try {
       window.localStorage.setItem(ADMIN_TAB_STORAGE_KEY, tab);
