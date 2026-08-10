@@ -387,6 +387,13 @@ export function Landing() {
             >
               The Standard
             </button>
+            <Link
+              to="/about"
+              onClick={() => setNavigating(true)}
+              className={cn(BTN_BASE, BTN_GHOST, BTN_SM, "hidden sm:inline-flex")}
+            >
+              About
+            </Link>
             {/* Session restore on refresh: while the stored token is still
                 resolving, don't render the auth CTAs — a signed-in member
                 would otherwise see "Sign in"/"Get started" flash for a
@@ -737,6 +744,13 @@ export function Landing() {
             © {new Date().getFullYear()} PureWire. Say it anyway — no ads, ever.
           </p>
           <div className="flex items-center gap-4">
+            <Link
+              to="/about"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
+              About
+            </Link>
             <Link
               to="/privacy"
               onClick={() => setNavigating(true)}

@@ -345,8 +345,8 @@ export function Privacy() {
           </div>
           <p>© {new Date().getFullYear()} PureWire. Say it anyway — no ads, ever.</p>
           <div className="flex items-center gap-4">
-            <Link to="/support" className="hover:text-foreground hover:underline">
-              Support
+            <Link to="/about" className="hover:text-foreground hover:underline">
+              About
             </Link>
             <Link to="/terms" className="hover:text-foreground hover:underline">
               Terms

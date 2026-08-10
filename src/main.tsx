@@ -35,6 +35,7 @@ const NotFound = lazy(() =>
 
 // Pages export named components, so each lazy factory remaps its named export
 // onto the `default` that React.lazy resolves.
+const About = lazy(() => import("@/pages/About").then((m) => ({ default: m.About })));
 const Admin = lazy(() => import("@/pages/Admin").then((m) => ({ default: m.Admin })));
 const Auth = lazy(() => import("@/pages/Auth").then((m) => ({ default: m.Auth })));
 const Explore = lazy(() =>
@@ -72,6 +73,7 @@ const Terms = lazy(() => import("@/pages/Terms").then((m) => ({ default: m.Terms
 const PUBLIC_ELEMENTS: Record<(typeof PUBLIC_ROUTES)[number], ReactNode> = {
   "/": <Landing />,
   "/auth": <Auth />,
+  "/about": <About />,
   "/privacy": <Privacy />,
   "/terms": <Terms />,
   "/status": <Status />,
