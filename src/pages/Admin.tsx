@@ -67,16 +67,15 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
 } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
 import { useOfflineMutation } from "@/hooks/use-offline-mutation";
@@ -744,21 +743,40 @@ function AdminDashboard({ meId }: { meId: string }) {
         </div>
       )}
 
-      {/* Tab bar: single scrollable row — never wraps, never overlaps. */}
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex w-full gap-1 overflow-x-auto">
-          <TabsTrigger value="users" className="shrink-0">Users</TabsTrigger>
-          <TabsTrigger value="tickets" className="shrink-0">Tickets</TabsTrigger>
-          <TabsTrigger value="posts" className="shrink-0">Content</TabsTrigger>
-          <TabsTrigger value="aiReview" className="shrink-0">AI review</TabsTrigger>
-          <TabsTrigger value="racismReview" className="shrink-0">Racism</TabsTrigger>
-          <TabsTrigger value="storyReview" className="shrink-0">Stories</TabsTrigger>
-          <TabsTrigger value="security" className="shrink-0">Security</TabsTrigger>
-          <TabsTrigger value="silenced" className="shrink-0">Silenced</TabsTrigger>
-          <TabsTrigger value="blocklist" className="shrink-0">Blocklist</TabsTrigger>
-          <TabsTrigger value="announcements" className="shrink-0">Announcements</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      {/* Section picker: a grouped dropdown so the ten panels stay
+          organized on every screen width — the old single scrollable tab
+          row squeezed and overflowed on tablets. */}
+      <div className="flex items-center gap-2 border-b px-4 py-3 sm:px-5">
+        <span className="text-sm font-medium text-muted-foreground">
+          Section
+        </span>
+        <Select value={tab} onValueChange={setTab}>
+          <SelectTrigger className="w-52">
+            <SelectValue placeholder="Choose a section" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectLabel>Moderation</SelectLabel>
+              <SelectItem value="aiReview">AI review</SelectItem>
+              <SelectItem value="racismReview">Racism</SelectItem>
+              <SelectItem value="storyReview">Stories</SelectItem>
+            </SelectGroup>
+            <SelectGroup>
+              <SelectLabel>Accounts</SelectLabel>
+              <SelectItem value="users">Users</SelectItem>
+              <SelectItem value="silenced">Silenced</SelectItem>
+              <SelectItem value="security">Security</SelectItem>
+            </SelectGroup>
+            <SelectGroup>
+              <SelectLabel>Platform</SelectLabel>
+              <SelectItem value="posts">Content</SelectItem>
+              <SelectItem value="tickets">Tickets</SelectItem>
+              <SelectItem value="blocklist">Blocklist</SelectItem>
+              <SelectItem value="announcements">Announcements</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
 
       {tab === "users" && <UsersPanel meId={meId} />}
       {tab === "tickets" && <TicketsPanel />}
