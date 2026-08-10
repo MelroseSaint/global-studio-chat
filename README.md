@@ -485,6 +485,7 @@ for the same reason.
 | `npm run qa:dynamic-render` | Googlebot fetch of `/u/:handle` + `/post/:id` + `/about` returns server-rendered HTML, never the SPA shell — and `/about` must carry the "no hidden fees" fee-disclosure text |
 | `npm run qa:vercel-env` | `PUREWIRE_SITE_URL` still set; stale `VITE_SITE_URL` fails CI |
 | `npm run qa:vercel-build-warnings` | The shipped deploy's build log contains no canonical-host warnings |
+| `npm run qa:robots-live` | Live robots.txt contract: the mirror must still `Disallow: /` everything (no leaked `Allow`), and the main host must keep its exact canonical Sitemap line — a broken robots.txt is silent for users, so it's guarded on every push + nightly |
 
 ### Browser-session QA (JWT + refresh token)
 
