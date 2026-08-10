@@ -90,11 +90,14 @@ async function backendChecks(client) {
 
   // A creates both posts. Content is unique per run and word-sets are
   // disjoint between the two posts so the near-duplicate gate can't flag
-  // the QA's own fixture as stolen.
+  // the QA's own fixture as stolen. The shared-post word-set is ALSO
+  // disjoint from dm-share-qa's ("Midnight lighthouse keeper...") — the
+  // two share QAs run in parallel in the healthcheck, and identical
+  // word-sets across runs trip the originality gate against each other.
   const ac = new ConvexHttpClient(CONVEX_URL);
   ac.setAuth(a.token);
   const sharedRes = await ac.action(api.posts.createPost, {
-    content: `Midnight lighthouse keeper lantern storm clouds ${stamp}`,
+    content: `Velvet orchids river canyon morning mist ${stamp}`,
     creatorDisclosure: "human-made",
     ...(await powProof(client)),
   });
@@ -245,7 +248,7 @@ async function browserChecks(client, fx) {
     const body = (await page.locator("body").innerText()) ?? "";
     check(
       "A's composer shows the sharing preview",
-      body.includes(`Midnight lighthouse keeper lantern storm clouds ${fx.stamp}`) ||
+      body.includes(`Velvet orchids river canyon morning mist ${fx.stamp}`) ||
         body.includes("Sharing a post"),
     );
     const removeBtn = await page
@@ -266,7 +269,7 @@ async function browserChecks(client, fx) {
     );
     check(
       "the thread renders the shared-post card",
-      bodyAfter.includes(`Midnight lighthouse keeper lantern storm clouds ${fx.stamp}`),
+      bodyAfter.includes(`Velvet orchids river canyon morning mist ${fx.stamp}`),
     );
     const viewPost = await page
       .getByText("View post", { exact: true })

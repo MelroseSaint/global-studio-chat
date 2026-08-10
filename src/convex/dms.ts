@@ -466,10 +466,13 @@ export const sendMessage = mutation({
     // (post + conversation attached) so the bell can say "shared a post
     // with you" and open the exact thread — instead of the generic DM
     // ping. Only the reference is metadata; the caption stays encrypted.
-    // QA-harness senders never ping the recipient's bell — the message
-    // still lands in the thread (QA round trips stay honest), only the
-    // notification is suppressed.
-    if (!(await isTestAccount(ctx, me))) {
+    // QA-harness senders never ping a REAL member's bell — the message
+    // still lands in the thread (QA round trips stay honest) and a
+    // test-to-test notification still flows (the dm-share QA asserts it),
+    // but a test account can never ring a real user. The recipient check
+    // (not the sender's) is what makes test engagement invisible to real
+    // members while keeping the QA's own fixture observable.
+    if ((await isTestAccount(ctx, recipientId)) || !(await isTestAccount(ctx, me))) {
       await ctx.db.insert("notifications", {
         userId: recipientId,
         type: sharedPostId !== undefined ? "dm-share" : "dm",

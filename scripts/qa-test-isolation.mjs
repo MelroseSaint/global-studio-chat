@@ -105,8 +105,11 @@ async function run() {
   ac.setAuth(a.token);
 
   // 2. A acts like a normal member: posts, follows, likes, comments.
+  // Word-set is disjoint from the other parallel QAs' fixtures (dm-share
+  // uses "Midnight lighthouse...", comment-share "Velvet orchids...") so
+  // the near-duplicate gate can't flag a parallel run's fixture as stolen.
   const postRes = await ac.action(api.posts.createPost, {
-    content: `Midnight lighthouse keeper lantern storm clouds ${stamp}`,
+    content: `Crimson maple ember twilight snowfall ${stamp}`,
     creatorDisclosure: "human-made",
     ...(await powProof(ac)),
   });
@@ -161,7 +164,7 @@ async function run() {
     await ac.mutation(api.posts.likePost, { postId: adminPost._id });
     await ac.mutation(api.posts.addComment, {
       postId: adminPost._id,
-      content: `Midnight lighthouse keeper lantern storm clouds ${stamp}`,
+      content: `Crimson maple ember twilight snowfall ${stamp}`,
       ...(await powProof(ac)),
     });
   }
