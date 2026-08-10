@@ -32,6 +32,7 @@
     "qa:admin-workload": "node scripts/admin-workload-qa.mjs",
     "qa:admin-auth-browser": "node scripts/admin-auth-browser-qa.mjs",
     "qa:admin-responsive": "node scripts/qa-admin-responsive.mjs",
+    "qa:shell-layout": "node scripts/qa-shell-layout.mjs",
     "qa:evidence-no-resemble": "node scripts/evidence-no-resemble-qa.mjs",
     "qa:pages-inflation": "node scripts/qa-pages-inflation.mjs",
     "qa:count-drift": "node scripts/count-drift-qa.mjs",

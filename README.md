@@ -460,6 +460,7 @@ for the same reason.
 | `npm run qa:admin-ip` | Backend-verified admin IP binding (harness-gated) |
 | `npm run qa:admin-auth-browser` | Admin sign-in driven in a real browser (JWT + refresh token) |
 | `npm run qa:admin-responsive` | Admin dashboard at 320/390/768 px widths |
+| `npm run qa:shell-layout` | Signed-in shell (feed, explore, messages, notifications, profile, settings) at mobile 390 / tablet 768 / desktop 1440 px: no overflow, no viewport leaks, feed tab labels unclipped, correct nav surface per width |
 | `npm run qa:pages-inflation` | Page inflation at 800px with root-font-size scaling |
 | `npm run qa:cloudinary-health` | Unsigned-preset upload probe |
 | `npm run qa:session-audit` | Session-lifetime guarantees |

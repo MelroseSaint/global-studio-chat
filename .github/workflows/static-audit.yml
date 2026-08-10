@@ -299,6 +299,27 @@ jobs:
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
         run: npm run qa:pages-inflation
 
+  shell-layout-qa:
+    name: Shell layout QA (mobile/tablet/desktop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run the signed-in shell layout QA
+        if: env.ADMIN_PASSWORD != ''
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: npm run qa:shell-layout
+
   shadowban-qa:
     name: Silent moderation QA
     runs-on: ubuntu-latest
