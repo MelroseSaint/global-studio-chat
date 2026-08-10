@@ -140,6 +140,61 @@ async function main() {
     console.log("No qaFixture posts to erase.");
   }
 
+  // Public-surface QA-content sweep: posts that CARRY QA stamps or leaked
+  // blocked-solicitation text but were never qaFixture-marked (created by
+  // older QA versions that posted as the real admin before the fixture
+  // marker existed). These sit on the public feed exactly like the 5-post
+  // "adult-content QA" leak — real users see escort-service spam, which is
+  // the worst kind of test residue. Erase every match through the admin
+  // session (deletePost accepts the admin role), then FAIL the sweep if
+  // anything was found: a QA that leaves unmarked content on the public
+  // feed is a regression that must be loud, not silently swept away.
+  const QA_STAMP_RE = /\bqa[-_][a-z0-9-]{3,}/i;
+  const SOLICIT_RE = /escort|e\.s\.c\.o\.r\.t|eeeesssscccooorrrrtttt|sex for money/i;
+  const isClutter = (t) => QA_STAMP_RE.test(t ?? "") || SOLICIT_RE.test(t ?? "");
+  const seenPostIds = new Set();
+  let clutterFound = 0;
+  let clutterDeleted = 0;
+  for (const filter of ["global", "media", "latest"]) {
+    let cursor = null;
+    for (let page = 0; page < 12; page++) {
+      const res = await client.query(api.posts.feed, {
+        paginationOpts: { numItems: 100, cursor },
+        filter,
+      });
+      for (const p of res.page ?? []) {
+        if (!isClutter(p.content) || seenPostIds.has(p._id)) continue;
+        seenPostIds.add(p._id);
+        clutterFound++;
+        try {
+          await adminClient.mutation(api.posts.deletePost, { postId: p._id });
+          clutterDeleted++;
+          console.log(
+            `  ✅ public-feed QA post ${String(p._id).slice(0, 8)} erased (${JSON.stringify(
+              p.content,
+            )})`,
+          );
+        } catch (err) {
+          console.error(
+            `  ❌ public-feed QA post ${String(p._id).slice(0, 8)} delete failed: ${
+              err instanceof Error ? err.message : err
+            }`,
+          );
+        }
+      }
+      if (res.isDone || !res.continueCursor) break;
+      cursor = res.continueCursor;
+    }
+  }
+  if (clutterFound > 0) {
+    console.log(
+      `\nPublic-surface QA-content sweep: ${clutterDeleted}/${clutterFound} posts erased — a QA leaked unmarked content onto the public feed.`,
+    );
+    process.exitCode = 1;
+  } else {
+    console.log("No unmarked QA content on the public feed.");
+  }
+
   // Every erasure — including test sweeps — writes a one-way removalLog
   // row. Purge the reserved-prefix entries so QA activity never pollutes
   // the audit log a real admin reads. Harness-gated, removalLog-only.
