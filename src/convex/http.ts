@@ -4,6 +4,7 @@ import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { auth } from "@/convex/auth";
 import { verifyAdminIp } from "./adminIp";
 import { postOg, profileOg } from "./og";
+import { robotsTxt } from "./robots";
 import { sitemapXml } from "./sitemap";
 import { components } from "./_generated/api";
 
@@ -41,6 +42,18 @@ http.route({
   path: "/sitemap.xml",
   method: "GET",
   handler: sitemapXml,
+});
+
+// Host-aware robots.txt: the canonical domain keeps allow + sitemap, every
+// other host (the Convex static mirror, preview deploys) gets a full
+// disallow so Google ranks purewire.vercel.app, never the mirror. Without
+// this, the static public/robots.txt ("Allow: /") would be served here too
+// and the mirror would stay crawlable. Registered before the static routes
+// so the SPA catch-all can never shadow it.
+http.route({
+  path: "/robots.txt",
+  method: "GET",
+  handler: robotsTxt,
 });
 
 // Backend-verified admin IP binding (see adminIp.ts). The admin client

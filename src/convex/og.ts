@@ -42,6 +42,17 @@ export const SITE_URL = (process.env.PUREWIRE_SITE_URL ?? "https://purewire.verc
   "",
 );
 
+/**
+ * True when the request arrived on the canonical production host rather
+ * than the Convex static mirror (outgoing-seal-727.convex.site) or a
+ * preview deployment. Shared with the host-aware robots.txt route
+ * (robots.ts) so both surfaces agree on which host search engines may
+ * index.
+ */
+export function isCanonicalHost(request: Request): boolean {
+  return new URL(request.url).host === new URL(SITE_URL).host;
+}
+
 /** Escape a string for use inside an HTML attribute. */
 function esc(s: string): string {
   return s
@@ -157,6 +168,15 @@ export const postOg = httpAction(async (ctx, request) => {
     post.mediaUrls?.find((m) => m.kind === "image" && m.url)?.url ??
     `${SITE_URL}/og-image.png`;
   const imageIsBrand = image === `${SITE_URL}/og-image.png`;
+  // The middleware forwards the real URL as ?u=; a page fetched that way
+  // (or directly on the canonical host) is the canonical page and stays
+  // index,follow. A direct hit on the Convex mirror without ?u= is a
+  // duplicate surface — noindex so Google never ranks the mirror over
+  // purewire.vercel.app.
+  const robotsMeta =
+    url.searchParams.get("u") !== null || isCanonicalHost(request)
+      ? "index, follow"
+      : "noindex, nofollow";
   const authorName = post.author?.name ?? post.author?.username ?? null;
   const articleLd = jsonLd({
     "@context": "https://schema.org",
@@ -180,7 +200,7 @@ export const postOg = httpAction(async (ctx, request) => {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="index, follow" />
+<meta name="robots" content="${robotsMeta}" />
 <link rel="canonical" href="${esc(canonical)}" />
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(metaDescription)}" />
@@ -263,6 +283,12 @@ export const profileOg = httpAction(async (ctx, request) => {
   // Prefer the profile avatar; otherwise fall back to the brand card.
   const image = profile.avatarUrl ?? `${SITE_URL}/og-image.png`;
   const imageIsBrand = image === `${SITE_URL}/og-image.png`;
+  // Same canonical-page rule as postOg: ?u= (or a direct canonical-host
+  // hit) stays index,follow; a bare hit on the Convex mirror is noindex.
+  const robotsMeta =
+    url.searchParams.get("u") !== null || isCanonicalHost(request)
+      ? "index, follow"
+      : "noindex, nofollow";
 
   const profileLd = jsonLd({
     "@context": "https://schema.org",
@@ -289,7 +315,7 @@ export const profileOg = httpAction(async (ctx, request) => {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="index, follow" />
+<meta name="robots" content="${robotsMeta}" />
 <link rel="canonical" href="${esc(canonical)}" />
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(metaDescription)}" />
