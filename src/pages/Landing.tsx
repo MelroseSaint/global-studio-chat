@@ -368,9 +368,12 @@ export function Landing() {
       ) : null}
       <header className="sticky top-0 z-40 border-b bg-background/80 pt-[env(safe-area-inset-top)] backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4">
-          <Link to="/" className="flex items-center gap-2">
-            <img src="/logo.svg" alt="PureWire" className="size-8 rounded-xl" />
-            <span className="font-bold tracking-tight">PureWire</span>
+          <Link to="/" className="flex items-center">
+            <img
+              src="/lockup.svg"
+              alt="PureWire — say it anyway"
+              className="h-10 w-auto"
+            />
           </Link>
           <nav className="flex items-center gap-2">
             <button
