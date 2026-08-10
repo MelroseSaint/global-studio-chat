@@ -61,12 +61,19 @@ async function main() {
   // escalates 3 silent points and the shadowban threshold is 6, so two
   // blocked attempts would sandbox the account — and sandboxed accounts
   // skip scanning, which would silently break the checks after the pair.
-  const mkUser = (tag) =>
-    client.mutation(api.testHarness.createTestUser, {
+  // Every user is tracked so the finally block can erase them even if a
+  // check crashes mid-run — a leftover qa_bl_ post would otherwise poison
+  // the next run's near-duplicate gate for 7 days.
+  const createdUsers = [];
+  const mkUser = async (tag) => {
+    const u = await client.mutation(api.testHarness.createTestUser, {
       name: `QA BL ${tag}`,
       username: `qa_bl_${tag}_${stamp}`,
       secret: SECRET,
     });
+    createdUsers.push(u.userId);
+    return u;
+  };
   const admin = await client.mutation(api.testHarness.mintAdminSession, {
     secret: SECRET,
   });
@@ -444,8 +451,15 @@ async function main() {
     // clean — the chain walk, not a substring test, is what enforces this.
     const negUser = await mkUser("neg");
     client.setAuth(negUser.token);
+    // The stamp rides INSIDE the URL path, not trailing the text: the
+    // near-duplicate gate scores word-bigram shingles, and a fixed
+    // host/path shape whose only variance is a trailing token shares
+    // ~5/6 shingles (Jaccard 0.714 >= 0.7) with the SAME fixture from an
+    // earlier run — flagging it "already exists" and redding the QA even
+    // when the matcher is correct. A per-run path token keeps cross-run
+    // similarity at 0.5, so the fixture can never self-poison.
     const lookalike = await client.action(api.posts.createPost, {
-      content: `https://notonlyfans.com/post ${stamp}`,
+      content: `https://notonlyfans.com/${stamp}/post`,
       creatorDisclosure: 'human-made',
       ...(await powProof(client))});
     check(
@@ -453,7 +467,7 @@ async function main() {
       lookalike?.ok === true,
     );
     const embedded = await client.action(api.posts.createPost, {
-      content: `https://onlyfans.com.example.com/post ${stamp}`,
+      content: `https://onlyfans.com.example.com/${stamp}/post`,
       creatorDisclosure: 'human-made',
       ...(await powProof(client))});
     check(
@@ -461,7 +475,7 @@ async function main() {
       embedded?.ok === true,
     );
     const cleanDom = await client.action(api.posts.createPost, {
-      content: `https://sub.onlyfans.com.example.org/post ${stamp}`,
+      content: `https://sub.onlyfans.com.example.org/${stamp}/post`,
       creatorDisclosure: 'human-made',
       ...(await powProof(client))});
     check(
@@ -504,6 +518,26 @@ async function main() {
     // Runs even if the try block crashes mid-test, so QA artefacts
     // (domains, patterns, sources, throwaway users) never accumulate.
   } finally {
+    // Erase this run's own throwaway users FIRST — deleteTestUser works
+    // without auth and only touches qa_ accounts (the same pattern the
+    // other QAs use). If the admin mint / IP verify below throws, the
+    // catch would otherwise swallow the erase and leave the run's posts
+    // in the table, where the near-duplicate gate then flags the next
+    // run's identical-shape fixture as "already exists" for 7 days.
+    try {
+      for (const userId of createdUsers) {
+        await client
+          .mutation(api.testHarness.deleteTestUser, { userId, secret: SECRET })
+          .catch(() => {});
+      }
+      if (createdUsers.length > 0) {
+        console.log(
+          `  🧹 Erased ${createdUsers.length} throwaway QA user(s).`,
+        );
+      }
+    } catch (_) {
+      // Best-effort: a cleanup failure must never mask the real test outcome.
+    }
     try {
       const cleanupAdmin = await client.mutation(api.testHarness.mintAdminSession, { secret: SECRET });
       client.setAuth(cleanupAdmin.token);
