@@ -281,11 +281,24 @@ const main = async () => {
     );
   }
 
-  // 4) Content quality on the fetched pages (absolute floor).
+  // 4) Content quality on the fetched pages (absolute floor). Score the
+  //    visible BODY (head/scripts/styles stripped): the meta/og/twitter/
+  //    JSON-LD tags repeat the excerpt by design (share cards), and raw-
+  //    document scoring would count that duplication as repetition.
   const scores = {};
   for (const t of targets) {
     if (!t.body) continue;
-    const cq = runPy("content_quality.py", ["--json", t.file]);
+    const bodyOnly = join(tmp, `body-${t.kind}.html`);
+    writeFileSync(
+      bodyOnly,
+      (t.body ?? "")
+        .replace(/<head[\s\S]*?<\/head>/gi, " ")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<noscript[\s\S]*?<\/noscript>/gi, " "),
+      "utf8",
+    );
+    const cq = runPy("content_quality.py", ["--json", bodyOnly]);
     let quality = null;
     try {
       quality = JSON.parse(cq.stdout).overall_quality;

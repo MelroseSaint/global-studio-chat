@@ -122,6 +122,20 @@ const runPy = (script, args) => {
 
 const tmp = mkdtempSync(join(tmpdir(), "seo-sweep-"));
 
+// Strip the document head + scripts/styles so content_quality scores the
+// VISIBLE article body, not the raw document: meta/og/twitter/JSON-LD tags
+// legitimately repeat the same excerpt (that's how share cards work), and
+// scoring the raw HTML counts that duplication as "repetitive content" —
+// a false positive that grows with post length. Body-only is what a human
+// (or a crawler dumping visible text) would actually read.
+function visibleBodyHtml(raw) {
+  return raw
+    .replace(/<head[\s\S]*?<\/head>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
+}
+
 // --- per-page audit ----------------------------------------------------------
 function auditPage({ kind, url, file, site }) {
   const label = `${kind} ${url.replace(site, "")}`;
@@ -184,7 +198,12 @@ function auditPage({ kind, url, file, site }) {
   );
 
   // 4) Content quality: overall floor + NEW-flag regression vs baseline.
-  const cq = runPy("content_quality.py", ["--json", file]);
+  //    Score the visible BODY (head/scripts/styles stripped) — the meta
+  //    tags that repeat the excerpt are share-card boilerplate, not
+  //    repetitive content, and would inflate the repetition signal.
+  const bodyOnly = join(tmp, `body-${Math.random().toString(36).slice(2, 8)}.html`);
+  writeFileSync(bodyOnly, visibleBodyHtml(body), "utf8");
+  const cq = runPy("content_quality.py", ["--json", bodyOnly]);
   let quality = null;
   let flags = [];
   try {

@@ -104,6 +104,42 @@ async function main() {
     console.log("No leftover QA test users found.");
   }
 
+  // Posts the harness created AS a real account (the admin driving
+  // end-to-end flows) carry the qaFixture marker — their author isn't a
+  // qa_*/pwtest* handle, so the account sweep above can't reach them. A
+  // crashed CI run that skipped its own finally-cleanup is exactly when
+  // they linger, so erase any marked leftovers through the harness path.
+  const fixtures = await client.query(api.testHarness.listQaFixturePostsForSweep, {
+    secret: HARNESS_SECRET,
+  });
+  if (fixtures.length > 0) {
+    console.log(`\nFound ${fixtures.length} qaFixture post(s) to erase:`);
+    let removedPosts = 0;
+    for (const p of fixtures) {
+      try {
+        const res = await client.mutation(api.testHarness.deleteQaFixturePost, {
+          postId: p.postId,
+          secret: HARNESS_SECRET,
+        });
+        if (res.deleted) {
+          removedPosts++;
+          console.log(
+            `  ✅ ${String(p.postId).slice(0, 8)} erased (${JSON.stringify(p.content)})`,
+          );
+        }
+      } catch (err) {
+        console.error(
+          `  ❌ ${String(p.postId).slice(0, 8)} failed: ${
+            err instanceof Error ? err.message : err
+          }`,
+        );
+      }
+    }
+    console.log(`Done: ${removedPosts}/${fixtures.length} qaFixture posts erased.`);
+  } else {
+    console.log("No qaFixture posts to erase.");
+  }
+
   // Every erasure — including test sweeps — writes a one-way removalLog
   // row. Purge the reserved-prefix entries so QA activity never pollutes
   // the audit log a real admin reads. Harness-gated, removalLog-only.

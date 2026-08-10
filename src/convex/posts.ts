@@ -73,6 +73,10 @@ export const listPublicPostsForSitemap = internalQuery({
       // page 404s, so the URL must not be submitted.
       if (post.aiStatus === "review") continue;
       if (testIds.has(post.authorId)) continue;
+      // Harness fixtures created AS a real account (the admin driving an
+      // end-to-end QA) carry the qaFixture marker — a crashed run's posts
+      // must never enter Google even though their author isn't qa_*.
+      if (post.qaFixture === true) continue;
       out.push({ id: post._id, lastmod: post._creationTime });
     }
     return out;
@@ -1386,6 +1390,7 @@ export const feed = query({
       result.page
         .filter(
           (p) =>
+            p.qaFixture !== true &&
             !excludedIds.has(p.authorId) &&
             (followingIds === null ||
               followingIds.size === 0 ||

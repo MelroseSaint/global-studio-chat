@@ -1,10 +1,12 @@
 {
   "post": {
-    "flags": []
+    "flags": [
+      "thin-content"
+    ]
   },
   "profile": {
     "flags": [
-      "repetitive"
+      "thin-content"
     ]
   }
 }

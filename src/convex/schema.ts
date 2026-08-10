@@ -252,6 +252,13 @@ const schema = defineSchema({
     // tell a NEW close (re-notify after the cooldown) from a thread that
     // simply stayed closed (already pinged — stay silent).
     commentsAutoClosedAt: v.optional(v.number()),
+    // True for posts the QA harness created AS a real account (e.g. the
+    // real admin) to drive an end-to-end check. Their author is NOT a
+    // reserved qa_/pwtest handle, so username-based isolation can't spot
+    // them — this marker is what keeps them out of the sitemap and public
+    // feeds, and what lets the nightly cleanup sweep erase them even when
+    // a crashed CI run skips its own finally-cleanup.
+    qaFixture: v.optional(v.boolean()),
     // Optional place the post was shared from — powers the Local feed.
     location: v.optional(
       v.object({

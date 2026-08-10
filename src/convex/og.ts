@@ -154,14 +154,17 @@ export const postOg = httpAction(async (ctx, request) => {
     : displayName
       ? `${displayName} on PureWire`
       : "Post on PureWire";
-  const description =
+  const bodyText =
     post.content.trim().length > 0
-      ? excerpt(post.content)
+      ? post.content
       : "Shared something on PureWire.";
+  const description = excerpt(bodyText);
   // Google truncates search snippets around 155-160 chars; the social tags
   // (Discord etc.) tolerate ~200. Keep the meta description inside the
-  // snippet window while og:description / twitter:description / body keep
-  // the fuller 180-char version.
+  // snippet window while og:description / twitter:description keep the
+  // fuller 180-char version. The visible <p> below renders the FULL body
+  // so a crawler (and the content-quality linters that read the page)
+  // sees the actual article, never a truncated teaser.
   const metaDescription = excerpt(description, 155);
   // Prefer the post's first photo; otherwise fall back to the brand card.
   const image =
@@ -222,7 +225,7 @@ ${articleLd}
 <body style="margin:0;background:#171918;color:#f4f0e8;font-family:system-ui,sans-serif">
   <main style="max-width:560px;margin:0 auto;padding:48px 20px">
     <h1 style="font-size:22px;margin:8px 0 4px">${esc(title)}</h1>
-    <p style="font-size:15px;line-height:1.6;white-space:pre-wrap">${esc(description)}</p>
+    <p style="font-size:15px;line-height:1.6;white-space:pre-wrap">${esc(bodyText)}</p>
     <p style="margin-top:20px"><a href="${esc(canonical)}" style="color:#b84a32;font-weight:600">View the post</a></p>
   </main>
 </body>
@@ -384,10 +387,11 @@ export const profileOg = httpAction(async (ctx, request) => {
   const title = profile.username
     ? `@${profile.username} on PureWire`
     : `${displayName} on PureWire`;
-  const description =
+  const bodyText =
     profile.bio && profile.bio.trim().length > 0
-      ? excerpt(profile.bio)
+      ? profile.bio
       : `Check out @${profile.username ?? displayName} on PureWire.`;
+  const description = excerpt(bodyText);
   // Google truncates search snippets around 155-160 chars; the social tags
   // tolerate ~200. Keep the meta description inside the snippet window.
   const metaDescription = excerpt(description, 155);
@@ -448,7 +452,7 @@ ${profileLd}
 <body style="margin:0;background:#171918;color:#f4f0e8;font-family:system-ui,sans-serif">
   <main style="max-width:560px;margin:0 auto;padding:48px 20px">
     <h1 style="font-size:22px;margin:8px 0 4px">${esc(displayName)}</h1>
-    <p style="font-size:15px;line-height:1.6;white-space:pre-wrap">${esc(description)}</p>
+    <p style="font-size:15px;line-height:1.6;white-space:pre-wrap">${esc(bodyText)}</p>
     <p style="margin-top:20px"><a href="${esc(canonical)}" style="color:#b84a32;font-weight:600">View profile</a></p>
   </main>
 </body>

@@ -357,6 +357,14 @@ async function main() {
     check("admin created a post", adminPost.ok === true, adminPost.error ?? "");
     if (!adminPost.ok) throw new Error("admin post creation failed");
     adminPostId = adminPost.postId;
+    // The author is the REAL admin (not a qa_* handle), so username
+    // isolation can't hide this post — mark it a fixture so it can never
+    // surface in the sitemap/feeds even if this run crashes before the
+    // finally cleanup below gets to delete it.
+    await client.mutation(api.testHarness.markPostAsQaFixture, {
+      postId: adminPostId,
+      secret: HARNESS_SECRET,
+    });
 
     const b6 = await bc.mutation(api.posts.addComment, {
       postId: adminPostId,
@@ -489,6 +497,11 @@ async function main() {
     );
     if (!autoClosePost.ok) throw new Error("auto-close post creation failed");
     autoClosePostId = autoClosePost.postId;
+    // Same admin-authored fixture marking — see the notification post.
+    await client.mutation(api.testHarness.markPostAsQaFixture, {
+      postId: autoClosePostId,
+      secret: HARNESS_SECRET,
+    });
 
     const flood = async (client, prefix, n) => {
       for (let i = 0; i < n; i++) {

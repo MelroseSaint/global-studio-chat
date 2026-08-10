@@ -7,7 +7,11 @@ import { eraseAccount } from "./account";
 import { maybeNotifyAutoClosed } from "./posts";
 import { internal } from "./_generated/api";
 
-import { sweepCommentLikes } from "./mediaCleanup";
+import {
+  cleanupMediaItems,
+  sweepCommentLikes,
+  sweepPostEngagement,
+} from "./mediaCleanup";
 import {
   mutation,
   query,
@@ -1574,6 +1578,106 @@ export const listTestAccountsForSweep = query({
       name: u.name ?? null,
       creationTime: u._creationTime,
     }));
+  },
+});
+
+/**
+ * Mark a post as a QA fixture. The harness sometimes has to create posts
+ * AS a REAL account (the admin drives end-to-end moderation/notification
+ * flows) — those posts' authors aren't reserved-prefix handles, so
+ * username isolation can't see them. This marker is what the sitemap +
+ * public feeds exclude on, and what the nightly cleanup sweep erases by.
+ * Only the harness (secret-gated) can set it, so a real member can never
+ * hide a post from Google with a forged flag. Idempotent.
+ */
+export const markPostAsQaFixture = mutation({
+  args: { postId: v.id("posts"), secret: v.string() },
+  handler: async (ctx, { postId, secret }) => {
+    requireHarness(secret);
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      return { marked: false, reason: "not-found" };
+    }
+    await ctx.db.patch(postId, { qaFixture: true });
+    return { marked: true };
+  },
+});
+
+/**
+ * Every qaFixture-marked post still in the posts table — the nightly
+ * cleanup sweep's second target. A crashed CI run that skips its own
+ * finally-cleanup can leave posts created through a REAL account (the
+ * admin); unlike qa_* accounts there is no reserved username to page, so
+ * the marker is the only reliable finder. Gated by the same env pair.
+ */
+export const listQaFixturePostsForSweep = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const posts = await ctx.db.query("posts").take(1000);
+    return posts
+      .filter((p) => p.qaFixture === true)
+      .map((p) => ({
+        postId: p._id,
+        authorUsername: p.authorId,
+        content: (p.content ?? "").slice(0, 80),
+        creationTime: p._creationTime,
+      }));
+  },
+});
+
+/**
+ * Delete a qaFixture-marked post, regardless of who its author is. The
+ * QA scripts that create posts as the real admin normally delete them
+ * themselves in finally, but a hard crash can skip that — and the admin
+ * session may also be long gone by sweep time, so this goes through the
+ * harness secret instead of any session. Engagements (likes/comments/
+ * shares) die with the post via the same sweep the user-facing delete
+ * runs. Gated by the same env pair.
+ */
+export const deleteQaFixturePost = mutation({
+  args: { postId: v.id("posts"), secret: v.string() },
+  handler: async (ctx, { postId, secret }) => {
+    requireHarness(secret);
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      return { deleted: false, reason: "not-found" };
+    }
+    if (post.qaFixture !== true) {
+      return { deleted: false, reason: "not-qa-fixture" };
+    }
+    // Mirror deletePost's core (media + engagement + share + postsCount
+    // sweeps) WITHOUT the auth gate — a crashed CI run may have lost the
+    // admin session it created the post with, and the nightly sweep must
+    // still be able to erase the fixture. The harness secret gate above
+    // is the authorization.
+    await cleanupMediaItems(ctx, post.media ?? []);
+    await sweepPostEngagement(ctx, postId);
+    const sharedFromId = post.sharedFromId;
+    if (sharedFromId !== undefined) {
+      const target = await ctx.db.get(sharedFromId);
+      if (target !== null) {
+        const shareRow = await ctx.db
+          .query("shares")
+          .withIndex("by_post", (q) => q.eq("postId", sharedFromId))
+          .filter((r) => r.eq(r.field("userId"), post.authorId))
+          .first();
+        if (shareRow !== null) {
+          await ctx.db.delete(shareRow._id);
+          await ctx.db.patch(target._id, {
+            shareCount: Math.max(0, target.shareCount - 1),
+          });
+        }
+      }
+    }
+    await ctx.db.delete(postId);
+    const author = await ctx.db.get(post.authorId);
+    if (author !== null) {
+      await ctx.db.patch(author._id, {
+        postsCount: Math.max(0, (author.postsCount ?? 0) - 1),
+      });
+    }
+    return { deleted: true };
   },
 });
 
