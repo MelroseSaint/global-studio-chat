@@ -61,8 +61,13 @@ export default async function middleware(
 
   const postMatch = pathname.match(/^\/post\/([^/]+)\/?$/);
   const profileMatch = pathname.match(/^\/u\/([^/]+)\/?$/);
-  if ((!postMatch && !profileMatch) || request.method !== "GET") {
-    // Not a GET on /post/:id or /u/:handle — let the app serve it normally.
+  const staticPageMatch = pathname.match(/^\/(about)\/?$/);
+  if (
+    (!postMatch && !profileMatch && !staticPageMatch) ||
+    request.method !== "GET"
+  ) {
+    // Not a GET on /post/:id, /u/:handle, or a server-rendered static page
+    // (/about) — let the app serve it normally.
     return undefined;
   }
   const userAgent = request.headers.get("user-agent") ?? "";
@@ -73,7 +78,9 @@ export default async function middleware(
   const canonical = `${origin}${pathname}`;
   const backendPath = postMatch
     ? `/og/post/${encodeURIComponent(postMatch[1])}`
-    : `/og/profile/${encodeURIComponent(profileMatch![1])}`;
+    : profileMatch
+      ? `/og/profile/${encodeURIComponent(profileMatch[1])}`
+      : `/og/${staticPageMatch![1]}`;
   try {
     const res = await fetch(
       `${CONVEX_SITE}${backendPath}?u=${encodeURIComponent(canonical)}`,
@@ -108,5 +115,5 @@ export default async function middleware(
 }
 
 export const config = {
-  matcher: ["/post/:path*", "/u/:path*", "/sitemap.xml"],
+  matcher: ["/post/:path*", "/u/:path*", "/about", "/sitemap.xml"],
 };

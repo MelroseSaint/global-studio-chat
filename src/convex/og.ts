@@ -242,6 +242,117 @@ ${articleLd}
  * postOg: getProfile applies the shadowban gate (a silenced account's profile
  * 404s for everyone but itself and admins), so nothing leaks into a preview.
  */
+/**
+ * Server-rendered HTML for the public static pages (currently /about) — the
+ * fee/feature disclosure. These pages are pure static content, so rendering
+ * them server-side means a crawler (Googlebot, or the healthcheck that
+ * mirrors it) sees the actual disclosure text in the HTML instead of a
+ * blank SPA shell. The Vercel middleware serves this for crawler
+ * user-agents hitting /about; real browsers keep getting the app.
+ */
+function aboutPageHtml(canonical: string, robotsMeta: string): string {
+  const title = "About PureWire — no fees, no ads, no algorithm";
+  const description =
+    "Everything about PureWire, plainly stated: it's free with no hidden fees, the five feeds you control, every feature, the rules, and what happens to your data.";
+  const metaDescription = excerpt(description, 155);
+  const pageLd = jsonLd({
+    "@context": "https://schema.org",
+    "@type": "AboutPage",
+    name: "About PureWire",
+    description,
+    url: canonical,
+  });
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="${robotsMeta}" />
+<link rel="canonical" href="${esc(canonical)}" />
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(metaDescription)}" />
+<meta property="og:site_name" content="PureWire" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="${esc(title)}" />
+<meta property="og:description" content="${esc(description)}" />
+<meta property="og:url" content="${esc(canonical)}" />
+<meta property="og:image" content="${esc(`${SITE_URL}/og-image.png`)}" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="${esc(title)}" />
+<meta name="twitter:description" content="${esc(description)}" />
+<meta name="twitter:image" content="${esc(`${SITE_URL}/og-image.png`)}" />
+${pageLd}
+</head>
+<body style="margin:0;background:#171918;color:#f4f0e8;font-family:system-ui,sans-serif">
+  <main style="max-width:620px;margin:0 auto;padding:48px 20px">
+    <h1 style="font-size:26px;margin:0 0 8px">Everything about PureWire, plainly stated.</h1>
+    <p style="font-size:15px;line-height:1.7;color:#c9c4ba">
+      This page is the whole picture before you join: what PureWire costs,
+      the feeds you get, everything you can do, the rules, and what happens
+      to your data. Nothing here is hidden behind an account.
+    </p>
+    <h2 style="font-size:18px;margin:28px 0 8px">What it costs</h2>
+    <p style="font-size:15px;line-height:1.7;color:#c9c4ba">
+      PureWire is free to join and free to use — no subscription, no
+      paywall, no premium tier, and no hidden fees anywhere. There are no
+      ads, no sponsorships, and no promoted posts: posting, uploading
+      photos, videos, and audio, sending end-to-end encrypted messages, and
+      downloading your data are all free for every member.
+    </p>
+    <h2 style="font-size:18px;margin:28px 0 8px">Your feeds — five ways to see, zero algorithms</h2>
+    <ul style="font-size:15px;line-height:1.7;color:#c9c4ba;padding-left:20px">
+      <li>Global — everything on PureWire, in time order.</li>
+      <li>Following — posts from the people you follow.</li>
+      <li>Latest — the newest posts first.</li>
+      <li>Local — posts shared near you (live position, never stored).</li>
+      <li>Photos &amp; videos — a media-only view.</li>
+    </ul>
+    <h2 style="font-size:18px;margin:28px 0 8px">Everything you can do</h2>
+    <p style="font-size:15px;line-height:1.7;color:#c9c4ba">
+      Posts with photos, video, and audio; stories that vanish after 24
+      hours; comments, replies, and likes; sharing any post into a direct
+      message or a comment as a preview card; end-to-end encrypted DMs;
+      notifications; verified badges; blocking and one-tap reporting.
+    </p>
+    <h2 style="font-size:18px;margin:28px 0 8px">Your data &amp; account</h2>
+    <p style="font-size:15px;line-height:1.7;color:#c9c4ba">
+      Download a ZIP of everything you've created — posts as readable text
+      plus your uploaded media — and delete your account (and all of it)
+      with one action. PureWire stores no tracking data and never sells
+      your attention.
+    </p>
+    <p style="margin-top:28px"><a href="${esc(canonical)}" style="color:#b84a32;font-weight:600">Open PureWire</a></p>
+  </main>
+</body>
+</html>`;
+}
+
+/**
+ * Server-rendered static page (/og/about) — served by the Vercel middleware
+ * to crawlers hitting /about. Same robots discipline as the post/profile
+ * routes: ?u= (or a direct canonical-host hit) stays index,follow; a bare
+ * hit on the Convex mirror is noindex so it never competes with the
+ * canonical host.
+ */
+export const pageOg = httpAction(async (_ctx, request) => {
+  const url = new URL(request.url);
+  const page = url.pathname.split("/").filter(Boolean).pop() ?? "about";
+  const canonical = url.searchParams.get("u") ?? `${SITE_URL}/${page}`;
+  const robotsMeta =
+    url.searchParams.get("u") !== null || isCanonicalHost(request)
+      ? "index, follow"
+      : "noindex, nofollow";
+  return new Response(aboutPageHtml(canonical, robotsMeta), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=300, s-maxage=3600",
+    },
+  });
+});
+
 export const profileOg = httpAction(async (ctx, request) => {
   const url = new URL(request.url);
   const handle = decodeURIComponent(

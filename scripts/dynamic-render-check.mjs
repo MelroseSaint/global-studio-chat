@@ -2,15 +2,19 @@
 /**
  * Dynamic rendering guard — production.
  *
- * The Vercel middleware proxies crawler user-agents on /post/:id and
- * /u/:handle to the Convex OG httpActions (server-rendered Article /
- * ProfilePage pages with JSON-LD), while real browsers get the SPA. This
- * check proves that differentiation still holds for the newest post and
- * profile in the live sitemap:
+ * The Vercel middleware proxies crawler user-agents on /post/:id,
+ * /u/:handle, and /about to the Convex OG httpActions (server-rendered
+ * Article / ProfilePage / AboutPage pages with JSON-LD), while real
+ * browsers get the SPA. This check proves that differentiation still holds
+ * for the newest post and profile in the live sitemap, and for the /about
+ * transparency page:
  *
- *   - Googlebot UA  → 200, NO SPA shell, expected JSON-LD present
- *     (if a Googlebot fetch ever returns the SPA shell, search engines see
- *     a blank app and every OG/JSON-LD investment is dead).
+ *   - Googlebot UA  → 200, NO SPA shell, expected content present
+ *     (posts/profiles: their JSON-LD; /about: the fee-disclosure text
+ *     "no hidden fees" — if a Googlebot fetch ever returns the SPA shell,
+ *     search engines see a blank app and every OG/JSON-LD investment is
+ *     dead, and the transparency page's fee disclosure would silently
+ *     disappear from what search engines can read).
  *   - Browser UA    → 200, SPA shell present
  *     (if the middleware ever serves the OG page to browsers, real users
  *     get a non-interactive page and the app is broken).
@@ -74,9 +78,13 @@ const main = async () => {
     return;
   }
 
+  // The fee/feature disclosure text that /about must always carry — the
+  // transparency promise (free, no hidden fees) the healthcheck guards.
+  const FEE_MARKER = "no hidden fees";
   const targets = [
     { kind: "post", url: posts[0], ld: '"@type":"Article"' },
     { kind: "profile", url: profiles[0], ld: '"@type":"ProfilePage"' },
+    { kind: "about", url: `${SITE}/about`, marker: FEE_MARKER },
   ];
 
   for (const t of targets) {
@@ -84,11 +92,15 @@ const main = async () => {
     try {
       const bot = await fetchAs(t.url, CRAWLER_UA);
       const botShell = bot.body.includes(SPA_MARKER);
-      const ldOk = bot.body.includes(t.ld);
+      const contentOk = t.marker
+        ? bot.body.includes(t.marker)
+        : bot.body.includes(t.ld);
       check(
         `Googlebot ${t.kind} is server-rendered`,
-        bot.status === 200 && !botShell && ldOk,
-        `HTTP ${bot.status}, shell=${botShell}, JSON-LD=${ldOk ? "ok" : "MISSING"}`,
+        bot.status === 200 && !botShell && contentOk,
+        t.marker
+          ? `HTTP ${bot.status}, shell=${botShell}, fee text=${contentOk ? "ok" : "MISSING"}`
+          : `HTTP ${bot.status}, shell=${botShell}, JSON-LD=${contentOk ? "ok" : "MISSING"}`,
       );
     } catch (err) {
       check(`Googlebot ${t.kind} is server-rendered`, false, String(err));

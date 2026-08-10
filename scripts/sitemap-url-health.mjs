@@ -16,8 +16,11 @@
  *     shell, which would mean a visibility regression silently submitted a
  *     dead or unfetchable URL. Both link surfaces must point at the exact
  *     sitemap URL: the <link rel=canonical> AND the og:url meta tag.
- *   - fixed pages are SPA routes, so 200 + the app shell is their real
- *     content.
+ *   - /about is server-rendered for crawlers like the dynamic pages (the
+ *     fee/feature disclosure must be present in the HTML, never the shell),
+ *     so it gets the same canonical + og:url strictness.
+ *   - other fixed pages are SPA routes, so 200 + the app shell is their
+ *     real content.
  *
  * Zero dependencies (Node ≥18 built-in fetch). Override the target with
  * SITEMAP_SITE_URL and the per-class sample size with SITEMAP_SAMPLE
@@ -193,6 +196,9 @@ const main = async () => {
   for (const url of sample) {
     const isPost = url.includes("/post/");
     const isProfile = url.includes("/u/");
+    // /about is server-rendered for crawlers (fee/feature disclosure), so
+    // it is verified like the dynamic pages, not like an SPA fixed page.
+    const isAbout = url.includes("/about");
     const expectedLd = isPost
       ? '"@type":"Article"'
       : isProfile
@@ -209,7 +215,7 @@ const main = async () => {
       // No redirect drift: the fetch must land on the exact sitemap URL
       // (a 301/308 hop to a trailing-slash or host variant is drift).
       const noRedirect = res.url === url;
-      if (expectedLd === null) {
+      if (expectedLd === null && !isAbout) {
         // Fixed page: SPA route, the app shell IS its real content, and the
         // canonical is the site root by design (per-page canonicals are
         // applied client-side). So assert the canonical HOST cannot drift —
@@ -222,7 +228,11 @@ const main = async () => {
           `status ${res.status}, shell=${isShell}, canonical=${canonical ?? "MISSING"}`,
         );
       } else {
-        const ldOk = body.includes(expectedLd);
+        // The content signal for this URL class: JSON-LD on posts/profiles,
+        // the fee/feature disclosure text on /about.
+        const contentOk = isAbout
+          ? body.includes("no hidden fees")
+          : body.includes(expectedLd);
         // Canonicalization guard: the canonical tag must EXACTLY equal the
         // sitemap URL — no host, path, trailing-slash, or redirect drift —
         // so a regression surfaces instead of silently self-canonicalizing
@@ -235,8 +245,8 @@ const main = async () => {
         const ogUrlOk = ogUrl === url;
         check(
           url,
-          res.status === 200 && !isShell && ldOk && noRedirect && canonicalOk && ogUrlOk,
-          `status ${res.status}, shell=${isShell}, JSON-LD=${ldOk ? "ok" : "MISSING"}, ` +
+          res.status === 200 && !isShell && contentOk && noRedirect && canonicalOk && ogUrlOk,
+          `status ${res.status}, shell=${isShell}, content=${contentOk ? "ok" : "MISSING"}, ` +
             `canonical=${canonicalOk ? "MATCH" : `${canonical ?? "MISSING"} != ${url}`}, ` +
             `og:url=${ogUrlOk ? "MATCH" : `${ogUrl ?? "MISSING"} != ${url}`}`,
         );

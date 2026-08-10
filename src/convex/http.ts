@@ -3,7 +3,7 @@ import { registerStaticRoutes } from "@convex-dev/static-hosting";
 
 import { auth } from "@/convex/auth";
 import { verifyAdminIp } from "./adminIp";
-import { postOg, profileOg } from "./og";
+import { pageOg, postOg, profileOg } from "./og";
 import { robotsTxt } from "./robots";
 import { sitemapXml } from "./sitemap";
 import { components } from "./_generated/api";
@@ -32,6 +32,23 @@ http.route({
   pathPrefix: "/og/profile/",
   method: "GET",
   handler: profileOg,
+});
+
+// Server-rendered static page (/og/about) — the fee/feature disclosure.
+// Registered before the static routes so the SPA catch-all can never shadow
+// it; the Vercel middleware proxies /about here for crawler user-agents so
+// Googlebot sees the real disclosure text instead of a blank SPA shell.
+// Both spellings are registered: the middleware fetches /og/about (no
+// trailing slash), and a trailing-slash hit must not 404 either.
+http.route({
+  path: "/og/about",
+  method: "GET",
+  handler: pageOg,
+});
+http.route({
+  pathPrefix: "/og/about/",
+  method: "GET",
+  handler: pageOg,
 });
 
 // Dynamic sitemap: replaces the static public/sitemap.xml so user content
