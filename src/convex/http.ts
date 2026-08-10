@@ -1,6 +1,7 @@
 import { httpRouter } from "convex/server";
 import { registerStaticRoutes } from "@convex-dev/static-hosting";
 
+import { httpAction } from "./_generated/server";
 import { auth } from "@/convex/auth";
 import { verifyAdminIp } from "./adminIp";
 import { pageOg, postOg, profileOg } from "./og";
@@ -88,6 +89,48 @@ http.route({
   path: "/admin/ip/verify",
   method: "OPTIONS",
   handler: verifyAdminIp,
+});
+
+// QA feed echo — serves a deterministic blocklist feed fixture for the
+// blocklist-engine QA. The QA used to point its fixture feed at
+// httpbin.org/base64, a third-party service that flakes (503s) and reds
+// the nightly gate; this route is the self-hosted replacement. The URL
+// carries the payload as base64 (same shape as httpbin), the handler
+// decodes and serves it as text/plain, and the harness env gate keeps it
+// inert on any deployment without the QA harness enabled. Registered
+// before the static routes so it can never be shadowed by the SPA.
+http.route({
+  pathPrefix: "/qa/feed/",
+  method: "GET",
+  handler: httpAction(async (_ctx, request) => {
+    if (process.env.TEST_HARNESS_ENABLED !== "1") {
+      return new Response("Not found", { status: 404 });
+    }
+    const path = new URL(request.url).pathname;
+    const payload = path.slice("/qa/feed/".length).split("/")[0] ?? "";
+    if (payload.length === 0) {
+      return new Response("Missing payload", { status: 400 });
+    }
+    // URL-safe base64: standard base64 contains `/` and `+`, which would
+    // break the path segment — swap them back before decoding. atob is the
+    // runtime's decoder (Buffer isn't available in the edge HTTP context).
+    let body: string;
+    try {
+      const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+      body = atob(b64);
+    } catch {
+      return new Response("Bad base64", { status: 400 });
+    }
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        // Never cached: every QA run's payload is unique, and a stale
+        // response would make the routing checks read an old fixture.
+        "Cache-Control": "no-store",
+      },
+    });
+  }),
 });
 
 // Serve the PureWire frontend (dist) from https://outgoing-seal-727.convex.site.

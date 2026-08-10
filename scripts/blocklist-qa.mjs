@@ -30,6 +30,10 @@ import { powProof } from "./lib/qa-pow.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
+// The mirror serves HTTP (the .cloud host is the action/mutation API);
+// the QA's fixture feeds are fetched over plain HTTP by syncExternalSources.
+const MIRROR_SITE =
+  process.env.MIRROR_SITE_URL ?? CONVEX_URL.replace(".cloud", ".site");
 const SECRET = process.env.TEST_HARNESS_SECRET;
 const client = new ConvexHttpClient(CONVEX_URL);
 
@@ -235,19 +239,27 @@ async function main() {
     // actually inserts a row and the header routing is genuinely exercised:
     // the parser must read `# Category: adult_fetish` and land the new
     // domain there, not in the adult_other default. The feed is served by
-    // httpbin.org/base64 (a deterministic echo of our own bytes) instead of
-    // a committed file on the platform — PureWire's static data/ dir must
-    // never carry test content. The stamp rides in a comment line so every
-    // run's URL is unique (no HTTP caching) while the parsed domain stays
-    // exactly `qa-routing-feed.test`.
+    // the CONVEX MIRROR's /qa/feed echo (a deterministic, harness-gated
+    // echo of our own bytes — see src/convex/http.ts) instead of a
+    // committed file on the platform or a flaky third-party echo like
+    // httpbin.org, which 503s and reds the nightly gate. PureWire's static
+    // data/ dir must never carry test content. The stamp rides in a
+    // comment line so every run's URL is unique (no HTTP caching) while
+    // the parsed domain stays exactly `qa-routing-feed.test`.
     const routingDomain = "qa-routing-feed.test";
     const routingFeed = Buffer.from(
       `# Category: adult_fetish\n# pwqa-${stamp}\n${routingDomain}\n`,
       "utf8",
-    ).toString("base64");
+    )
+      .toString("base64")
+      // URL-safe: the payload rides in the path, and `/`/`+` would break
+      // the route segment — the /qa/feed echo decodes base64url back.
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
     const feedSrc = await client.mutation(api.blocklist.upsertDomainSource, {
       name: `qa-feed-${stamp}`,
-      url: `https://httpbin.org/base64/${routingFeed}`,
+      url: `${MIRROR_SITE}/qa/feed/${routingFeed}`,
       format: "domain",
       enabled: true,
     });
