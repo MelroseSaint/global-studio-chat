@@ -135,7 +135,30 @@ export const createTestUser = mutation({
       accountStatus: "active",
     });
     const token = await mintSession(ctx, userId);
-    return { userId, username: normalized, token };
+    // A real sign-in stores BOTH the access JWT and a refresh token; the
+    // browser's auth manager refetches with the refresh token right after
+    // the server confirms the cached JWT (initialAuthTokenReuse defaults to
+    // false), so a JWT-only minted session drops to unauthenticated within
+    // milliseconds of a page load. Mint the refresh token alongside the
+    // session so harness sessions behave like real logins in the browser.
+    const session = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q) => q.eq("userId", userId))
+      .order("desc")
+      .first();
+    if (session === null) {
+      throw new ConvexError("Session mint failed.");
+    }
+    const refreshId = await ctx.db.insert("authRefreshTokens", {
+      sessionId: session._id,
+      expirationTime: session.expirationTime,
+    });
+    return {
+      userId,
+      username: normalized,
+      token,
+      refreshToken: `${refreshId}|${session._id}`,
+    };
   },
 });
 
