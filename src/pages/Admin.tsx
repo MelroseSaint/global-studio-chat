@@ -858,15 +858,40 @@ function AdminDashboard({ meId }: { meId: string }) {
           Section
         </span>
         <Select value={tab} onValueChange={setTab}>
-          <SelectTrigger className="w-52">
+          <SelectTrigger className="relative w-52">
             <SelectValue placeholder="Choose a section" />
+            {stats !== undefined &&
+            stats.aiReview + stats.racismReview + stats.aiReviewStories >
+              0 ? (
+              <span
+                className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground"
+                title="Pending moderation"
+              >
+                {stats.aiReview + stats.racismReview + stats.aiReviewStories}
+              </span>
+            ) : null}
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
               <SelectLabel>Moderation</SelectLabel>
-              <SelectItem value="aiReview">AI review</SelectItem>
-              <SelectItem value="racismReview">Racism</SelectItem>
-              <SelectItem value="storyReview">Stories</SelectItem>
+              <SelectItem value="aiReview">
+                AI review
+                {stats !== undefined && stats.aiReview > 0
+                  ? ` (${stats.aiReview})`
+                  : ""}
+              </SelectItem>
+              <SelectItem value="racismReview">
+                Racism
+                {stats !== undefined && stats.racismReview > 0
+                  ? ` (${stats.racismReview})`
+                  : ""}
+              </SelectItem>
+              <SelectItem value="storyReview">
+                Stories
+                {stats !== undefined && stats.aiReviewStories > 0
+                  ? ` (${stats.aiReviewStories})`
+                  : ""}
+              </SelectItem>
             </SelectGroup>
             <SelectGroup>
               <SelectLabel>Accounts</SelectLabel>
