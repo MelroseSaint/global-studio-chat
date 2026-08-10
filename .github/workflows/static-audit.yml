@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  # On push events, share the admin-account-push group with
+  # production-healthcheck so parallel runs never mint competing
+  # admin sessions. PR runs get their own group per PR.
+  group: ${{ github.event_name == 'push' && 'admin-account-push' || format('static-audit-{0}', github.run_id) }}
+  cancel-in-progress: false
+
 jobs:
   typecheck:
     name: TypeScript typecheck
@@ -173,6 +180,7 @@ jobs:
     name: Phishing & prohibited-domain QA
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    needs: dqs-audit
     # The QA mints an admin session via the harness — without the secret
     # the harness is inert (exit 2, not exit 1) and the job greens.
     env:
@@ -194,6 +202,7 @@ jobs:
     name: Blocklist engine QA
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    needs: phishing-qa
     # Same harness gate as phishing-qa — skips cleanly when the secret
     # is absent so the push/pull-request gate never reds on missing config.
     env:
@@ -241,6 +250,7 @@ jobs:
     name: AI scan integration QA (harness)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: blocklist-qa
     # `secrets` is rejected in `if:` expressions — map to an env var.
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
@@ -340,6 +350,7 @@ jobs:
     name: Silent moderation QA
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: ai-scan-integration
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -356,6 +367,7 @@ jobs:
     name: Admin reinstatement QA
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: shadowban-qa
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -391,6 +403,7 @@ jobs:
     name: Session lifetime audit
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    needs: reinstate-qa
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -407,14 +420,8 @@ jobs:
     name: Sweep leftover QA users
     runs-on: ubuntu-latest
     needs:
-      - dqs-audit
-      - phishing-qa
-      - blocklist-qa
-      - ai-scan-integration
-      - shadowban-qa
-      - reinstate-qa
-      - cloudinary-health
       - session-audit
+      - cloudinary-health
     if: always()
     steps:
       - uses: actions/checkout@v4
@@ -432,8 +439,7 @@ jobs:
     name: Sweep leftover QA blocklist domains
     runs-on: ubuntu-latest
     needs:
-      - blocklist-qa
-      - phishing-qa
+      - cleanup-test-users
     if: always()
     steps:
       - uses: actions/checkout@v4

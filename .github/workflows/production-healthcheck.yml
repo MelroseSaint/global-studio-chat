@@ -22,9 +22,10 @@ on:
         default: false
 
 concurrency:
-  # Never overlap runs: if the previous one is still going (slow email
-  # delivery, etc.), the new run waits rather than piling up.
-  group: production-healthcheck
+  # On push events, share the admin-account-push group with static-audit
+  # so parallel workflow runs never mint competing admin sessions.
+  # Scheduled and manual runs get their own group to avoid queuing.
+  group: ${{ github.event_name == 'push' && 'admin-account-push' || 'production-healthcheck' }}
   cancel-in-progress: false
 
 permissions:
@@ -890,6 +891,7 @@ jobs:
     name: PWA install hint (live)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: phishing-scan
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -1000,6 +1002,7 @@ jobs:
     name: Shared-video autoplay policy (live)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: pwa-install-hint
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -1110,6 +1113,7 @@ jobs:
     name: DM share E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: shared-video-autoplay
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -1231,6 +1235,7 @@ jobs:
     name: Comment share E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: dm-share-qa
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -1353,6 +1358,7 @@ jobs:
     name: Post-author comment deletion E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: comment-share
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -1470,6 +1476,7 @@ jobs:
     name: Blocklist feed sync
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: post-author-delete
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -1585,10 +1592,9 @@ jobs:
     # the static gate; the job is skipped on repositories that haven't
     # configured the harness yet, and runs on the same schedule as the
     # auth loop (every push to main + nightly + manual dispatch).
-    # Serialized after post-author-delete — both mint the SAME admin
-    # account's session, and running them in parallel tripped rate-limit
-    # budgets and session contention, producing transient CI flakes.
-    needs: post-author-delete
+    # Serialized in the admin-account concurrency chain; every admin-
+    # dependent job runs sequentially to prevent session contention.
+    needs: blocklist-sync
     name: Moderation reinstate loop
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1712,6 +1718,7 @@ jobs:
     name: Admin IP binding QA (backend-verified device gate)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: moderation-reinstate
     env:
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
@@ -1831,6 +1838,7 @@ jobs:
     name: Test isolation QA (QA fixtures invisible to real members)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: admin-ip-qa
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -1950,6 +1958,7 @@ jobs:
     name: Disposable-email gate (live signup rejection)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: test-isolation
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -2058,6 +2067,7 @@ jobs:
     name: Admin workload crash guard (live query + page-up)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: email-domain-qa
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -2198,6 +2208,7 @@ jobs:
     name: Story viewer QA (ordering, dedupe, privacy)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: admin-workload-qa
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
@@ -2305,11 +2316,8 @@ jobs:
 
   blocklist-qa:
     # Serialized AFTER blocklist-sync (needs:) — the QA registers its own
-    # transient qa-feed-* test sources, and the sync refreshes every enabled
-    # source, so a parallel run would let the sync pick up the QA's live test
-    # feed (a documented 10/11 flake from this exact race). Running them in
-    # order keeps the nightly gate deterministic.
-    needs: blocklist-sync, moderation-reinstate
+    # Serialized in the admin-account concurrency chain.
+    needs: story-views-qa
     # The blocklist engine's full 54-check QA against production:
     # scripts/blocklist-qa.mjs seeds the core adult list, adds a domain and
     # asserts it blocks across every surface, verifies IDN->punycode and
@@ -2442,6 +2450,7 @@ jobs:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: blocklist-qa
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -2567,6 +2576,7 @@ jobs:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: inp-audit
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -2903,11 +2913,7 @@ jobs:
     needs:
       - auth-loop
       - cloudinary-upload
-      - phishing-scan
-      - blocklist-sync
-      - moderation-reinstate
-      - story-views-qa
-      - blocklist-qa
+      - refresh-timing-qa
     # Run even when a peer QA FAILED — a crashed job is exactly when a
     # straggler qa_ account is most likely left behind. (Without this,
     # GitHub skips a dependent job whenever one of its needs fails.)
