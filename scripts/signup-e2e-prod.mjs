@@ -668,6 +668,23 @@ async function main() {
       serverPost = null;
     }
     check("post verified server-side in the Global feed", serverPost !== null);
+    // When the Cloudinary-mode checks below fail because the media item
+    // fell back to a Convex storage id, the root cause is almost always
+    // Cloudinary rejecting the signed upload — the API key lacking the
+    // Upload/create permission (403 "missing permissions"), or the unsigned
+    // preset missing. Surface that here so a CI failure explains itself
+    // instead of ending at "no url on media item".
+    const mediaFellBackToStorage =
+      serverPost !== null &&
+      (serverPost.media ?? []).some((m) => m.storageId !== undefined);
+    if (mediaFellBackToStorage) {
+      console.log(
+        "    ℹ media fell back to Convex storage — the Cloudinary signed upload was rejected. " +
+          "Enable the Upload/create permission on the API key (Cloudinary dashboard → " +
+          "Settings → Access Keys → edit the key) and confirm the unsigned preset exists " +
+          "(Settings → Upload → Upload presets), then re-run.",
+      );
+    }
     // Remembered so the post-delete Cloudinary checks know which asset to
     // watch disappear.
     let cloudUrl = null;
