@@ -52,6 +52,9 @@ Beyond this README, the repo keeps its knowledge structured:
   not log you out automatically.
 - **No algorithm, your choice** — the feed is **Global, Following, Latest,
   Local, and Photos & videos**. You choose what you see.
+- **Free, no hidden fees** — PureWire is free to join and use: no
+  subscription, no paywall, no premium tier, no ads, no sponsorships, and
+  no pay-to-post anywhere.
 - **Freedom with a reason** — PureWire isn't "no rules." The PureWire
   Standard draws the lines so one person's freedom never costs another's.
 
@@ -86,6 +89,10 @@ Beyond this README, the repo keeps its knowledge structured:
 - Install PureWire as a **PWA** — works offline, on any device, adapts from
   phones to tablets to desktops, and ships store-style install screenshots
   in its manifest
+
+> Everything you can do on PureWire — and what it costs (nothing) — is
+> spelled out on the public [`/about`](https://purewire.vercel.app/about)
+> page, reachable from the Landing, Settings, and Help without an account.
 
 ## Comments & threads
 
@@ -260,14 +267,17 @@ place:
 The site is built to be crawlable and to win social cards — no JavaScript
 required for the important pages:
 
-- **Server-rendered OG pages** — `/og/post/:id` and `/og/profile/:handle`
-  (Convex HTTP actions) render the real post/profile as static HTML with
-  Article / ProfilePage JSON-LD, a real-host canonical, and `index,follow`.
-  Vercel middleware serves them to crawlers and social unfurlers for
-  `/post/:id` and `/u/:handle`; browsers get the SPA, whose per-route
-  metadata module (`src/lib/seo.ts`) applies the matching tags at runtime.
-  Dynamic rendering is CI-verified — a Googlebot fetch must never return
-  the SPA shell.
+- **Server-rendered OG pages** — `/og/post/:id`, `/og/profile/:handle`,
+  and `/og/about` (Convex HTTP actions) render the real post/profile and
+  the About page's fee/feature disclosure as static HTML with Article /
+  ProfilePage / AboutPage JSON-LD, a real-host canonical, and `index,follow`
+  (the Convex mirror gets `noindex`). Vercel middleware serves them to
+  crawlers and social unfurlers for `/post/:id`, `/u/:handle`, and
+  `/about`; browsers get the SPA, whose per-route metadata module
+  (`src/lib/seo.ts`) applies the matching tags at runtime. Dynamic
+  rendering is CI-verified — a Googlebot fetch must never return the SPA
+  shell, and `/about` must always carry the "no hidden fees" disclosure
+  text.
 - **Dynamic sitemap** — `/sitemap.xml` is generated from Convex: the six
   fixed public pages (from `src/lib/routes.ts`, a routes manifest shared
   with the router — add a public page there and it appears automatically)
@@ -364,8 +374,10 @@ required for the important pages:
   thread; locked posts reject new comments with a clear message
 - **Granular DM permissions** — Everyone / Accounts I follow / Nobody,
   enforced before any conversation or key exchange
-- **Data export** — one click downloads a complete JSON archive of your
-  posts, comments, stories, follows, and blocks (Settings → Data & privacy)
+- **Data export** — one click downloads a ZIP of everything you've created:
+  your posts as readable text, the photos, videos, and audio files you
+  uploaded, plus the full machine-readable archive (Settings → Data &
+  privacy)
 - **Permanent erasure** — deleting your account cascades through your
   posts, comments, engagement, stories, and auth records; nothing of yours
   lingers (the QA harness runs the same `eraseAccount` cascade)
@@ -469,7 +481,7 @@ for the same reason.
 | `seo-audit:baseline` | Re-record the audit score baseline (after intentional content changes) |
 | `npm run qa:seo-sweep` (add `:all`) | Sitemap-wide SEO sweep with a committed flag baseline — new issues fail CI |
 | `seo-sweep:baseline` | Re-record the committed sweep baseline |
-| `npm run qa:dynamic-render` | Googlebot fetch of `/u/:handle` + `/post/:id` returns server-rendered HTML, never the SPA shell |
+| `npm run qa:dynamic-render` | Googlebot fetch of `/u/:handle` + `/post/:id` + `/about` returns server-rendered HTML, never the SPA shell — and `/about` must carry the "no hidden fees" fee-disclosure text |
 | `npm run qa:vercel-env` | `PUREWIRE_SITE_URL` still set; stale `VITE_SITE_URL` fails CI |
 | `npm run qa:vercel-build-warnings` | The shipped deploy's build log contains no canonical-host warnings |
 
