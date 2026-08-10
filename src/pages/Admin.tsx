@@ -15,6 +15,7 @@ import {
   Heart,
   History,
   Image as ImageIcon,
+  Keyboard,
   Loader2,
   Lock,
   MessageCircle,
@@ -46,6 +47,12 @@ import { StandardViolationDialog } from "@/components/StandardViolationDialog";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -601,6 +608,31 @@ const ADMIN_TABS = [
 /** Per-device persistence key for the last admin section (localStorage). */
 const ADMIN_TAB_STORAGE_KEY = "purewire_admin_section";
 
+/**
+ * Two-key admin shortcuts: press g, then a letter. Group keys jump to the
+ * group's first panel (m → Moderation's AI review, p → Platform's
+ * Content). Ignored while the focus is in an input so typing is never
+ * hijacked.
+ */
+const ADMIN_SHORTCUTS: Record<string, string> = {
+  u: "users",
+  a: "aiReview",
+  r: "racismReview",
+  s: "storyReview",
+  e: "security",
+  l: "silenced",
+  p: "posts",
+  t: "tickets",
+  b: "blocklist",
+  n: "announcements",
+  // Group aliases.
+  m: "aiReview",
+  c: "posts",
+};
+
+const ADMIN_SHORTCUT_HINT =
+  "g then: u Users · m Moderation · p Platform · a AI review · r Racism · s Stories · e Security · l Silenced · b Blocklist · n Announcements · t Tickets · c Content";
+
 function AdminDashboard({ meId }: { meId: string }) {
   const raw = useQuery(api.admin.dashboardStats);
   // Map backend key names to frontend tab keys where they differ.
@@ -626,6 +658,44 @@ function AdminDashboard({ meId }: { meId: string }) {
       // Private-mode storage can throw — persistence is best-effort.
     }
   }, [tab]);
+
+  // Two-key shortcuts: g then a letter (ADMIN_SHORTCUTS). The g-prefix
+  // arm expires after 2s; key events inside inputs never trigger it.
+  const [pendingG, setPendingG] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.isContentEditable)
+      )
+        return;
+      const k = e.key.toLowerCase();
+      if (k === "g" && !pendingG) {
+        e.preventDefault();
+        setPendingG(true);
+        timer = setTimeout(() => setPendingG(false), 2000);
+        return;
+      }
+      if (pendingG && k.length === 1) {
+        e.preventDefault();
+        setPendingG(false);
+        if (timer) clearTimeout(timer);
+        const target = ADMIN_SHORTCUTS[k];
+        if (target) setTab(target);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      if (timer) clearTimeout(timer);
+    };
+  }, [pendingG, setTab]);
   const [showMoreStats, setShowMoreStats] = useState(false);
   const [previewRunning, setPreviewRunning] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -813,6 +883,31 @@ function AdminDashboard({ meId }: { meId: string }) {
             </SelectGroup>
           </SelectContent>
         </Select>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                aria-label="Admin keyboard shortcuts"
+              >
+                <Keyboard className="size-3.5" />
+                <span className="hidden sm:inline">Shortcuts</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs text-xs">
+              {ADMIN_SHORTCUT_HINT}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        {pendingG && (
+          <span
+            role="status"
+            className="animate-pulse text-xs font-medium text-primary"
+          >
+            g — press a key (u·m·p·a·r·s·e·l·b·n·t·c)
+          </span>
+        )}
       </div>
 
       {tab === "users" && <UsersPanel meId={meId} />}
