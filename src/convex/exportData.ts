@@ -66,6 +66,32 @@ export const exportMyData = query({
           .collect(),
       ]);
 
+    // Resolve every media item to a downloadable URL (Cloudinary wins,
+    // Convex storage as the legacy/fallback) so the client can drop the
+    // actual files into the export ZIP without re-deriving storage URLs.
+    const postsWithMedia = await Promise.all(
+      posts.map(async (p) => ({
+        id: p._id,
+        createdAt: p._creationTime,
+        content: p.content,
+        media: await Promise.all(
+          (p.media ?? []).map(async (m) => ({
+            kind: m.kind,
+            url:
+              m.url ??
+              (m.storageId ? await ctx.storage.getUrl(m.storageId) : null),
+          })),
+        ),
+        location: p.location,
+        likeCount: p.likeCount,
+        commentCount: p.commentCount,
+      })),
+    );
+    const mediaCount = postsWithMedia.reduce(
+      (n, p) => n + p.media.length,
+      0,
+    );
+
     return {
       exportedAt: new Date().toISOString(),
       platform: "PureWire",
@@ -85,16 +111,9 @@ export const exportMyData = query({
         followers: followsIn.length,
         blocks: blocks.length,
         notifications: notifs.length,
+        media: mediaCount,
       },
-      posts: posts.map((p) => ({
-        id: p._id,
-        createdAt: p._creationTime,
-        content: p.content,
-        media: p.media,
-        location: p.location,
-        likeCount: p.likeCount,
-        commentCount: p.commentCount,
-      })),
+      posts: postsWithMedia,
       comments: comments.map((c) => ({
         id: c._id,
         postId: c.postId,

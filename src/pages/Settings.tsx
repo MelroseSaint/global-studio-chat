@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
+import JSZip from "jszip";
 import {
   AlertTriangle,
   Download,
@@ -63,6 +64,18 @@ import { cn } from "@/lib/utils";
 interface LinkRow {
   platform: string;
   url: string;
+}
+
+/** Pick a file extension for an exported media item — from the URL when it
+ * carries one, otherwise a sensible default per kind. */
+function extFor(url: string | null | undefined, kind: string): string {
+  if (url) {
+    const m = url.split(/[?#]/)[0].match(/\.([a-zA-Z0-9]{2,5})$/);
+    if (m) return m[1].toLowerCase();
+  }
+  if (kind === "image") return "jpg";
+  if (kind === "video") return "mp4";
+  return "m4a";
 }
 
 type Profile = NonNullable<ReturnType<typeof useAuth>["user"]>;
@@ -142,28 +155,152 @@ function SettingsForm({ user }: { user: Profile }) {
     }
   };
 
-  // User data export.
+  // User data export — a ZIP: readable profile/posts text, the actual
+  // uploaded media files, and the full JSON archive.
   const exportData = useQuery(api.exportData.exportMyData);
   const [exporting, setExporting] = useState(false);
-  const downloadExport = () => {
+  const [exportProgress, setExportProgress] = useState<string | null>(null);
+  const downloadExport = async () => {
     if (!exportData) {
       toast.error("Your data isn't ready yet — try again in a moment.");
       return;
     }
     setExporting(true);
+    setExportProgress("Assembling archive…");
     try {
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: "application/json",
+      const zip = new JSZip();
+      const stamp = new Date().toISOString().slice(0, 10);
+      const profile = exportData.profile as {
+        name?: string | null;
+        username?: string | null;
+        bio?: string | null;
+      };
+
+      zip.file(
+        "README.txt",
+        [
+          "PureWire — your data export",
+          `Exported: ${exportData.exportedAt}`,
+          "",
+          "This archive contains everything you created on PureWire:",
+          "  profile.txt — your account details and stats",
+          "  posts.txt   — every post you made, in readable form",
+          "  media/      — the photos, videos, and audio files you uploaded",
+          "  export.json — the complete machine-readable archive",
+          "",
+          "Media files are named by post (media/post-01-1.jpg is the first",
+          "file of your first post), and posts.txt lists them next to each",
+          "post so it is easy to match them up.",
+          "",
+          "This data is yours — take it anywhere. Deleting your account",
+          "erases it from PureWire, so download first if you want a copy.",
+        ].join("\n"),
+      );
+
+      zip.file(
+        "profile.txt",
+        [
+          "PureWire profile",
+          "----------------",
+          `Name: ${profile.name ?? ""}`,
+          `Username: @${profile.username ?? ""}`,
+          `Bio: ${profile.bio ?? ""}`,
+          `Preferences: ${JSON.stringify(exportData.preferences)}`,
+          "",
+          "Stats",
+          "-----",
+          `Posts: ${exportData.stats.posts}`,
+          `Media files: ${exportData.stats.media}`,
+          `Comments: ${exportData.stats.comments}`,
+          `Stories: ${exportData.stats.stories}`,
+          `Following: ${exportData.stats.following}`,
+          `Followers: ${exportData.stats.followers}`,
+          `Blocks: ${exportData.stats.blocks}`,
+          `Notifications: ${exportData.stats.notifications}`,
+        ].join("\n"),
+      );
+
+      // posts.txt — every post, clearly formatted, with its media listed.
+      const lines: string[] = [];
+      exportData.posts.forEach((post, i) => {
+        const n = i + 1;
+        lines.push("", "=".repeat(60), `POST ${n}`, "=".repeat(60));
+        lines.push(`Posted: ${new Date(post.createdAt).toISOString()}`);
+        lines.push(`Post id: ${post.id}`);
+        lines.push(
+          `Likes: ${post.likeCount}  |  Comments: ${post.commentCount}`,
+        );
+        const loc = post.location as { label?: string } | null | undefined;
+        if (loc?.label) lines.push(`Location: ${loc.label}`);
+        if (post.media.length > 0) {
+          lines.push(`Media (${post.media.length}):`);
+          post.media.forEach((m, mi) => {
+            const name = `post-${String(n).padStart(2, "0")}-${mi + 1}.${extFor(m.url, m.kind)}`;
+            lines.push(`  media/${name}  (${m.kind})`);
+          });
+        }
+        lines.push("", post.content);
       });
+      zip.file("posts.txt", lines.join("\n"));
+
+      // The actual media files, named by post so they match posts.txt.
+      const mediaFolder = zip.folder("media");
+      if (mediaFolder === null) {
+        throw new Error("Could not create the media folder.");
+      }
+      const missing: string[] = [];
+      let downloaded = 0;
+      for (let i = 0; i < exportData.posts.length; i++) {
+        const post = exportData.posts[i];
+        const n = i + 1;
+        for (let mi = 0; mi < post.media.length; mi++) {
+          const m = post.media[mi];
+          const name = `post-${String(n).padStart(2, "0")}-${mi + 1}.${extFor(m.url, m.kind)}`;
+          if (!m.url) {
+            missing.push(name);
+            continue;
+          }
+          downloaded++;
+          setExportProgress(`Downloading media ${downloaded}…`);
+          try {
+            const res = await fetch(m.url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            mediaFolder.file(name, await res.arrayBuffer());
+          } catch {
+            missing.push(name);
+          }
+        }
+      }
+      if (missing.length > 0) {
+        mediaFolder.file(
+          "_could-not-download.txt",
+          [
+            "The following media files could not be downloaded (the file may",
+            "have been removed from the media host). Everything else is intact.",
+            "",
+            ...missing,
+          ].join("\n"),
+        );
+      }
+
+      zip.file("export.json", JSON.stringify(exportData, null, 2));
+
+      setExportProgress("Zipping…");
+      const blob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `purewire-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `purewire-export-${stamp}.zip`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success("Export downloaded.");
+      toast.success("Export downloaded — your posts and media are inside.");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not build the export.",
+      );
     } finally {
       setExporting(false);
+      setExportProgress(null);
     }
   };
 
@@ -818,9 +955,10 @@ function SettingsForm({ user }: { user: Profile }) {
               <div>
                 <p className="font-semibold">Download your data</p>
                 <p className="text-sm text-muted-foreground">
-                  A complete JSON archive of everything you've created —
-                  profile, posts, comments, stories, follows, and blocks. Yours
-                  to keep, back up, or take anywhere.
+                  A ZIP archive of everything you've created — your posts as
+                  readable text, the photos, videos, and audio files you
+                  uploaded, plus the full data archive. Yours to keep, back up,
+                  or take anywhere.
                 </p>
               </div>
             </div>
@@ -836,7 +974,7 @@ function SettingsForm({ user }: { user: Profile }) {
               ) : (
                 <Download className="size-4" />
               )}
-              {exporting ? "Preparing…" : "Download archive"}
+              {exporting ? (exportProgress ?? "Preparing…") : "Download archive"}
             </Button>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
