@@ -124,6 +124,22 @@ export function Support() {
         </p>
       </div>
 
+      {/* Transparency — the full feature/fee disclosure, always one tap away */}
+      <div className="flex items-start gap-2.5 rounded-xl border border-l-[3px] border-l-moss bg-moss/5 px-3 py-2.5 text-sm">
+        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-moss" />
+        <p className="leading-snug text-muted-foreground">
+          <span className="font-semibold text-foreground">
+            Everything, plainly stated:
+          </span>{" "}
+          what PureWire costs (nothing), the five feeds, every feature, the
+          rules, and your data controls are documented on the{" "}
+          <Link to="/about" className="text-primary hover:underline">
+            About page
+          </Link>
+          .
+        </p>
+      </div>
+
       {/* ── The PureWire Standard ────────────────────────────────────── */}
       <Card className="border-oxide/25">
         <CardHeader>
@@ -470,6 +486,10 @@ export function Support() {
             {
               q: "How does the Local feed know where I am?",
               a: "The Local tab uses your live browser position — read only while you're browsing and never stored — to find posts shared near you. If you add a home location in Settings, it's kept only as a coarsened ~1 km area. Place search runs on PureWire's own servers, and other members only ever see the label you choose.",
+            },
+            {
+              q: "Does PureWire cost anything?",
+              a: "No — PureWire is free to join and free to use, with no hidden fees anywhere: no subscription, no paywall, no premium tier, no pay-to-post, no ads, and no sponsorships. Posting, uploading photos, videos, and audio, sending end-to-end encrypted messages, and downloading your data are all free for every member. The full breakdown of costs, feeds, features, and policies is on the About page.",
             },
             {
               q: "How do I delete my account and all my data?",

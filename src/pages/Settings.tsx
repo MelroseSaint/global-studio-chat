@@ -947,7 +947,12 @@ function SettingsForm({ user }: { user: Profile }) {
               Read the full data & transparency statement
             </Link>{" "}
             — a plain-language inventory of everything stored, why, for how
-            long, and how it is protected.
+            long, and how it is protected.{" "}
+            <Link to="/about" className="text-primary hover:underline">
+              See everything PureWire offers — fees, feeds, features, and
+              policies
+            </Link>
+            .
           </p>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 p-4">
             <div className="flex items-start gap-3">
