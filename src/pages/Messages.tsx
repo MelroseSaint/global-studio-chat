@@ -138,6 +138,7 @@ export function Messages() {
   // re-navigating with a fresh ?share= should re-arm the composer.
   useEffect(() => {
     const share = searchParams.get("share");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL-param sync is an external-system subscription
     if (share) setSharingPostId(share);
   }, [searchParams]);
 

@@ -128,6 +128,7 @@ export function MessageDialog({
   // Fresh state on every open.
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset-on-open is a well-specified pattern
     setSelectedId(null);
     setDraft("");
     setSearch("");

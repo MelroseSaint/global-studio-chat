@@ -7,28 +7,10 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-/**
- * Extract a PureWire post link from arbitrary text. Accepts a bare
- * `/post/<id>` path or a full `https://…/post/<id>` URL, and returns the
- * id plus the raw matched span so the caller can strip the link out of a
- * draft. Convex ids are lowercase-alphanumeric, so the capture is
- * constrained to word characters and the leading `/post/` is required (a
- * bare id can't be told apart from random text).
- */
-export function extractSharedPostLink(
-  input: string,
-): { id: string; raw: string } | null {
-  const match = input.match(
-    /https?:\/\/[^\s/]+\/post\/([A-Za-z0-9]+)|\/post\/([A-Za-z0-9]+)/,
-  );
-  if (!match) return null;
-  return { id: match[1] ?? match[2], raw: match[0] };
-}
-
-export function extractSharedPostId(input: string): string | null {
-  return extractSharedPostLink(input)?.id ?? null;
-}
+import {
+  extractSharedPostId,
+  extractSharedPostLink,
+} from "@/lib/sharedPost";
 
 /**
  * The "attach a post to a comment" control, mirroring the DM share flow:
@@ -66,6 +48,7 @@ export function SharedPostComposer({
     [text, value],
   );
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing stale dismissal when the link leaves the draft
     if (pasted === null && dismissedId !== null) setDismissedId(null);
   }, [pasted, dismissedId]);
   const offer = pasted !== null && pasted.id !== dismissedId ? pasted : null;

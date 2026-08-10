@@ -16,7 +16,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { MentionPicker } from "@/components/MentionPicker";
 import type { PostItem } from "@/components/PostCard";
 import { SharedPostEmbed } from "@/components/SharedPostEmbed";
-import { extractSharedPostId } from "@/components/SharedPostComposer";
+import { extractSharedPostId } from "@/lib/sharedPost";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

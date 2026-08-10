@@ -189,6 +189,7 @@ export function PostDetail() {
   // ?share= should re-arm the composer.
   useEffect(() => {
     const share = searchParams.get("share");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL-param sync is an external-system subscription
     if (share) setSharingPostId(share);
   }, [searchParams]);
   // Per-comment expand state for the Show more/less clamp so a single

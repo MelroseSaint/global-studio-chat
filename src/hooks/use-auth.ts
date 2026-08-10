@@ -78,7 +78,9 @@ export function useAuth() {
   // later — it must see the CURRENT value, not the value from when the
   // null was first observed (the query may have recovered meanwhile).
   const userRef = useRef(user);
-  userRef.current = user;
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   /**
    * Self-healing session: only one state is truly unrecoverable — the

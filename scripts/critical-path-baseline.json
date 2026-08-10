@@ -1,5 +1,5 @@
 {
-  "totalBytes": 592865,
-  "updatedAt": "2026-08-09T08:52:38.296Z",
+  "totalBytes": 691839,
+  "updatedAt": "2026-08-10T11:43:14.154Z",
   "note": "Critical-path JS total (sum of HTML-preloaded chunks). Update deliberately via --update."
 }
