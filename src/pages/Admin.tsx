@@ -873,7 +873,7 @@ function AdminDashboard({ meId }: { meId: string }) {
           organized on every screen width — the old single scrollable tab
           row squeezed and overflowed on tablets. */}
       <div className="flex items-center gap-2 border-b px-4 py-3 sm:px-5">
-        <span className="text-sm font-medium text-muted-foreground">
+        <span className="hidden text-sm font-medium text-muted-foreground sm:inline">
           Section
         </span>
         <Select value={tab} onValueChange={setTab}>
@@ -947,9 +947,10 @@ function AdminDashboard({ meId }: { meId: string }) {
         {pendingG && (
           <span
             role="status"
-            className="animate-pulse text-xs font-medium text-primary"
+            className="animate-pulse whitespace-nowrap text-xs font-medium text-primary"
           >
-            g — press a key (u·m·p·a·r·s·e·l·b·n·t·c)
+            g — press a key
+            <span className="hidden sm:inline"> (u·m·p·a·r·s·e·l·b·n·t·c)</span>
           </span>
         )}
       </div>
