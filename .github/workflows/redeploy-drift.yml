@@ -52,6 +52,11 @@ jobs:
     name: Redeploy production if drifted from main
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Expose the drift verdict so the mirror-sync job below only builds
+    # when a redeploy actually happened (the nightly no-op path stays a
+    # no-op instead of rebuilding and re-uploading identical files).
+    outputs:
+      drifted: ${{ steps.drift.outputs.drifted }}
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -86,6 +91,121 @@ jobs:
       - name: Note the redeploy
         if: steps.drift.outputs.drifted == 'true'
         run: echo "Production redeployed to main HEAD — the live commit now matches the repo."
+
+  sync-mirror-if-drifted:
+    # Mirror twin of the drift redeploy. A drift redeploy ships the same
+    # commit the push path ships, so the convex.site mirror must follow it
+    # too — otherwise the nightly drift path would re-create the exact
+    # mirror lag the deploy workflow's sync job exists to prevent. Runs
+    # ONLY when the drift check said drifted AND the redeploy succeeded
+    # (needs guarantees the latter); the no-op night builds nothing.
+    name: Sync the convex.site mirror when production was redeployed
+    needs: [redeploy-if-drifted]
+    if: needs.redeploy-if-drifted.outputs.drifted == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the frontend
+        run: npm run build
+
+      # A missing deploy key would silently lag the mirror — a loud
+      # failure here, not a skip (same rationale as deploy.yml).
+      - name: Verify the deploy key is configured
+        if: env.CONVEX_DEPLOY_KEY == ''
+        run: |
+          echo "::error::CONVEX_DEPLOY_KEY is not set — the convex.site mirror cannot be synced and WILL lag the main host. Add it as a repo secret and re-run this job."
+          exit 1
+
+      - name: Publish dist to the static-hosting component
+        run: node scripts/upload-static-sync.mjs --prod
+
+      # Same deduplicated-alert pattern as deploy.yml's sync job (shared
+      # label prod-mirror-sync), so a failure on EITHER deploy route opens
+      # one visible issue instead of two competing alerts.
+      - name: Alert on sync failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-mirror-sync";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly drift redeploy" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `convex.site mirror sync failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The convex.site mirror sync failed after a drift redeploy.",
+                "",
+                "The mirror (outgoing-seal-727.convex.site) must match the main",
+                "host — when this job fails, the mirror silently lags and serves",
+                "an older UI (the admin-dropdown incident was exactly this).",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Fix the cause and re-run the job (or push again). You can also",
+                "sync manually: `npm run build && node scripts/upload-static-sync.mjs",
+                "--prod`. This issue is closed automatically on the next",
+                "successful sync from either deploy route.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-mirror-sync";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open mirror-sync alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed mirror-sync alert issue #${issue.number}.`);
+            }
 
   redeploy-convex-if-drifted:
     # Backend twin of the Vercel drift guard. Convex exposes no commit

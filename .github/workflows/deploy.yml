@@ -20,6 +20,7 @@ concurrency:
 
 permissions:
   contents: read
+  issues: write # open/close the deduplicated mirror-sync alert issue
 
 jobs:
   deploy:
@@ -45,3 +46,127 @@ jobs:
         # commit author email matches a verified GitHub account; pushes from
         # an unverified email are silently blocked from deploying.
         run: npx --yes vercel@latest --prod --yes --scope team_S3b0Y2fnJhOo8sdP39P0zfGP
+
+  # The convex.site mirror (outgoing-seal-727.convex.site) serves the same
+  # app via Convex static hosting, and its copy must never lag the main
+  # host: a stale bundle silently serves an old UI (the admin-dropdown
+  # incident) and undermines the dynamic-render checks that probe it.
+  # Vercel builds from source on its own infrastructure, so this job
+  # rebuilds the SAME commit locally (npm run build) and pushes dist/ to
+  # the static-hosting component with scripts/upload-static-sync.mjs —
+  # AFTER the production deploy succeeds, so a failed deploy never ships
+  # the mirror ahead of the main host. The drift-redeploy path is covered
+  # by redeploy-drift.yml's own sync job, so both deploy routes keep the
+  # mirror current.
+  sync-mirror:
+    name: Sync the convex.site mirror
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the frontend
+        run: npm run build
+
+      # Unlike the backend deploy (which migrations.yml skips when the key
+      # is unset, e.g. on forks), a missing deploy key here would silently
+      # lag the mirror — the whole point of this job — so it is a loud
+      # failure, not a skip.
+      - name: Verify the deploy key is configured
+        if: env.CONVEX_DEPLOY_KEY == ''
+        run: |
+          echo "::error::CONVEX_DEPLOY_KEY is not set — the convex.site mirror cannot be synced and WILL lag the main host. Add it as a repo secret and re-run this job."
+          exit 1
+
+      - name: Publish dist to the static-hosting component
+        run: node scripts/upload-static-sync.mjs --prod
+
+      # Same deduplicated-alert pattern as the other production guards: a
+      # single persistent issue (label prod-mirror-sync) so a failed sync
+      # — a build break or a Convex auth failure — is visible instead of
+      # silently leaving the mirror behind the main host.
+      - name: Alert on sync failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-mirror-sync";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `convex.site mirror sync failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The convex.site mirror sync failed after a production deploy.",
+                "",
+                "The mirror (outgoing-seal-727.convex.site) serves a static bundle",
+                "that must match the main host — when this job fails, the mirror",
+                "silently lags and serves an older UI (the admin-dropdown incident",
+                "was exactly this).",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Fix the cause (usually a build break or a Convex auth failure) and",
+                "re-run the job, or push again — the next successful deploy syncs",
+                "the mirror. You can also sync manually: `npm run build && node",
+                "scripts/upload-static-sync.mjs --prod`.",
+                "",
+                "This issue is closed automatically on the next successful sync.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-mirror-sync";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open mirror-sync alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed mirror-sync alert issue #${issue.number}.`);
+            }
