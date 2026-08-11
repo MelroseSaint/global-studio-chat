@@ -14,6 +14,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import { MediaUpload, type MediaItem } from "@/components/MediaUpload";
 import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -284,7 +285,11 @@ export function StoriesBar() {
               {current.mediaKind === "audio" && (
                 <div className="flex flex-col items-center gap-4 p-10 text-white">
                   <AudioLines className="size-12" />
-                  <audio src={current.mediaUrl ?? ""} controls className="w-full" />
+                  <AudioPlayer
+                    src={current.mediaUrl ?? ""}
+                    variant="story"
+                    className="w-full"
+                  />
                 </div>
               )}
               {current.caption ? (

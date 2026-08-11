@@ -10,6 +10,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 
+import { AudioPlayer } from "@/components/AudioPlayer";
 import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -349,12 +350,8 @@ export function PostMediaGrid({
           </div>
         )}
         {m.kind === "audio" && m.url && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="flex items-center gap-2 p-4"
-          >
-            <AudioLines className="size-5 shrink-0 text-primary" />
-            <audio src={m.url} controls className="w-full" />
+          <div onClick={(e) => e.stopPropagation()} className="p-3">
+            <AudioPlayer src={m.url} variant="bare" className="w-full" />
           </div>
         )}
         {autoplayOffChip}

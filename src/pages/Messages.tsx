@@ -21,6 +21,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import { scanWithBlocklist } from "@/convex/phishing";
 import {
   cloudinaryVideoUrl,
@@ -864,10 +865,10 @@ export function Messages() {
                                     className="max-h-72 rounded-lg"
                                   />
                                 ) : (
-                                  <audio
+                                  <AudioPlayer
                                     src={cloudinaryVideoUrl(mediaUrl) ?? mediaUrl}
-                                    controls
-                                    className="h-10 w-56 max-w-full"
+                                    variant={mine ? "primary" : "default"}
+                                    className="w-56 max-w-full"
                                   />
                                 )}
                               </div>

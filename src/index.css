@@ -258,6 +258,55 @@
   border: 2px solid transparent;
 }
 
+/* PureWire audio player — custom scrubber. The filled portion is painted
+   as a primary→track gradient on the input's own background (set inline
+   by AudioPlayer.tsx), and the thumb is a Paper dot ringed in Oxide.
+   --pw-thumb / --pw-thumb-border are set per player variant so the story
+   and DM-primary surfaces stay legible. */
+.pw-audio-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  cursor: pointer;
+  outline-offset: 2px;
+}
+.pw-audio-range:focus-visible {
+  outline: 2px solid var(--ring);
+}
+.pw-audio-range:disabled {
+  cursor: default;
+}
+.pw-audio-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.pw-audio-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px;
+  border-radius: 999px;
+  background: var(--pw-thumb, #fcfaf4);
+  border: 2px solid var(--pw-thumb-border, var(--primary));
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+.pw-audio-range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.pw-audio-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--pw-thumb, #fcfaf4);
+  border: 2px solid var(--pw-thumb-border, var(--primary));
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+
 /* Brand gradients — Copper → Oxide, the PureWire signal */
 .brand-gradient-text {
   background: linear-gradient(135deg, #c97952, #d4785a);
