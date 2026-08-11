@@ -201,6 +201,22 @@
     html[data-touch="true"] [data-slot="input"] {
       min-height: 44px;
     }
+
+    /* The same discipline for the small controls the layout audits
+       flagged: like/comment/share count pills, "View comments" links,
+       tag/location/AI chips, the profile link chips, `sm` buttons
+       (Edit profile, card actions), icon-only buttons (share, the 22px
+       dismiss X), and the compact settings buttons. min-height AND
+       min-width only push targets UP to 44×44 — anything already larger
+       is untouched, and text buttons (already wider than 44px) never
+       stretch. min-width makes icon-only targets a real 44px square
+       instead of a 44px-tall sliver. */
+    html[data-touch="true"] button,
+    html[data-touch="true"] [role="button"],
+    html[data-touch="true"] a.rounded-full {
+      min-height: 44px;
+      min-width: 44px;
+    }
   }
 
   /* On installed PWAs the bottom bar is a separate edge; the mobile nav
