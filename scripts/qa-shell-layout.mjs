@@ -46,9 +46,14 @@ const NAV_TIMEOUT = 45000;
 const reporter = createReporter();
 const { check } = reporter;
 // How long each surface gets to stream its lazy chunk + queries before the
-// layout is measured — a flat settle beat, generous enough for a slow
-// runner because the assertions themselves are structural, not timing.
+// layout is measured. `domcontentloaded` fires before the signed-in shell
+// mounts (lazy chunk + Convex queries), so a flat beat can measure a page
+// that is still a blank shell — a false negative on a slow runner or a
+// live site under load. The QA tests LAYOUT, not load speed, so it first
+// waits for the surface to actually mount (nav surface for every page, the
+// feed tab strip on /home), then gives the layout a short settle beat.
 const SETTLE_MS = 2200;
+const MOUNT_TIMEOUT_MS = 12000;
 
 /** [label, width, height] — the width bands the shell responds to.
  *  `ipad9-*` are the iPad (9th gen) dimensions (810×1080 / 1080×810) —
@@ -111,6 +116,41 @@ async function inspectFeedTabs(page, widthLabel) {
 }
 
 /**
+ * Wait for the signed-in shell to mount: the width-appropriate nav surface
+ * (bottom bar on phones, sidebar on tablets/desktops) is present on every
+ * authenticated page once the lazy shell chunk + queries resolve, so it is
+ * the reliable "shell is up" signal. On /home the feed tab strip is the
+ * surface the checks care about, so wait for it too. Bounded — if the
+ * shell never mounts in time, the subsequent structural checks fail for
+ * real instead of flaking on a slow load.
+ */
+async function waitForMount(page, width) {
+  const wantBottom = width < 640;
+  const start = Date.now();
+  while (Date.now() - start < MOUNT_TIMEOUT_MS) {
+    const mounted = await page.evaluate((bottom) => {
+      const navPresent = bottom
+        ? [...document.querySelectorAll("div, nav")].some((el) => {
+            const r = el.getBoundingClientRect();
+            const cs = getComputedStyle(el);
+            return (
+              cs.position === "fixed" &&
+              r.top >= window.innerHeight - 90 &&
+              el.querySelectorAll("a, button").length >= 3
+            );
+          })
+        : [...document.querySelectorAll("aside, nav")].some((el) => {
+            const r = el.getBoundingClientRect();
+            return r.left < 100 && r.width > 40 && r.height > 200;
+          });
+      return navPresent;
+    }, wantBottom);
+    if (mounted) return;
+    await page.waitForTimeout(300);
+  }
+}
+
+/**
  * The right navigation surface for the width: a fixed bottom bar on phones
  * (the shell swaps the sidebar for a bottom tab bar below `sm`), and the
  * icon sidebar on tablets and desktops. A phone showing the sidebar (or a
@@ -167,6 +207,16 @@ async function main() {
       });
       for (const [path, name] of SURFACES) {
         await page.goto(`${SITE_URL}${path}`, { waitUntil: "domcontentloaded" });
+        await waitForMount(page, width);
+        // The feed tab strip is what the screenshot regressions hit, so
+        // wait for it specifically before the settle beat on /home.
+        if (name === "feed") {
+          await page
+            .waitForSelector('[data-slot="tabs-list"] [data-slot="tabs-trigger"]', {
+              timeout: MOUNT_TIMEOUT_MS,
+            })
+            .catch(() => {});
+        }
         await page.waitForTimeout(SETTLE_MS);
         await measurePage(page, `${label}: ${name}`, check);
         if (name === "feed") {

@@ -33,7 +33,7 @@ export interface SolicitationVerdict {
 // ─── Text normalization (circumvention detection) ───────────────────────
 
 /** Zero-width and invisible characters used to bypass filters. */
-const ZERO_WIDTH_CHARS = /[\u200B\u200C\u200D\uFEFF\u00AD\u2060\u180E]/g;
+const ZERO_WIDTH_CHARS = /\u200B|\u200C|\u200D|\uFEFF|\u00AD|\u2060|\u180E/g;
 
 /** Characters inserted between letters to dodge filters — removed entirely. */
 const SEPARATOR_CHARS = /[._\-|*·•]+/g;
