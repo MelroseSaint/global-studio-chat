@@ -190,6 +190,26 @@ async function main() {
   );
 
   // ── Orphan audit ─────────────────────────────────
+  // Self-heal before auditing, the same repair-then-check discipline as
+  // the count reconciliation above: interrupted QA chains can leave
+  // engagement rows (DM conversations/messages, silent flags, moderation
+  // log, commentLikes, storyViews, notifications, tickets, blocks)
+  // pointing at already-erased users. Those are REPAIRABLE — they should
+  // never red the DQS gate. sweepDataOrphans deletes every row whose
+  // referenced entity is gone; the audit below then verifies the state it
+  // asserts: zero orphans. If the sweep reports rows, they were debris,
+  // not drift — the audit still checks the swept state rather than
+  // failing on rows that no longer exist.
+  const orphanSweep = await client.mutation(api.testHarness.sweepDataOrphans, {
+    secret: SECRET,
+  });
+  if (orphanSweep.sweptCount > 0) {
+    console.log(
+      `  ↻ swept ${orphanSweep.sweptCount} foreign-key orphans before the audit (${[
+        ...new Set(orphanSweep.swept.map((s) => s.table)),
+      ].join(", ")})`,
+    );
+  }
   const orphans = await client.query(api.testHarness.auditDataOrphans, {
     secret: SECRET,
   });

@@ -182,15 +182,15 @@ jobs:
     name: DQS data-integrity audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # The audit asserts a CLEAN state, so it must run after the sweep that
-    # repairs leftovers from interrupted QA chains — otherwise it races the
-    # previous run's debris (dangling DMs, silent flags, moderation rows,
-    # test users) and reds on rows the sweep is about to erase. cleanup-
-    # test-users erases those in the same pass this audit checks. `if:
-    # always()` keeps the audit running (and able to red) even if the sweep
-    # itself fails — a failed cleanup is exactly when the audit matters
-    # most.
-    needs: cleanup-test-users
+    # The audit asserts a CLEAN state, so it must run AFTER the sweeps that
+    # repair leftovers — otherwise it audits the previous run's debris
+    # (dangling DMs, silent flags, moderation rows, test users) and reds on
+    # rows the cleanup is about to erase. cleanup-test-domains is the last
+    # job in the QA→cleanup chain, so gating on it makes this the final
+    # integrity gate. `if: always()` keeps the audit running (and able to
+    # red) even if a sweep fails — a failed cleanup is exactly when the
+    # audit matters most.
+    needs: cleanup-test-domains
     if: always()
     steps:
       - uses: actions/checkout@v4
@@ -221,9 +221,10 @@ jobs:
     name: Phishing & prohibited-domain QA
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: dqs-audit
-    # The QA mints an admin session via the harness — without the secret
-    # the harness is inert (exit 2, not exit 1) and the job greens.
+    # No longer gated on dqs-audit: the audit moved to the END of the chain
+    # (after the cleanup sweeps) so it verifies the final state. The QA
+    # chain creates throwaway test users by design; they are swept by
+    # cleanup-test-users and the audit then asserts zero remain.
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
