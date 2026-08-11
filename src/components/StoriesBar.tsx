@@ -288,6 +288,13 @@ export function StoriesBar() {
                   <AudioPlayer
                     src={current.mediaUrl ?? ""}
                     variant="story"
+                    waveform
+                    // The story viewer has no auto-advance timer — an
+                    // audio story's natural duration is its track, so when
+                    // it finishes, step to the next story (same wrap-around
+                    // as the chevrons). Manual navigation mid-play already
+                    // stops the track because the src changes.
+                    onEnded={() => step(1)}
                     className="w-full"
                   />
                 </div>

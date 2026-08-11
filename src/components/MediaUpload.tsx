@@ -1,13 +1,9 @@
 import { useAction, useMutation } from "convex/react";
-import {
-  AudioLines,
-  Film,
-  Loader2,
-  Plus,
-  X,
-} from "lucide-react";
+import { Film, Loader2, Plus, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+
+import { AudioPlayer } from "@/components/AudioPlayer";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -257,7 +253,16 @@ export function MediaUpload({
           key={item.key ?? item.storageId}
           className={cn(
             "group relative overflow-hidden rounded-lg border bg-muted",
-            compact ? "size-16" : "size-20",
+            // Audio gets a full-width-ish row — the player needs room for
+            // its scrubber and time readout; the wrap container lays it
+            // out on its own line naturally.
+            item.kind === "audio"
+              ? compact
+                ? "h-14 w-64"
+                : "h-14 w-72"
+              : compact
+                ? "size-16"
+                : "size-20",
           )}
         >
           {item.kind === "image" && (
@@ -272,19 +277,38 @@ export function MediaUpload({
               <Film className="size-6 text-white" />
             </div>
           )}
-          {item.kind === "audio" && (
-            <div className="flex size-full items-center justify-center bg-black/80">
-              <AudioLines className="size-6 text-white" />
+          {item.kind === "audio" && item.url && (
+            // A real player instead of a static icon — the file is a local
+            // object URL at this stage, so the user can listen to the
+            // attachment before it is ever uploaded. The remove button
+            // sits inline at the row's end (the corner overlay would
+            // cover the player's mute control).
+            <div className="flex size-full items-center gap-1 px-2.5">
+              <AudioPlayer
+                src={item.url}
+                variant="bare"
+                className="min-w-0 flex-1"
+              />
+              <button
+                type="button"
+                onClick={() => remove(item.key ?? item.storageId ?? item.url)}
+                className="shrink-0 rounded-full bg-black/70 p-1 text-white transition-colors hover:bg-black/90"
+                aria-label="Remove audio"
+              >
+                <X className="size-3.5" />
+              </button>
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => remove(item.key ?? item.storageId ?? item.url)}
-            className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
-            aria-label="Remove media"
-          >
-            <X className="size-3" />
-          </button>
+          {item.kind !== "audio" && (
+            <button
+              type="button"
+              onClick={() => remove(item.key ?? item.storageId ?? item.url)}
+              className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
+              aria-label="Remove media"
+            >
+              <X className="size-3" />
+            </button>
+          )}
         </div>
       ))}
       {value.length < max && (
