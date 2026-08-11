@@ -377,7 +377,14 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
-        run: npm run qa:shell-layout
+        run: npm run qa:shell-layout 2>&1 | tee shell-layout.log
+
+      - name: Upload the shell layout log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-layout-log
+          path: shell-layout.log
 
   shadowban-qa:
     name: Silent moderation QA
