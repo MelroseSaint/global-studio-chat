@@ -12,19 +12,24 @@
  * The mirror (outgoing-seal-727.convex.site) serves the same app via
  * Convex static hosting and used to silently lag the main host (the
  * admin-dropdown incident: /admin there showed the old tab row while the
- * main host had the dropdown). deploy.yml now syncs it on every deploy;
- * this guard makes staleness a hard CI failure instead of a silent
- * regression — it runs as the final verification step right after the
- * sync publishes, and again on every push/PR via static-audit.yml.
+ * main host had the dropdown). Two layers now make staleness a hard CI
+ * failure instead of a silent regression:
  *
- * Marker choice: `purewire_admin_section` (the localStorage key from the
- * section-persistence work) and `Shortcuts` (the keyboard-shortcuts
- * button label) are string literals that survive minification and exist
- * in the Admin chunk only after the dropdown UI shipped. If either is
- * renamed deliberately, update MARKERS and re-baseline.
+ *   1. PRIMARY — the mirror's /admin route must 301 to the canonical
+ *      host (src/convex/adminRedirect.ts). The mirror never serves its
+ *      own admin copy at all, so a stale admin copy is structurally
+ *      impossible; this check asserts the redirect is live.
+ *   2. SECONDARY — the mirror's uploaded Admin chunk must carry the
+ *      section-dropdown UI (markers `purewire_admin_section` +
+ *      `Shortcuts`), proving the static sync isn't shipping a pre-
+ *      dropdown build for the rest of the app.
+ *
+ * Runs as the final verification step right after the sync publishes in
+ * deploy.yml, and again on every push/PR via static-audit.yml.
  *
  * Usage: node scripts/mirror-freshness-check.mjs
  * Env:   MIRROR_URL            (default https://outgoing-seal-727.convex.site)
+ *        SITE_URL              (default https://purewire.vercel.app)
  *        MIRROR_POLL_TRIES     (default 6  — publish propagation can lag a
  *                               few seconds; each try re-fetches everything)
  *        MIRROR_POLL_INTERVAL_MS (default 5000)
@@ -33,6 +38,10 @@
 const MIRROR_URL = (
   process.env.MIRROR_URL ?? "https://outgoing-seal-727.convex.site"
 ).replace(/\/+$/, "");
+const SITE_URL = (process.env.SITE_URL ?? "https://purewire.vercel.app").replace(
+  /\/+$/,
+  "",
+);
 const MARKERS = ["purewire_admin_section", "Shortcuts"];
 const POLL_TRIES = Number(process.env.MIRROR_POLL_TRIES ?? 6);
 const POLL_INTERVAL_MS = Number(process.env.MIRROR_POLL_INTERVAL_MS ?? 5000);
@@ -66,6 +75,41 @@ async function fetchText(url, tries = 3) {
 
 async function main() {
   console.log(`\nMirror freshness guard — ${MIRROR_URL}\n`);
+
+  // PRIMARY: the mirror's /admin must 301 to the canonical host
+  // (src/convex/adminRedirect.ts). While this holds, the mirror can never
+  // serve a stale admin copy — the exact regression this guard was built
+  // for is structurally impossible. Polls because the backend deploy that
+  // carries the redirect can lag the static sync by a moment.
+  let redirect = null;
+  let redirectErr = "";
+  for (let t = 1; t <= POLL_TRIES; t++) {
+    try {
+      const res = await fetch(`${MIRROR_URL}/admin`, {
+        redirect: "manual",
+        headers: { "user-agent": "purewire-mirror-freshness-check/1.0" },
+      });
+      redirect = { status: res.status, location: res.headers.get("location") };
+      if (res.status === 301) break;
+      redirectErr = `HTTP ${res.status} (expected 301)`;
+    } catch (err) {
+      redirectErr = err.message;
+    }
+    if (t < POLL_TRIES) {
+      console.log(`  (try ${t}/${POLL_TRIES}: /admin not redirecting — ${redirectErr}, retrying in ${POLL_INTERVAL_MS / 1000}s)`);
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+  }
+  const expectedAdmin = `${SITE_URL}/admin`;
+  check(
+    "mirror /admin 301s to the canonical host",
+    redirect?.status === 301 && redirect?.location === expectedAdmin,
+    redirect
+      ? `status ${redirect.status}, Location ${redirect.location ?? "(none)"}`
+      : redirectErr || "no response",
+  );
+  check("redirect target is the canonical admin", redirect?.location === expectedAdmin, expectedAdmin);
+
   let html;
   try {
     html = await fetchText(`${MIRROR_URL}/`);
@@ -127,13 +171,17 @@ async function main() {
   console.log("");
   if (failures > 0) {
     console.error(
-      `::error::Mirror is STALE — ${MIRROR_URL} serves ${entryName} / ${adminName} without the section-dropdown admin UI. ` +
-        "The deploy-time sync either did not run, published stale dist, or was skipped. " +
-        "Re-run the Deploy workflow or sync manually: `npm run build && node scripts/upload-static-sync.mjs --prod`."
+      `::error::Mirror is STALE — ${MIRROR_URL} does not serve the canonical admin: ` +
+        "/admin must 301 to the canonical host (src/convex/adminRedirect.ts) and the uploaded " +
+        `Admin chunk must carry the section-dropdown UI. ` +
+        "The deploy-time sync/backend deploy either did not run or was skipped. " +
+        "Re-run the Deploy workflow, or sync manually: `npm run build && node scripts/upload-static-sync.mjs --prod`."
     );
     process.exit(1);
   }
-  console.log(`Mirror is current — ${entryName} → ${adminName} carries the dropdown admin UI.`);
+  console.log(
+    `Mirror is current — /admin 301s to ${expectedAdmin} and ${entryName} → ${adminName} carries the dropdown admin UI.`,
+  );
 }
 
 main().catch((err) => {

@@ -5,6 +5,7 @@ import { httpAction } from "./_generated/server";
 import { auth } from "@/convex/auth";
 import { verifyAdminIp } from "./adminIp";
 import { pageOg, postOg, profileOg } from "./og";
+import { adminRedirect } from "./adminRedirect";
 import { robotsTxt } from "./robots";
 import { sitemapXml } from "./sitemap";
 import { components } from "./_generated/api";
@@ -72,6 +73,24 @@ http.route({
   path: "/robots.txt",
   method: "GET",
   handler: robotsTxt,
+});
+
+// Mirror /admin → canonical host 301. The admin dashboard is the surface
+// where a stale mirror copy is worst (the admin-dropdown incident), so the
+// mirror never serves its own admin copy at all — every /admin request
+// that reaches the Convex site redirects to the canonical host, which runs
+// the real app. Registered before the static routes so the SPA catch-all
+// can never shadow it (the router matches GET; browsers navigate with
+// GET). See adminRedirect.ts for the host-aware guard.
+http.route({
+  path: "/admin",
+  method: "GET",
+  handler: adminRedirect,
+});
+http.route({
+  pathPrefix: "/admin/",
+  method: "GET",
+  handler: adminRedirect,
 });
 
 // Backend-verified admin IP binding (see adminIp.ts). The admin client
