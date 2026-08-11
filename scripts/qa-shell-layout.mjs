@@ -19,15 +19,26 @@
  *   - the right navigation surface for the width: the bottom tab bar on
  *     phones, the sidebar on tablets and desktops.
  *
- * Run (the password never lives in this file — see lib/qa-secrets.mjs):
+ * Run (signed-in sessions come from the harness when possible — the
+ * password never lives in this file, see lib/qa-secrets.mjs):
  *
- *   ADMIN_PASSWORD=<admin password> npm run qa:shell-layout
+ *   TEST_HARNESS_SECRET=<secret> npm run qa:shell-layout   # CI path
+ *   ADMIN_PASSWORD=<admin password> npm run qa:shell-layout # local fallback
  *   # or: printf '%s' '<admin password>' > .freebuff/.admin-password
  *
+ * With TEST_HARNESS_SECRET set, ONE admin session is minted via the
+ * harness and seeded into every width's browser context, so the QA never
+ * touches the auth library's password sign-in rate limit (10/hour per
+ * identifier) — the failure mode that redded this job in CI when the
+ * healthcheck chain and the 5-per-width sign-ins shared the admin's
+ * budget. Without it (local only), each width falls back to a password
+ * sign-in.
+ *
  * Overrides: SITE_URL (default https://purewire.vercel.app),
- * ADMIN_EMAIL (default monroedoses@gmail.com), HEADED=1 to watch the
+ * ADMIN_EMAIL (default monroedoses@gmail.com), CONVEX_URL (default
+ * https://outgoing-seal-727.convex.cloud), HEADED=1 to watch the
  * browser, BROWSER_TIMEOUT_MS (default 30000).
- * Exit codes: 0 all checks passed, 1 a check failed, 2 missing password.
+ * Exit codes: 0 all checks passed, 1 a check failed, 2 missing auth.
  */
 import {
   createReporter,
@@ -40,6 +51,21 @@ import { passwordHint, resolveAdminPassword } from "./lib/qa-secrets.mjs";
 const SITE_URL = process.env.SITE_URL ?? "https://purewire.vercel.app";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "monroedoses@gmail.com";
 const ADMIN_PASSWORD = resolveAdminPassword();
+// The QA signs in as the platform admin — but NOT via the password flow
+// when it can avoid it. The auth library rate-limits password sign-ins to
+// 10/hour/identifier, and this QA opens one browser context PER WIDTH (5
+// widths), so the old sign-in-per-width design burned up to 5 of those
+// attempts per run — and shared the same admin identifier as the whole
+// healthcheck chain, so CI runs would trip "too many sign-in attempts" on
+// the 3rd-4th width and fail the gate. With TEST_HARNESS_SECRET, the QA
+// instead mints ONE admin session via the harness and seeds it into every
+// context's localStorage (`__convexAuthJWT_<ns>` / refresh token, the same
+// keys the app's Convex client reads — the refresh-timing QA uses this
+// exact pattern). The password flow stays only as a no-secret fallback for
+// local runs.
+const HARNESS_SECRET = process.env.TEST_HARNESS_SECRET;
+const CONVEX_URL =
+  process.env.CONVEX_URL ?? "https://outgoing-seal-727.convex.cloud";
 const HEADED = process.env.HEADED === "1";
 const TIMEOUT = Number(process.env.BROWSER_TIMEOUT_MS ?? 30000);
 const NAV_TIMEOUT = 45000;
@@ -183,8 +209,35 @@ async function inspectNavSurface(page, widthLabel, width) {
   }
 }
 
+/**
+ * Mint ONE admin session through the harness and return the localStorage
+ * seed object for it, or null when no TEST_HARNESS_SECRET is available
+ * (local runs fall back to the password flow). The ns must match what the
+ * app's Convex client uses for its storage keys — derived from the URL,
+ * exactly as refresh-timing-qa does.
+ */
+async function mintAuthSeed() {
+  if (!HARNESS_SECRET) return null;
+  const { ConvexHttpClient } = await import("convex/browser");
+  const { api } = await import("../src/convex/_generated/api.js");
+  const client = new ConvexHttpClient(CONVEX_URL);
+  const admin = await client.mutation(api.testHarness.mintAdminSession, {
+    secret: HARNESS_SECRET,
+  });
+  if (!admin?.token || !admin?.refreshToken) {
+    throw new Error("harness mintAdminSession returned no token");
+  }
+  console.log("signed in: one harness-minted admin session (shared across widths)");
+  return {
+    ns: CONVEX_URL.replace(/[^a-zA-Z0-9]/g, ""),
+    token: admin.token,
+    refreshToken: admin.refreshToken,
+  };
+}
+
 async function main() {
-  if (!ADMIN_PASSWORD) {
+  const authSeed = await mintAuthSeed();
+  if (!authSeed && !ADMIN_PASSWORD) {
     console.log(passwordHint());
     process.exit(2);
   }
@@ -193,18 +246,35 @@ async function main() {
   try {
     for (const [label, width, height] of WIDTHS) {
       console.log(`\n--- ${label} (${width}px) ---`);
-      const page = await browser.newPage({
+      const context = await browser.newContext({
         viewport: { width, height },
         deviceScaleFactor: 1,
       });
+      if (authSeed) {
+        await context.addInitScript(
+          (seed) => {
+            try {
+              localStorage.setItem(`__convexAuthJWT_${seed.ns}`, seed.token);
+              localStorage.setItem(
+                `__convexAuthRefreshToken_${seed.ns}`,
+                seed.refreshToken,
+              );
+            } catch (_) {}
+          },
+          authSeed,
+        );
+      }
+      const page = await context.newPage();
       page.setDefaultTimeout(TIMEOUT);
-      await signIn(page, {
-        siteUrl: SITE_URL,
-        email: ADMIN_EMAIL,
-        password: ADMIN_PASSWORD,
-        timeoutMs: TIMEOUT,
-        navTimeoutMs: NAV_TIMEOUT,
-      });
+      if (!authSeed) {
+        await signIn(page, {
+          siteUrl: SITE_URL,
+          email: ADMIN_EMAIL,
+          password: ADMIN_PASSWORD,
+          timeoutMs: TIMEOUT,
+          navTimeoutMs: NAV_TIMEOUT,
+        });
+      }
       for (const [path, name] of SURFACES) {
         await page.goto(`${SITE_URL}${path}`, { waitUntil: "domcontentloaded" });
         await waitForMount(page, width);
@@ -224,7 +294,7 @@ async function main() {
           await inspectNavSurface(page, label, width);
         }
       }
-      await page.close();
+      await context.close();
     }
   } finally {
     await browser.close();
