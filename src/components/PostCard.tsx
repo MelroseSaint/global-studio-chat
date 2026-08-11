@@ -58,6 +58,8 @@ export interface PostMedia {
   // True when GPS/device metadata was removed before upload (client
   // re-encode or server-side remux) — shows the "Metadata stripped" chip.
   stripped?: boolean | null;
+  // Optional title on audio items, chosen by the author in the composer.
+  title?: string | null;
 }
 
 interface PostAuthor {
@@ -459,7 +461,11 @@ export function PostCard({
         ) : null}
 
         {post.mediaUrls && post.mediaUrls.length > 0 ? (
-          <PostMediaGrid media={post.mediaUrls} autoPlay={autoplay} />
+          <PostMediaGrid
+            media={post.mediaUrls}
+            autoPlay={autoplay}
+            artwork={post.author?.avatarUrl ?? null}
+          />
         ) : linkUrl ? (
           <LinkCard url={linkUrl} />
         ) : null}

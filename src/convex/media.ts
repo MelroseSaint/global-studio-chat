@@ -44,6 +44,8 @@ const mediaItemValidator = v.object({
   // client re-encode (images and most videos) or by the server remux
   // (pass-through videos). Surfaced as the "Metadata stripped" note.
   stripped: v.optional(v.boolean()),
+  // Optional title on audio items, chosen by the author in the composer.
+  title: v.optional(v.string()),
 });
 
 type MediaItem = {
@@ -55,6 +57,8 @@ type MediaItem = {
   // client re-encode (images and most videos) or by the server remux
   // (pass-through videos). Surfaced as the "Metadata stripped" note.
   stripped?: boolean;
+  // Optional title on audio items, chosen by the author in the composer.
+  title?: string;
 };
 
 /** What `prepareUpload` hands back to the client. */
@@ -314,6 +318,9 @@ export async function stripVideos(
       ...(item.key !== undefined ? { key: item.key } : {}),
       kind: item.kind,
       ...(metadataStripped ? { stripped: true } : {}),
+      // The composer's audio title rides through the strip unchanged —
+      // only media bytes are rewritten, never the author's metadata.
+      ...(item.title !== undefined ? { title: item.title } : {}),
     });
   }
   return { media: out, replacements, strippedKeys };

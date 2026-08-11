@@ -286,14 +286,19 @@ export function StoriesBar() {
                 <div className="flex flex-col items-center gap-4 p-10 text-white">
                   <AudioLines className="size-12" />
                   <AudioPlayer
-                    src={current.mediaUrl ?? ""}
+                    track={{
+                      id: `story:${current._id}`,
+                      src: current.mediaUrl ?? "",
+                      title: current.caption ?? "Story audio",
+                      artwork: current.author?.avatarUrl ?? null,
+                    }}
                     variant="story"
                     waveform
                     // The story viewer has no auto-advance timer — an
                     // audio story's natural duration is its track, so when
                     // it finishes, step to the next story (same wrap-around
                     // as the chevrons). Manual navigation mid-play already
-                    // stops the track because the src changes.
+                    // stops the track because the source changes.
                     onEnded={() => step(1)}
                     className="w-full"
                   />

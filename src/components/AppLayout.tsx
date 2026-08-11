@@ -15,6 +15,7 @@ import { Component, Suspense, useEffect, useState, type ReactNode } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router";
 
 import { api } from "@/convex/_generated/api";
+import { AudioPlayerShortcuts, MiniPlayer } from "@/components/MiniPlayer";
 import { PageLoader } from "@/components/PageLoader";
 import {
   DropdownMenu,
@@ -551,6 +552,11 @@ export function AppLayout() {
           </DropdownMenuContent>
         </DropdownMenu>
       </nav>
+
+      {/* Persistent mini now-playing bar + global audio keyboard shortcuts.
+          Mounted in the shell so listening survives navigation. */}
+      <MiniPlayer />
+      <AudioPlayerShortcuts />
       </div>
     </TooltipProvider>
   );

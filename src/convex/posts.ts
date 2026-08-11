@@ -317,6 +317,10 @@ export const createPost = action({
           // the client re-encode or the server-side remux. Surfaced as the
           // "Metadata stripped" note next to the post's media.
           stripped: v.optional(v.boolean()),
+          // Optional title on audio items — chosen by the author in the
+          // composer and shown prominently with the player. Never derived
+          // from file metadata: the user's explicit title always wins.
+          title: v.optional(v.string()),
         }),
       ),
     ),
@@ -436,6 +440,9 @@ export const createPostInternal = internalMutation({
           // the client re-encode or the server-side remux. Surfaced as the
           // "Metadata stripped" note next to the post's media.
           stripped: v.optional(v.boolean()),
+          // Optional title on audio items — chosen by the author in the
+          // composer and shown prominently with the player.
+          title: v.optional(v.string()),
         }),
       ),
     ),

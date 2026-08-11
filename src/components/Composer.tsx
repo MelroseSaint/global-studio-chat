@@ -27,7 +27,16 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
   const stripMedia = useAction(api.media.stripVideoMetadata);
   const [content, setContent] = useState("");
   const [media, setMedia] = useState<MediaItem[]>([]);
+  // Optional title for audio posts — shown prominently with the player.
+  // Prefilled best-effort from the file's own tags only until the author
+  // types: the author's title always wins and ships to the server.
+  const [audioTitle, setAudioTitle] = useState("");
+  const [audioTitleEdited, setAudioTitleEdited] = useState(false);
   const [location, setLocation] = useState<PickedLocation | undefined>(undefined);
+  // Remember the metadata title we last seeded from, so the field only
+  // prefills when a NEW audio file's tags arrive and the author hasn't
+  // typed their own title yet.
+  const [seededMetaTitle, setSeededMetaTitle] = useState<string | undefined>();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [creatorDisclosure, setCreatorDisclosure] = useState<
@@ -53,6 +62,17 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
   }, [pickerOpen]);
 
   const canPost = content.trim().length > 0 || media.length > 0;
+  const hasAudio = media.some((m) => m.kind === "audio");
+  // Seed the title field from the first audio file's own metadata (ID3 /
+  // FLAC / WAV), but only while the author hasn't typed their own. Done as
+  // a render-time adjustment (React's documented replacement for the
+  // setState-in-effect pattern): React re-renders before committing, so no
+  // flicker and no cascading effect.
+  const metaTitle = media.find((m) => m.kind === "audio" && m.title !== undefined)?.title;
+  if (metaTitle !== seededMetaTitle && !audioTitleEdited) {
+    setSeededMetaTitle(metaTitle);
+    if (metaTitle !== undefined) setAudioTitle(metaTitle);
+  }
   const overLimit = content.length > MAX_LENGTH;
 
   // Insert an @mention (from the tag picker) at the textarea cursor so the
@@ -96,6 +116,7 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
             key?: string;
             kind: MediaKind;
             stripped?: boolean;
+            title?: string;
           }[]
         | undefined;
       if (media.length > 0) {
@@ -125,6 +146,8 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
             key: m.key,
             kind: m.kind,
             stripped: m.stripped,
+            // The audio title rides through the strip unchanged.
+            ...(m.kind === "audio" && audioTitle.trim() ? { title: audioTitle.trim() } : {}),
           })),
         });
       }
@@ -216,6 +239,19 @@ export function Composer({ onPosted }: { onPosted?: () => void }) {
           maxLength={MAX_LENGTH + 10}
           className="resize-none border-none bg-transparent px-0 text-[15px] shadow-none focus-visible:ring-0"
         />
+        {hasAudio && (
+          <input
+            value={audioTitle}
+            onChange={(e) => {
+              setAudioTitle(e.target.value);
+              setAudioTitleEdited(true);
+            }}
+            placeholder="Audio title (optional)"
+            maxLength={120}
+            aria-label="Audio title"
+            className="mt-2 flex h-10 w-full max-w-sm rounded-lg border bg-muted/40 px-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        )}
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="flex items-center gap-2">
             <MediaUpload

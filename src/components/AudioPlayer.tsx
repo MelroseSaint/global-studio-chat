@@ -1,19 +1,22 @@
 import {
   AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  Download,
   Loader2,
   Pause,
   Play,
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useAudioPlayer } from "@/hooks/use-audio-player";
+import { playerStore, PlayerStore, type AudioTrack } from "@/lib/audio-player";
 import { cn } from "@/lib/utils";
 
-/**
- * mm:ss duration label — plain and compact, matching the muted
- * tabular-nums time stamps used across the feed.
- */
+/** mm:ss duration label — plain and compact, matching the muted
+ * tabular-nums time stamps used across the feed. */
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const whole = Math.floor(seconds);
@@ -22,13 +25,8 @@ function formatTime(seconds: number): string {
   return `${minutes}:${secs.toString().padStart(2, "0")}`;
 }
 
-/**
- * Build the scrubber's CSS gradient: the played portion is painted Oxide
- * red, buffered segments get a softer tint, and everything else stays the
- * track color. Adjacent same-position stops are legal CSS — the sort
- * guarantees the bands stay contiguous no matter how many buffered
- * ranges the browser reports.
- */
+/** Build the scrubber's CSS gradient: played portion Oxide red, buffered
+ * segments a softer tint, the rest the track color. */
 function trackGradient(
   pct: number,
   buffered: Array<[number, number]>,
@@ -63,179 +61,110 @@ function trackGradient(
   return `linear-gradient(to right, ${stops.join(", ")})`;
 }
 
-/**
- * Downsample the decoded audio into BARS peak values (0..1) for the
- * waveform visualization. Peak per bucket keeps quiet passages visible
- * and loud ones capped — a real envelope, not a synthetic pattern.
- */
-function computeWaveformPeaks(buffer: AudioBuffer, bars: number): number[] {
-  const data = buffer.getChannelData(0);
-  const peaks: number[] = [];
-  const step = Math.max(1, Math.floor(data.length / bars));
-  for (let i = 0; i < bars; i++) {
-    let peak = 0;
-    const end = Math.min((i + 1) * step, data.length);
-    for (let j = i * step; j < end; j++) {
-      const v = Math.abs(data[j]);
-      if (v > peak) peak = v;
-    }
-    // Gentle gain so quiet recordings still show a visible envelope.
-    peaks.push(Math.min(1, peak * 2.2));
-  }
-  return peaks;
-}
+const SPEEDS = [1, 1.5, 2] as const;
 
 /**
- * The PureWire audio player — a custom control bar that speaks the same
- * visual language as the rest of the platform instead of the browser's
- * default `<audio controls>` widget: Wire Black / Paper text, an Oxide
- * primary play button, the platform's muted surfaces, lucide icons and
- * the standard rounded border treatment.
+ * The PureWire audio player — a control bar that speaks the platform's
+ * visual language (Oxide-red primary, Paper accents, muted surfaces,
+ * lucide icons) instead of the browser's default widget.
  *
- * Variants adapt the player to the surface it sits on:
- *   default — a self-contained control card (DM bubbles, standalone use)
- *   bare    — no card chrome, for media already inside a card (posts)
- *   story   — translucent white on the black story viewer
- *   primary — translucent Paper on the author's red DM bubble
+ * By default every instance binds to the centralized PlayerStore: only one
+ * audio plays at a time, all instances of the same track id share state,
+ * and a mini now-playing bar can keep playing across navigation. With
+ * `standalone` (upload previews) the player owns a private store so a
+ * scratch listen never hijacks the global player.
  *
- * The scrubber is a styled `<input type="range">` (see .pw-audio-range in
- * index.css): the played portion is painted Oxide red, buffered segments
- * a softer tint, and the thumb is a Paper dot ringed in Oxide. With the
- * `waveform` prop the scrubber instead draws the file's real envelope
- * (decoded client-side via WebAudio, peak-per-bucket) — played time is
- * tinted Oxide over the muted bars. Decode failures fall back to the
- * plain track so the player never looks broken.
+ * `expandedUI` adds the second row — volume, playback speed, queue
+ * navigation and download — used by the full now-playing dialog.
  */
 export function AudioPlayer({
-  src,
+  track,
   variant = "default",
   waveform = false,
+  standalone = false,
+  expandedUI = false,
   onEnded,
   className,
 }: {
-  src: string;
+  track: AudioTrack;
   variant?: "default" | "bare" | "story" | "primary";
-  /** Draw the file's real waveform behind the scrubber (story viewer). */
+  /** Draw the track's real envelope behind the scrubber. */
   waveform?: boolean;
-  /** Called once playback reaches the end of the track. */
+  /** Use a private local store (upload previews) instead of the global one. */
+  standalone?: boolean;
+  /** Show the extended control row (volume, speed, queue, download). */
+  expandedUI?: boolean;
+  /** Called when playback of this track reaches the end. */
   onEnded?: () => void;
   className?: string;
 }) {
-  const ref = useRef<HTMLAudioElement>(null);
+  const localStore = useMemo(
+    () => (standalone ? new PlayerStore({ persist: false }) : null),
+    [standalone],
+  );
+  const store = localStore ?? playerStore;
+  const snap = useAudioPlayer(store);
+
+  // A standalone (upload-preview) store must stop playback when its player
+  // unmounts — the preview can be removed mid-play and must not keep
+  // playing from a detached element.
+  useEffect(() => {
+    if (localStore === null) return;
+    return () => localStore.close();
+  }, [localStore]);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [playing, setPlaying] = useState(false);
-  // Buffering between play and actually producing sound (network stall,
-  // slow decode) — shows a spinner in the play button.
-  const [waiting, setWaiting] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [current, setCurrent] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [errored, setErrored] = useState(false);
-  const [buffered, setBuffered] = useState<Array<[number, number]>>([]);
-  // Real waveform peaks (0..1 per bar) keyed by the src they were decoded
-  // from — the render guard (wave.src === src) means a stale envelope from
-  // a previous track never shows while the next one decodes.
-  const [wave, setWave] = useState<{ src: string; peaks: number[] } | null>(null);
+  const [peaks, setPeaks] = useState<number[] | null>(null);
   const [resizeTick, setResizeTick] = useState(0);
+  // Track identity guard so a re-mounted player for a different track
+  // never paints a stale envelope.
+  const [peaksFor, setPeaksFor] = useState<string | null>(null);
 
-  // Keep the newest onEnded callback without re-attaching listeners.
-  const onEndedRef = useRef(onEnded);
+  // Register the onEnded callback with the store (stories auto-advance).
   useEffect(() => {
-    onEndedRef.current = onEnded;
-  }, [onEnded]);
+    if (standalone || onEnded === undefined) return;
+    store.setOnEnded(track.id, onEnded);
+    return () => store.setOnEnded(track.id, undefined);
+  }, [standalone, store, track.id, onEnded]);
 
+  // Decode the waveform lazily — only once the player scrolls near the
+  // viewport, and once per track id (the store caches the envelope).
   useEffect(() => {
-    const el = ref.current;
-    if (el === null) return;
-    const onTime = () => setCurrent(el.currentTime);
-    const onDuration = () => {
-      if (Number.isFinite(el.duration)) setDuration(el.duration);
-    };
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
-    const onEndedEvent = () => {
-      setPlaying(false);
-      setCurrent(0);
-      onEndedRef.current?.();
-    };
-    const onWaiting = () => setWaiting(true);
-    const onCanPlay = () => setWaiting(false);
-    const onPlaying = () => setWaiting(false);
-    const onVolume = () => setMuted(el.muted || el.volume === 0);
-    const onLoadStart = () => {
-      setErrored(false);
-      setWaiting(false);
-      setBuffered([]);
-    };
-    const onError = () => setErrored(true);
-    const onProgress = () => {
-      const ranges: Array<[number, number]> = [];
-      for (let i = 0; i < el.buffered.length; i++) {
-        ranges.push([el.buffered.start(i), el.buffered.end(i)]);
-      }
-      setBuffered(ranges);
-    };
-    el.addEventListener("timeupdate", onTime);
-    el.addEventListener("durationchange", onDuration);
-    el.addEventListener("loadedmetadata", onDuration);
-    el.addEventListener("play", onPlay);
-    el.addEventListener("pause", onPause);
-    el.addEventListener("ended", onEndedEvent);
-    el.addEventListener("waiting", onWaiting);
-    el.addEventListener("canplay", onCanPlay);
-    el.addEventListener("playing", onPlaying);
-    el.addEventListener("volumechange", onVolume);
-    el.addEventListener("loadstart", onLoadStart);
-    el.addEventListener("progress", onProgress);
-    el.addEventListener("error", onError);
-    return () => {
-      el.removeEventListener("timeupdate", onTime);
-      el.removeEventListener("durationchange", onDuration);
-      el.removeEventListener("loadedmetadata", onDuration);
-      el.removeEventListener("play", onPlay);
-      el.removeEventListener("pause", onPause);
-      el.removeEventListener("ended", onEndedEvent);
-      el.removeEventListener("waiting", onWaiting);
-      el.removeEventListener("canplay", onCanPlay);
-      el.removeEventListener("playing", onPlaying);
-      el.removeEventListener("volumechange", onVolume);
-      el.removeEventListener("loadstart", onLoadStart);
-      el.removeEventListener("progress", onProgress);
-      el.removeEventListener("error", onError);
-    };
-  }, []);
-
-  // Decode the file into waveform peaks when requested. Only the story
-  // viewer enables this — one track at a time, user-initiated — so the
-  // full-file fetch never happens for feed cards (which stay on
-  // preload="metadata"). Failures (CORS, huge files) quietly fall back to
-  // the plain track; a stale envelope from a previous src is never shown
-  // because the render guard requires wave.src === src.
-  useEffect(() => {
+    // The render guard (`waveform && peaksFor === track.id`) hides any
+    // stale envelope when the prop is off or the track changed, so no
+    // synchronous reset is needed here.
     if (!waveform) return;
     let cancelled = false;
-    fetch(src)
-      .then((r) => r.arrayBuffer())
-      .then((bytes) => {
-        const w = window as unknown as {
-          AudioContext?: typeof AudioContext;
-          webkitAudioContext?: typeof AudioContext;
-        };
-        const Ctor = w.AudioContext ?? w.webkitAudioContext;
-        if (Ctor === undefined) throw new Error("WebAudio unavailable");
-        const ctx = new Ctor();
-        return ctx.decodeAudioData(bytes);
-      })
-      .then((audioBuf) => {
-        if (!cancelled) setWave({ src, peaks: computeWaveformPeaks(audioBuf, 48) });
-      })
-      .catch(() => {
-        // Leave any previous envelope untouched — the src guard hides it.
+    const el = canvasRef.current;
+    const decode = () => {
+      void store.getWaveform(track).then((p) => {
+        if (!cancelled) {
+          setPeaks(p);
+          setPeaksFor(track.id);
+        }
       });
+    };
+    if (el !== null && typeof IntersectionObserver !== "undefined") {
+      const io = new IntersectionObserver(
+        ([entry]) => {
+          if (entry.isIntersecting) {
+            decode();
+            io.disconnect();
+          }
+        },
+        { rootMargin: "300px 0px" },
+      );
+      io.observe(el);
+      return () => {
+        cancelled = true;
+        io.disconnect();
+      };
+    }
+    decode();
     return () => {
       cancelled = true;
     };
-  }, [src, waveform]);
+  }, [store, track, waveform]);
 
   // Redraw the waveform when the player resizes (bars must track width).
   useEffect(() => {
@@ -246,22 +175,13 @@ export function AudioPlayer({
     return () => ro.disconnect();
   }, []);
 
-  // Paint the waveform: muted bars for the unplayed portion, Oxide-red
-  // bars behind the played portion (clipped to the current position).
+  // Paint the waveform: muted bars for unplayed time, Oxide-red bars
+  // behind the played portion. Runs on every position tick while playing,
+  // so the red region animates smoothly with playback.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas === null || wave === null || wave.src !== src) return;
+    if (canvas === null || peaks === null || peaksFor !== track.id) return;
     const vv = VARIANTS[variant];
-    const peaks = wave.peaks;
-    // Canvas fillStyle does not resolve CSS custom properties — resolve
-    // var(--primary) against the document root before painting.
-    const resolveColor = (c: string): string => {
-      if (!c.startsWith("var(")) return c;
-      const name = c.slice(4, -1).trim();
-      return (
-        getComputedStyle(document.documentElement).getPropertyValue(name).trim() || c
-      );
-    };
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
@@ -273,7 +193,7 @@ export function AudioPlayer({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    const pct = duration > 0 ? Math.min(1, current / duration) : 0;
+    const pct = snap.duration > 0 ? Math.min(1, snap.position / snap.duration) : 0;
     const bars = peaks.length;
     const gap = 1.5;
     const barW = (w - gap * (bars - 1)) / bars;
@@ -282,6 +202,13 @@ export function AudioPlayer({
     const roundRectSupported =
       typeof (ctx as CanvasRenderingContext2D & { roundRect?: unknown }).roundRect ===
       "function";
+    // Canvas fillStyle cannot resolve CSS custom properties.
+    const resolveColor = (c: string): string =>
+      c.startsWith("var(")
+        ? getComputedStyle(document.documentElement)
+            .getPropertyValue(c.slice(4, -1).trim())
+            .trim() || c
+        : c;
 
     const drawBars = (color: string) => {
       ctx.fillStyle = color;
@@ -308,33 +235,18 @@ export function AudioPlayer({
       drawBars(resolveColor(vv.fill));
       ctx.restore();
     }
-  }, [wave, src, current, duration, variant, resizeTick]);
+  }, [peaks, peaksFor, track.id, variant, snap.position, snap.duration, resizeTick]);
 
-  const togglePlay = () => {
-    const el = ref.current;
-    if (el === null) return;
-    if (el.paused) {
-      void el.play().catch(() => setPlaying(false));
-    } else {
-      el.pause();
-    }
-  };
-
-  const toggleMute = () => {
-    const el = ref.current;
-    if (el === null) return;
-    el.muted = !el.muted;
-  };
-
-  const seek = (value: number) => {
-    const el = ref.current;
-    if (el === null || !Number.isFinite(el.duration)) return;
-    el.currentTime = value;
-    setCurrent(value);
-  };
+  const isCurrent = store.isCurrent(track.id);
+  const playing = isCurrent && snap.status === "playing";
+  const waiting = isCurrent && snap.status === "loading";
+  const failed = isCurrent && snap.hasError;
+  const position = isCurrent ? snap.position : 0;
+  const duration = isCurrent ? snap.duration : 0;
+  const pct = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
 
   const v = VARIANTS[variant];
-  const pct = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
+  const showWave = waveform && peaks !== null && peaksFor === track.id;
   const playIcon = waiting ? (
     <Loader2 className="size-4 animate-spin" />
   ) : playing ? (
@@ -343,99 +255,210 @@ export function AudioPlayer({
     <Play className="size-4 translate-x-px" />
   );
 
-  if (errored) {
+  const togglePlay = () => {
+    if (isCurrent) {
+      store.toggle();
+    } else {
+      store.play(track);
+    }
+  };
+
+  const downloadName =
+    track.title && track.title.trim().length > 0
+      ? `${track.title.trim()}.mp3`
+      : "purewire-audio.mp3";
+
+  if (failed) {
     return (
       <div
         className={cn(
-          "flex items-center gap-2 rounded-xl border px-2.5 py-2",
+          "flex items-center gap-2 rounded-xl border px-2.5 py-2 text-sm",
           v.chrome,
           className,
         )}
       >
         <AlertCircle className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-sm">Audio unavailable</span>
+        <span className="min-w-0 flex-1 truncate">Audio unavailable</span>
       </div>
     );
   }
 
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 rounded-xl px-2.5 py-1.5",
-        v.chrome,
-        className,
-      )}
-    >
-      <button
-        type="button"
-        onClick={togglePlay}
-        aria-label={playing ? "Pause audio" : "Play audio"}
+    <div className={cn("flex flex-col", className)}>
+      <div
         className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
-          v.play,
+          "flex items-center gap-2 rounded-xl px-2.5 py-1.5",
+          v.chrome,
+          isCurrent && "ring-2 ring-primary/40",
         )}
       >
-        {playIcon}
-      </button>
-
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <div className="relative flex h-7 min-w-0 flex-1 items-center">
-          {waveform && wave !== null && wave.src === src && (
-            <canvas
-              ref={canvasRef}
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 size-full"
-            />
-          )}
-          <input
-            type="range"
-            min={0}
-            max={duration > 0 ? duration : 0}
-            step="any"
-            value={duration > 0 ? Math.min(current, duration) : 0}
-            onChange={(e) => seek(Number(e.target.value))}
-            disabled={duration <= 0}
-            aria-label="Seek audio"
-            className={cn(
-              "pw-audio-range relative z-10 min-w-0 flex-1 disabled:opacity-40",
-              waveform && wave !== null && wave.src === src && "bg-transparent",
-            )}
-            style={
-              {
-                background:
-                  waveform && wave !== null && wave.src === src
-                    ? "transparent"
-                    : trackGradient(pct, buffered, duration, current, v.fill, v.track, v.buffer),
-                "--pw-thumb": v.thumb,
-                "--pw-thumb-border": v.thumbBorder,
-              } as React.CSSProperties
-            }
-          />
-        </div>
-        <span
+        <button
+          type="button"
+          onClick={togglePlay}
+          aria-label={playing ? "Pause audio" : "Play audio"}
+          aria-pressed={playing}
           className={cn(
-            "shrink-0 text-[11px] font-medium tabular-nums",
-            v.time,
+            "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+            v.play,
           )}
         >
-          {formatTime(current)}
-          {duration > 0 ? ` / ${formatTime(duration)}` : ""}
-        </span>
+          {playIcon}
+        </button>
+
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="relative flex h-7 min-w-0 flex-1 items-center">
+            {showWave && (
+              <canvas
+                ref={canvasRef}
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 size-full"
+              />
+            )}
+            <input
+              type="range"
+              min={0}
+              max={duration > 0 ? duration : 0}
+              step="any"
+              value={duration > 0 ? Math.min(position, duration) : 0}
+              onChange={(e) => store.seek(Number(e.target.value))}
+              disabled={duration <= 0}
+              aria-label="Seek audio"
+              className={cn(
+                "pw-audio-range relative z-10 min-w-0 flex-1 disabled:opacity-40",
+                showWave && "bg-transparent",
+              )}
+              style={
+                {
+                  background: showWave
+                    ? "transparent"
+                    : trackGradient(
+                        pct,
+                        isCurrent ? snap.buffered : [],
+                        duration,
+                        position,
+                        v.fill,
+                        v.track,
+                        v.buffer,
+                      ),
+                  "--pw-thumb": v.thumb,
+                  "--pw-thumb-border": v.thumbBorder,
+                } as React.CSSProperties
+              }
+            />
+          </div>
+          <span
+            className={cn(
+              "shrink-0 text-[11px] font-medium tabular-nums",
+              v.time,
+            )}
+          >
+            {formatTime(position)}
+            {duration > 0 ? ` / ${formatTime(duration)}` : ""}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => store.toggleMute()}
+          aria-label={snap.muted ? "Unmute audio" : "Mute audio"}
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+            v.ghost,
+          )}
+        >
+          {snap.muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+        </button>
       </div>
 
-      <button
-        type="button"
-        onClick={toggleMute}
-        aria-label={muted ? "Unmute audio" : "Mute audio"}
-        className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
-          v.ghost,
-        )}
-      >
-        {muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-      </button>
+      {expandedUI && (
+        <div className={cn("flex items-center gap-3 px-1 pt-2.5", v.time)}>
+          {snap.queue.length > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => store.playPrev()}
+                aria-label="Previous track"
+                className={cn(
+                  "flex size-8 items-center justify-center rounded-full transition-colors",
+                  v.ghost,
+                )}
+              >
+                <ChevronLeft className="size-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => store.playNext()}
+                aria-label="Next track"
+                className={cn(
+                  "flex size-8 items-center justify-center rounded-full transition-colors",
+                  v.ghost,
+                )}
+              >
+                <ChevronRight className="size-4" />
+              </button>
+            </div>
+          )}
 
-      <audio ref={ref} src={src} preload="metadata" className="hidden" />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <Volume2 className="size-4 shrink-0" />
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={snap.muted ? 0 : snap.volume}
+              onChange={(e) => store.setVolume(Number(e.target.value))}
+              aria-label="Volume"
+              className="pw-audio-range min-w-0 flex-1"
+              style={
+                {
+                  background: `linear-gradient(to right, ${v.fill} ${(snap.muted ? 0 : snap.volume) * 100}%, ${v.track} ${(snap.muted ? 0 : snap.volume) * 100}%)`,
+                  "--pw-thumb": v.thumb,
+                  "--pw-thumb-border": v.thumbBorder,
+                } as React.CSSProperties
+              }
+            />
+          </div>
+
+          <div
+            className="flex items-center gap-1"
+            role="group"
+            aria-label="Playback speed"
+          >
+            {SPEEDS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => store.setRate(s)}
+                aria-pressed={snap.rate === s}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                  snap.rate === s
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : v.ghost,
+                )}
+              >
+                {s}×
+              </button>
+            ))}
+          </div>
+
+          {track.downloadable === true && (
+            <a
+              href={track.src}
+              download={downloadName}
+              aria-label="Download audio"
+              className={cn(
+                "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+                v.ghost,
+              )}
+            >
+              <Download className="size-4" />
+            </a>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }

@@ -307,6 +307,18 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
 }
 
+/* When the mini now-playing bar is visible, keep the main column from
+   ending underneath it (the bar floats above the phone nav / page
+   bottom). MiniPlayer toggles body.pw-now-playing. */
+body.pw-now-playing main {
+  padding-bottom: 7.5rem;
+}
+@media (min-width: 640px) {
+  body.pw-now-playing main {
+    padding-bottom: 5.5rem;
+  }
+}
+
 /* Brand gradients — Copper → Oxide, the PureWire signal */
 .brand-gradient-text {
   background: linear-gradient(135deg, #c97952, #d4785a);

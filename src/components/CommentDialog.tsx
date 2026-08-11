@@ -501,7 +501,10 @@ export function CommentDialog({
             </p>
           ) : null}
           {post.mediaUrls && post.mediaUrls.length > 0 ? (
-            <PostMediaGrid media={post.mediaUrls} />
+            <PostMediaGrid
+              media={post.mediaUrls}
+              artwork={post.author?.avatarUrl ?? null}
+            />
           ) : null}
         </div>
 

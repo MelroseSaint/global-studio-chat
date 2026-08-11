@@ -12,6 +12,8 @@ import { Link, useNavigate } from "react-router";
 
 import { AudioPlayer } from "@/components/AudioPlayer";
 import { MetadataStrippedChip } from "@/components/MetadataStrippedChip";
+import type { AudioTrack } from "@/lib/audio-player";
+import { playerStore } from "@/lib/audio-player";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -303,12 +305,27 @@ function AutoPauseVideo({
 export function PostMediaGrid({
   media,
   autoPlay = false,
+  artwork = null,
 }: {
   media: PostMedia[];
   /** Autoplay muted video (used inside DM shared-post previews). */
   autoPlay?: boolean;
+  /** Square artwork (author avatar) shown in the mini now-playing bar. */
+  artwork?: string | null;
 }) {
   if (media.length === 0) return null;
+  // Tracks for the queue: every audio item of the post, in order. Track ids
+  // are keyed by media URL, so a re-shared audio file shares one playback
+  // state everywhere it appears — and a post with several audio files plays
+  // as a sequence with previous/next controls.
+  const audioTracks: AudioTrack[] = media
+    .filter((m) => m.kind === "audio" && m.url !== null)
+    .map((m) => ({
+      id: `audio:${m.url}`,
+      src: m.url as string,
+      title: m.title ?? "Audio",
+      artwork,
+    }));
   // Any attached photo/video had GPS/device metadata removed before
   // upload — a tiny chip on the media tells viewers it was scrubbed.
   const anyStripped = media.some((m) => m.stripped === true);
@@ -351,7 +368,17 @@ export function PostMediaGrid({
         )}
         {m.kind === "audio" && m.url && (
           <div onClick={(e) => e.stopPropagation()} className="p-3">
-            <AudioPlayer src={m.url} variant="bare" className="w-full" />
+            {m.title ? (
+              <p className="px-1 pb-2.5 text-[15px] font-semibold leading-snug">
+                {m.title}
+              </p>
+            ) : null}
+            <AudioPlayer
+              track={{ id: `audio:${m.url}`, src: m.url, title: m.title ?? "Audio", artwork }}
+              variant="bare"
+              waveform
+              className="w-full"
+            />
           </div>
         )}
         {autoplayOffChip}
@@ -383,6 +410,23 @@ export function PostMediaGrid({
                   className="size-full object-cover"
                 />
               </div>
+            ) : m.kind === "audio" && m.url ? (
+              // Multi-audio posts: tapping a tile plays that track through
+              // the centralized queue (previous/next across the post).
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const idx = audioTracks.findIndex((t) => t.id === `audio:${m.url}`);
+                  if (idx >= 0) playerStore.playQueue(audioTracks, idx);
+                }}
+                aria-label={`Play audio${m.title ? `: ${m.title}` : ""}`}
+                className="flex size-full items-center justify-center bg-black/80 transition-colors hover:bg-black/70"
+              >
+                <span className="flex size-10 items-center justify-center rounded-full bg-primary/90 text-primary-foreground shadow-md transition-transform hover:scale-110">
+                  <Play className="size-4 translate-x-px" />
+                </span>
+              </button>
             ) : (
               <div className="flex size-full items-center justify-center">
                 <AudioLines className="size-6 text-primary" />
@@ -472,7 +516,11 @@ export function SharedPostEmbed({
       ) : null}
 
       {post.mediaUrls && post.mediaUrls.length > 0 ? (
-        <PostMediaGrid media={post.mediaUrls} autoPlay={autoPlayMedia} />
+        <PostMediaGrid
+          media={post.mediaUrls}
+          autoPlay={autoPlayMedia}
+          artwork={author?.avatarUrl ?? null}
+        />
       ) : null}
 
       <div className="mt-2 flex items-center gap-4 border-t px-3 py-2 text-xs text-muted-foreground">

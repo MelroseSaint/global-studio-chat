@@ -866,7 +866,10 @@ export function Messages() {
                                   />
                                 ) : (
                                   <AudioPlayer
-                                    src={cloudinaryVideoUrl(mediaUrl) ?? mediaUrl}
+                                    track={{
+                                      id: `dm:${m._id}`,
+                                      src: cloudinaryVideoUrl(mediaUrl) ?? mediaUrl,
+                                    }}
                                     variant={mine ? "primary" : "default"}
                                     className="w-56 max-w-full"
                                   />

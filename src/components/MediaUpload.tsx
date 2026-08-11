@@ -1,14 +1,12 @@
 import { useAction, useMutation } from "convex/react";
 import { Film, Loader2, Plus, X } from "lucide-react";
 import { useRef, useState } from "react";
-import { toast } from "sonner";
-
-import { AudioPlayer } from "@/components/AudioPlayer";
-
+import { toast } from "sonner";import { AudioPlayer } from "@/components/AudioPlayer";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { scanImageBytes, scanMediaBytes } from "@/lib/ai-media-scan";
+import { readAudioTitle } from "@/lib/audio-meta";
 import { processImageFile, processVideoFile } from "@/lib/media";
 import { computeImageHashes, computeVideoHashes } from "@/lib/perceptual-hash";
 import { cn } from "@/lib/utils";
@@ -35,6 +33,10 @@ export interface MediaItem {
   // stripped). The server-side video remux also sets it. Powers the tiny
   // "Metadata stripped" note next to the post's media.
   stripped?: boolean;
+  // Optional audio title detected from the file's own metadata (ID3/FLAC/
+  // WAV). The composer uses it only to prefill its title field — the
+  // author's typed title always wins and this never overrides it.
+  title?: string;
 }
 
 function kindFromMime(type: string): MediaKind {
@@ -88,6 +90,10 @@ export function MediaUpload({
         // then no stripping happened client-side (the server-side video
         // remux may still catch it — that path sets stripped on its own).
         let stripped = false;
+        // Best-effort audio title prefill from the file's own tags (ID3 /
+        // FLAC / WAV) — never authoritative; the composer's typed title
+        // always wins and is the only title that ships to the server.
+        let audioMetaTitle: string | null = null;
         if (kind === "image") {
           // Metadata lives at the head of the file — only read the header
           // the scanner actually inspects, not the whole image.
@@ -115,6 +121,17 @@ export function MediaUpload({
           } finally {
             setOptimizing(false);
           }
+        } else if (kind === "audio") {
+          // Audio passes through untouched (small by nature, no surface
+          // metadata PureWire uses) — but it IS scanned for AI-generator
+          // markers, and its title tag seeds the composer's title field.
+          const head = await file.slice(0, 256 * 1024).arrayBuffer();
+          const verdict = scanMediaBytes(head);
+          if (verdict.status === "blocked") {
+            toast.error(verdict.reason);
+            continue;
+          }
+          audioMetaTitle = readAudioTitle(head);
         }
         // One ticket per file — it carries the rate-limit check plus either
         // a Convex POST URL (fallback) or a Cloudinary upload URL + unsigned
@@ -134,6 +151,7 @@ export function MediaUpload({
             url: URL.createObjectURL(uploadFile),
             hashes: await hashesFor(uploadFile, kind),
             stripped: stripped || undefined,
+            ...(audioMetaTitle !== null ? { title: audioMetaTitle } : {}),
           });
         } else {
           // Cloudinary mode: POST the file straight to the upload API. The
@@ -170,6 +188,7 @@ export function MediaUpload({
               url: URL.createObjectURL(uploadFile),
               hashes: await hashesFor(uploadFile, kind),
               stripped: stripped || undefined,
+              ...(audioMetaTitle !== null ? { title: audioMetaTitle } : {}),
             });
           } else {
             // Resilience: a Cloudinary failure — a missing/renamed unsigned
@@ -285,8 +304,9 @@ export function MediaUpload({
             // cover the player's mute control).
             <div className="flex size-full items-center gap-1 px-2.5">
               <AudioPlayer
-                src={item.url}
+                track={{ id: `preview:${item.url}`, src: item.url }}
                 variant="bare"
+                standalone
                 className="min-w-0 flex-1"
               />
               <button
