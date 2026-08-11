@@ -44,17 +44,26 @@ const { check } = reporter;
 const DEVICES = [
   { label: "iPhone 13", desc: devices["iPhone 13"] },
   { label: "iPhone 13 (dynamic toolbar)", desc: { ...devices["iPhone 13"], viewport: { width: 390, height: 750 } } },
+  // iPad (9th gen) — the entry-level 10.2\" model (A13, 3 GB RAM): logical
+  // 810×1080 portrait / 1080×810 landscape at 2x, identical to Playwright's
+  // "iPad (gen 7)" descriptor. This is the NARROWEST modern iPad (the Pro
+  // 11 below is 834px wide), so it exercises the tightest tablet layouts:
+  // 810px portrait is just past the `md` breakpoint and well under `lg`
+  // (icon-rail sidebar), and 1080px landscape crosses `lg` (full sidebar).
+  { label: "iPad 9th gen (portrait)", desc: devices["iPad (gen 7)"] },
+  { label: "iPad 9th gen (landscape)", desc: devices["iPad (gen 7) landscape"] },
   { label: "iPad Pro 11 (portrait)", desc: devices["iPad Pro 11"] },
   { label: "iPad Pro 11 (landscape)", desc: { ...devices["iPad Pro 11"], viewport: { width: 1194, height: 834 } } },
   // iPadOS 13+ masquerades as a Mac: a Mac user agent with a multitouch
   // screen. A naive agent sniff returns "desktop" here and hides the
-  // touch nav — the exact regression this QA exists to catch.
+  // touch nav — the exact regression this QA exists to catch. Uses the 9th
+  // gen viewport so the masquerade trap is proven on the target device.
   {
-    label: "iPad Pro 11 (iPadOS Mac masquerade)",
+    label: "iPad 9th gen (iPadOS Mac masquerade)",
     desc: {
       userAgent:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-      viewport: { width: 834, height: 1194 },
+      viewport: { width: 810, height: 1080 },
       deviceScaleFactor: 2,
       isMobile: false,
       hasTouch: true,

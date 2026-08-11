@@ -68,7 +68,9 @@ function NavItem({
           "relative flex items-center rounded-xl font-medium transition-colors",
           stacked
             ? "min-w-0 flex-1 flex-col gap-0.5 px-1 py-1.5 text-[10px] leading-none"
-            : "gap-3 px-3 py-2.5 text-[15px] sm:justify-center lg:justify-start",
+            // min-h-11: the sidebar is thumb-driven on iPads (9th gen
+            // included); keep every item at the 44px touch minimum.
+            : "min-h-11 gap-3 px-3 py-2.5 text-[15px] sm:justify-center lg:justify-start",
           isActive
             ? "bg-primary/10 text-primary"
             : "text-foreground/80 hover:bg-muted hover:text-foreground",
@@ -387,7 +389,7 @@ export function AppLayout() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-foreground/80 transition-colors hover:bg-muted hover:text-foreground sm:justify-center lg:justify-start"
+                className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-foreground/80 transition-colors hover:bg-muted hover:text-foreground sm:justify-center lg:justify-start"
                 aria-label={
                   isAdmin && moderationTotal > 0
                     ? `More — ${moderationTotal} item${moderationTotal === 1 ? "" : "s"} awaiting moderation`

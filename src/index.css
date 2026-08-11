@@ -191,6 +191,16 @@
     html[data-ios="true"] textarea {
       font-size: 16px !important;
     }
+
+    /* Primary touch input — Apple HIG minimum 44×44 targets. The base
+       Input is h-9 (36px), comfortable with a mouse but short for the
+       thumb on an iPad (the 9th gen is the narrowest modern iPad and
+       its 810px portrait band hits the tightest layouts). Bump the
+       single-line inputs to the 44px minimum only on coarse-pointer
+       devices, leaving desktop pixel-identical. */
+    html[data-touch="true"] [data-slot="input"] {
+      min-height: 44px;
+    }
   }
 
   /* On installed PWAs the bottom bar is a separate edge; the mobile nav

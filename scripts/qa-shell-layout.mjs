@@ -50,10 +50,17 @@ const { check } = reporter;
 // runner because the assertions themselves are structural, not timing.
 const SETTLE_MS = 2200;
 
-/** [label, width, height] — the three width bands the shell responds to. */
+/** [label, width, height] — the width bands the shell responds to.
+ *  `ipad9-*` are the iPad (9th gen) dimensions (810×1080 / 1080×810) —
+ *  the entry-level 10.2\" model, the narrowest modern iPad: 810px portrait
+ *  is past `md` but under `lg` (icon-rail sidebar), 1080px landscape
+ *  crosses `lg` (full-width sidebar). The Pro-11 width (834) used to be
+ *  the only tablet band, so the tighter 9th-gen widths were never guarded. */
 const WIDTHS = [
   ["mobile", 390, 844],
   ["tablet", 768, 1024],
+  ["ipad9 portrait", 810, 1080],
+  ["ipad9 landscape", 1080, 810],
   ["desktop", 1440, 900],
 ];
 

@@ -97,7 +97,12 @@ export function Feed() {
 
   return (
     <div className="pb-20 lg:pb-0">
-      <div className="sticky top-14 z-20 border-b bg-background/80 backdrop-blur lg:top-0">
+      {/* The mobile header is h-14 but hidden at sm+ (sm:hidden in the
+          shell), so the sticky offset must be 0 from `sm` up — the old
+          lg:top-0 left a 56px gap and let the stories row slide under the
+          translucent bar on tablets (iPad 9th gen portrait, 810px, sits in
+          this band). */}
+      <div className="sticky top-14 z-20 border-b bg-background/80 backdrop-blur sm:top-0">
         <Tabs
           value={filter}
           onValueChange={(v) => {
@@ -112,7 +117,10 @@ export function Feed() {
                 key={f.value}
                 value={f.value}
                 className={cn(
-                  "min-w-0 flex-1 rounded-none border-b-2 border-transparent px-1.5 py-3 sm:px-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none",
+                  // min-h-11: the default trigger measures ~35px, under
+                  // the 44px touch-target minimum — this is the feed's
+                  // primary nav on iPads, where it is thumb-driven.
+                  "min-h-11 min-w-0 flex-1 rounded-none border-b-2 border-transparent px-1.5 py-3 sm:px-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none",
                 )}
               >
                 <span className="truncate sm:hidden">{f.short ?? f.label}</span>
