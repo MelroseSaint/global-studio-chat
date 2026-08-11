@@ -222,6 +222,28 @@ async function main() {
   } else {
     console.log("No dangling notifications found.");
   }
+
+  // Foreign-key orphans beyond notifications: DM conversations and
+  // messages, silent-flag events, moderation-log rows, plus commentLikes
+  // and storyViews whose referenced entity is gone. These accumulate when
+  // an interrupted QA chain erases its users but leaves the engagement
+  // rows behind — nothing else ever removes them, and the DQS integrity
+  // audit counts every one. sweepDataOrphans does the same bounded
+  // per-table sweep the audit checks, deleting rows whose references no
+  // longer exist, and reports what was removed.
+  const orphanSweep = await client.mutation(api.testHarness.sweepDataOrphans, {
+    secret: HARNESS_SECRET,
+  });
+  const byTable = {};
+  for (const s of orphanSweep.swept) {
+    byTable[s.table] = (byTable[s.table] ?? 0) + 1;
+  }
+  if (orphanSweep.sweptCount > 0) {
+    console.log(`Foreign-key orphans swept: ${orphanSweep.sweptCount}.`);
+    console.log(`  ${JSON.stringify(byTable)}`);
+  } else {
+    console.log("No foreign-key orphans found.");
+  }
 }
 
 main().catch((err) => {
