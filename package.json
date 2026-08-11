@@ -56,6 +56,7 @@
     "qa:session-lifetime": "node scripts/session-lifetime-qa.mjs",
     "qa:session-audit": "node scripts/session-audit.mjs",
     "qa:inp": "node scripts/inp-harness.mjs",
+    "qa:mirror-freshness": "node scripts/mirror-freshness-check.mjs",
     "qa:refresh-timing": "node scripts/refresh-timing-qa.mjs",
     "qa:secrets": "node scripts/secrets-scan.mjs",
     "qa:cleanup-test-users": "node scripts/cleanup-test-users.mjs",

@@ -135,6 +135,28 @@ jobs:
       - name: Sample the live sitemap and verify every URL renders
         run: npm run qa:sitemap-urls
 
+  mirror-freshness:
+    # The convex.site mirror used to silently lag the main host (the
+    # admin-dropdown incident: /admin there showed the old tab row while
+    # the main host had the dropdown). deploy.yml now syncs the mirror on
+    # every deploy; this job makes staleness a hard gate at push/PR time:
+    # it fetches the mirror's served Admin chunk and fails if the
+    # section-dropdown code (markers `purewire_admin_section` +
+    # `Shortcuts`) is absent. Zero dependencies (plain Node fetch against
+    # the live mirror) — same as sitemap-url-health above. On a push the
+    # mirror already reflects the previous deploy, so this only fails on
+    # a genuinely stale mirror, never on the push itself.
+    name: Mirror freshness (live Admin chunk has the section dropdown)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fetch the mirror's Admin chunk and assert the dropdown UI
+        run: npm run qa:mirror-freshness
+
   secrets-scan:
     name: Secrets scan
     runs-on: ubuntu-latest

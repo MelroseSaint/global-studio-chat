@@ -94,6 +94,15 @@ jobs:
       - name: Publish dist to the static-hosting component
         run: node scripts/upload-static-sync.mjs --prod
 
+      # Verify the publish actually landed: fetch the mirror's served Admin
+      # chunk and fail if the section-dropdown code is missing (markers
+      # `purewire_admin_section` + `Shortcuts`). This catches a partial or
+      # stale upload in the same pipeline that created it — the hard gate
+      # (scripts/mirror-freshness-check.mjs) also runs on every push/PR
+      # via static-audit.yml, so the mirror can't lag silently either way.
+      - name: Verify the mirror serves the section-dropdown admin UI
+        run: npm run qa:mirror-freshness
+
       # Same deduplicated-alert pattern as the other production guards: a
       # single persistent issue (label prod-mirror-sync) so a failed sync
       # — a build break or a Convex auth failure — is visible instead of
