@@ -19,6 +19,17 @@ import { PUBLIC_ROUTES } from "@/lib/routes";
 // iPhones.
 applyDeviceAttributes();
 
+// Suspend CSS animations while the tab is hidden. requestAnimationFrame
+// stops automatically in a background tab, but CSS animations keep
+// compositing (skeleton shimmer, story rings, heart pulses) and burn
+// CPU/GPU on low-end devices (A13-era iPads) for frames nobody sees.
+// index.css pauses everything while html[data-hidden] is set.
+const syncHiddenState = () => {
+  document.documentElement.dataset.hidden = String(document.hidden);
+};
+syncHiddenState();
+document.addEventListener("visibilitychange", syncHiddenState);
+
 // The public Landing stays eager, but it is self-contained (plain elements
 // + CSS — no radix UI kit, no framer-motion), so the entry bundle never
 // preloads the ui / motion / icons chunks on the critical path. The authed

@@ -43,6 +43,16 @@ export interface DeviceInfo {
     | "android"
     | "desktop"
     | "other";
+  /**
+   * Low-memory mode — where feed video decode gets capped (see
+   * AutoPauseVideo). `navigator.deviceMemory` (Chrome/Edge) <= 4GB is the
+   * direct signal; iOS Safari exposes no memory API, and even current iPads
+   * share their RAM with the GPU, so iOS defaults conservative (this only
+   * gates the feed-video decode cap and the `preload` hint — mild, safe
+   * behaviors, never a hard limit). The A13-era iPad the app targets (9th
+   * gen, 3 GB) lands here either way.
+   */
+  isLowMemory: boolean;
 }
 
 function ua(): string {
@@ -100,6 +110,12 @@ export function detectDevice(): DeviceInfo {
           ? "ios"
           : "desktop";
 
+  const deviceMemory = (navigator as unknown as { deviceMemory?: number })
+    .deviceMemory;
+  const isLowMemory =
+    (typeof deviceMemory === "number" && deviceMemory > 0 && deviceMemory <= 4) ||
+    isIOS;
+
   return {
     isIPhone,
     isIPad,
@@ -108,6 +124,7 @@ export function detectDevice(): DeviceInfo {
     isTouch,
     isTablet,
     isStandalone: standalone,
+    isLowMemory,
     device,
   };
 }
@@ -126,6 +143,7 @@ export function applyDeviceAttributes(): DeviceInfo {
   root.dataset.touch = String(d.isTouch);
   root.dataset.tablet = String(d.isTablet);
   root.dataset.standalone = String(d.isStandalone);
+  root.dataset.lowMemory = String(d.isLowMemory);
   return d;
 }
 

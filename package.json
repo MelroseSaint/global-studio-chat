@@ -79,7 +79,8 @@
     "qa:critical-path": "node scripts/check-critical-path.mjs",
     "qa:post-author-delete": "node scripts/post-author-delete-qa.mjs",
     "qa:pwa-output": "node scripts/check-pwa-output.mjs",
-    "qa:pwa-output:live": "node scripts/check-pwa-output.mjs --live"
+    "qa:pwa-output:live": "node scripts/check-pwa-output.mjs --live",
+    "lab:fps": "node scripts/fps-lab.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"

@@ -130,6 +130,38 @@ function AutoPauseVideo({
   // overlay gives way to the native controls from then on.
   const [started, setStarted] = useState(false);
 
+  // Low-memory mode (A13-era iPads, <=4 GB desktops) caps feed video
+  // decode: an autoplaying card must not start loading/decoding until it
+  // is actually near the viewport. Far below the fold there can be a dozen
+  // cards, and letting them all decode frames is exactly the low-RAM
+  // thrash this mode exists to avoid. The proximity observer attaches the
+  // source (and autoplay) only as the card approaches; until then the
+  // video is a lightweight aspect placeholder with no src at all — zero
+  // network, zero decode.
+  const lowMemory =
+    typeof document !== "undefined" &&
+    document.documentElement.dataset.lowMemory === "true";
+  const [attached, setAttached] = useState(() => !lowMemory);
+
+  useEffect(() => {
+    if (attached) return;
+    const el = ref.current;
+    if (el === null) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setAttached(true);
+          io.disconnect();
+        }
+      },
+      // Preload ~600px ahead so the card is ready by the time it scrolls
+      // onto the screen (no pop-in after the source attaches).
+      { rootMargin: "600px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [attached]);
+
   useEffect(() => {
     const el = ref.current;
     if (el === null) return;
@@ -230,13 +262,18 @@ function AutoPauseVideo({
     <>
       <video
         ref={ref}
-        src={src}
+        src={attached ? src : undefined}
         poster={poster}
         controls={autoPlay || started}
-        autoPlay={autoPlay}
+        autoPlay={attached && autoPlay}
         muted={autoPlay}
         playsInline
-        className={className}
+        // Tap-to-play cards (autoplay off — iOS/cellular) must not
+        // download the whole file just to decode nothing: metadata only
+        // until the tap, which fetches the rest. The decode cap for the
+        // majority mobile case; a <video> without a src costs nothing.
+        preload={autoPlay ? undefined : "metadata"}
+        className={`${className ?? ""} ${attached ? "" : "aspect-video"}`.trim()}
         onPlay={() => setStarted(true)}
       />
       {showPlayOverlay ? (

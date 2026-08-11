@@ -219,6 +219,18 @@
     }
   }
 
+  /* A hidden tab must not keep animating: requestAnimationFrame stops in
+     background tabs, but CSS animations keep compositing (skeleton
+     shimmer, story rings, heart pulses) and burn CPU/GPU on low-end
+     devices (A13-era iPads) for frames nobody sees. main.tsx writes
+     html[data-hidden] on every visibilitychange; pause everything while
+     it is set — animations resume exactly where they left off. */
+  html[data-hidden="true"] *,
+  html[data-hidden="true"] *::before,
+  html[data-hidden="true"] *::after {
+    animation-play-state: paused !important;
+  }
+
   /* On installed PWAs the bottom bar is a separate edge; the mobile nav
      already pads safe-area-inset-bottom, so nothing else is needed here. */
   ::selection {
