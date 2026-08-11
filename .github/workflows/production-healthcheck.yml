@@ -774,6 +774,118 @@ jobs:
               console.log(`Closed Cloudinary alert issue #${issue.number}.`);
             }
 
+  media-architecture:
+    # Enforces the Cloudinary-first media architecture against production:
+    # scripts/media-architecture-qa.mjs scans every media reference on
+    # posts, stories, and comments and fails on anything that violates it —
+    # bytes embedded in Convex (blob:/data:/base64), a media URL hosted off
+    # PureWire's provider, an item with neither storage nor URL, or one
+    # carrying both. Reports the convex/cloudinary split so a regression
+    # that starts shoving bytes into Convex (or hotlinking foreign hosts)
+    # surfaces the moment it lands instead of silently growing storage.
+    # Harness-gated (TEST_HARNESS_SECRET) like the reinstate job.
+    name: Media architecture guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the media-architecture audit
+        id: audit
+        run: bash scripts/retry-once.sh media-architecture.log npm run qa:media-architecture
+
+      - name: Upload the audit log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-architecture-log
+          path: media-architecture.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so an architecture violation doesn't piggyback on (or get
+      # swallowed by) the cloudinary alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-media-architecture";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Media architecture violation (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The media-architecture audit found invalid media references against production.",
+                "",
+                "This means media bytes are not living where the architecture says they should —",
+                "embedded bytes in Convex (blob:/data:/base64), a foreign media host, or a broken",
+                "reference (no storage id AND no URL, or both).",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the media-architecture-log artifact for the offending rows.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-media-architecture";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open media-architecture alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed media-architecture alert issue #${issue.number}.`);
+            }
+
   phishing-scan:
     # Proves the phishing & account-integrity layer works end-to-end against
     # production: scripts/phishing-qa.mjs posts scam text, a PureWire

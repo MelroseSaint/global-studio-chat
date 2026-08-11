@@ -15,6 +15,8 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { AudioCommentButton, type CommentAudio } from "@/components/AudioCommentButton";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostComposer } from "@/components/SharedPostComposer";
@@ -46,6 +48,14 @@ interface ReplyComment {
   // A post shared into the reply — rendered as a preview card below the
   // text (the id is public metadata; see schema.ts).
   sharedPostId?: string;
+  // A voice note attached to the reply.
+  media?: {
+    storageId?: string;
+    url?: string;
+    key?: string;
+    kind?: string;
+    title?: string;
+  } | null;
   likedByMe: boolean;
 }
 
@@ -76,10 +86,12 @@ export function CommentReplyComposer({
   const [posting, setPosting] = useState(false);
   // A post attached to the reply, mirroring the top-level comment flow.
   const [sharingPostId, setSharingPostId] = useState<string | null>(null);
+  // A recorded/attached voice note on the reply.
+  const [audio, setAudio] = useState<CommentAudio | null>(null);
 
   const submit = async () => {
     const content = text.trim();
-    if ((!content && !sharingPostId) || posting) return;
+    if ((!content && !sharingPostId && !audio) || posting) return;
     setPosting(true);
     try {
       const pow = await solveChallenge(powChallenge);
@@ -90,6 +102,7 @@ export function CommentReplyComposer({
         ...(sharingPostId !== null
           ? { sharedPostId: sharingPostId as Id<"posts"> }
           : {}),
+        ...(audio !== null ? { media: audio } : {}),
         powChallenge: pow.powChallenge,
         powNonce: pow.powNonce,
         powIssuedAt: pow.powIssuedAt,
@@ -100,6 +113,7 @@ export function CommentReplyComposer({
       }
       setText("");
       setSharingPostId(null);
+      setAudio(null);
       onPosted?.();
       toast.success("Reply posted.");
     } catch (err) {
@@ -134,6 +148,7 @@ export function CommentReplyComposer({
         text={text}
         onTextChange={setText}
       />
+      <AudioCommentButton value={audio} onChange={setAudio} />
       {onCancel ? (
         <Button
           variant="ghost"
@@ -149,7 +164,7 @@ export function CommentReplyComposer({
       <Button
         size="icon"
         className="shrink-0 rounded-full"
-        disabled={(!text.trim() && !sharingPostId) || posting}
+        disabled={(!text.trim() && !sharingPostId && !audio) || posting}
         onClick={() => void submit()}
         aria-label="Post reply"
       >
@@ -368,6 +383,18 @@ export function CommentReplies({
                       <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed">
                         {r.content}
                       </p>
+                      {r.media?.url ? (
+                        <div className="mt-1.5">
+                          <AudioPlayer
+                            track={{
+                              id: `comment:${r.media.key ?? r._id}`,
+                              src: r.media.url,
+                            }}
+                            variant="bare"
+                            className="max-w-xs"
+                          />
+                        </div>
+                      ) : null}
                       {r.sharedPostId ? (
                         <SharedPostCard postId={r.sharedPostId} />
                       ) : null}

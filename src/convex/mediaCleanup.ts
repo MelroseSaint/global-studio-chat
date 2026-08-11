@@ -110,9 +110,13 @@ export async function sweepPostEngagement(
       .take(500);
     if (rows.length === 0) break;
     for (const row of rows) {
-      // The comment's own likes die with it, so the commentLikes table
-      // never keeps rows keyed to a deleted comment.
+      // The comment's own likes (and audio clip, if any) die with it, so
+      // the commentLikes table never keeps rows keyed to a deleted comment
+      // and no voice-note asset is left orphaned behind a deleted thread.
       await sweepCommentLikes(ctx, row._id);
+      if (row.media !== undefined) {
+        await cleanupMediaItems(ctx, [row.media]);
+      }
       await ctx.db.delete(row._id);
     }
   }

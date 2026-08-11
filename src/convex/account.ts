@@ -206,10 +206,14 @@ export async function eraseAccount(
           .withIndex("by_post", (q) => q.eq("postId", post._id))
           .collect(),
       ]);
-      // The comments' own likes die with them, so the commentLikes table
-      // never keeps rows keyed to a deleted comment.
+      // The comments' own likes and audio clips die with them, so the
+      // commentLikes table never keeps rows keyed to a deleted comment and
+      // no voice-note asset is left orphaned behind a deleted post.
       for (const comment of comments) {
         await sweepCommentLikes(c, comment._id);
+        if (comment.media !== undefined) {
+          await cleanupMediaItems(c, [comment.media]);
+        }
       }
       for (const row of [...comments, ...likes, ...shares]) {
         await c.db.delete(row._id);
@@ -292,10 +296,10 @@ export async function eraseAccount(
           });
         }
       }
-      // Replies to this comment die with it (each sweeping its own likes),
-      // so no reply ever dangles under a deleted parent — the same cascade
-      // as deleteComment. Post counts are recomputed from surviving rows
-      // below, so no manual bookkeeping here.
+      // Replies to this comment die with it (each sweeping its own likes
+      // and media), so no reply ever dangles under a deleted parent — the
+      // same cascade as deleteComment. Post counts are recomputed from
+      // surviving rows below, so no manual bookkeeping here.
       for (;;) {
         const children = await c.db
           .query("comments")
@@ -305,11 +309,17 @@ export async function eraseAccount(
         for (const child of children) {
           affectedPosts.add(child.postId);
           await sweepCommentLikes(c, child._id);
+          if (child.media !== undefined) {
+            await cleanupMediaItems(c, [child.media]);
+          }
           await c.db.delete(child._id);
         }
       }
-      // The comment's likes die with it.
+      // The comment's likes and audio clip die with it.
       await sweepCommentLikes(c, comment._id);
+      if (comment.media !== undefined) {
+        await cleanupMediaItems(c, [comment.media]);
+      }
       await c.db.delete(comment._id);
     },
   );

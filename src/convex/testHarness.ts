@@ -2392,3 +2392,148 @@ export const sweepExpiredStories = mutation({
   },
 });
 
+// ────────────────────────────────────────────────────────
+//  Media architecture audit
+// ────────────────────────────────────────────────────────
+
+/**
+ * Audit every media reference across posts, stories, and comments against
+ * the Cloudinary-first architecture: Cloudinary stores the actual bytes,
+ * Convex stores only a reference (`url` + `key`/public_id) plus metadata.
+ *
+ * Reports, per surface, how many items are:
+ *   - `convex`  — stored as a Convex `_storage` id (the fallback/legacy
+ *                 path, acceptable only when Cloudinary isn't configured
+ *                 or the upload resiliently fell back)
+ *   - `cloudinary` — an https URL on PureWire's own media host with a
+ *                 stored public_id key
+ *   - `invalid`  — anything that violates the architecture: blob: / data:
+ *                 / base64 payloads, a media URL that isn't Cloudinary, an
+ *                 item with neither storage nor URL, or one carrying both
+ *
+ * Does NOT mutate. The QA script asserts zero `invalid` and reports the
+ * convex/cloudinary split so a regression that starts shoving bytes into
+ * Convex (or hotlinking foreign hosts) surfaces immediately.
+ *
+ * Gated by the same harness secret as the rest of the harness.
+ */
+export const auditMediaArchitecture = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+
+    type InvalidRow = {
+      table: string;
+      id: string;
+      reason: string;
+    };
+    const counts = { convex: 0, cloudinary: 0, invalid: 0 };
+    const invalidRows: InvalidRow[] = [];
+
+    const classify = (
+      table: string,
+      id: string,
+      item: {
+        storageId?: unknown;
+        url?: unknown;
+        key?: unknown;
+      } | null | undefined,
+    ) => {
+      if (item === null || item === undefined) {
+        return;
+      }
+      const hasStorage = item.storageId !== undefined;
+      const hasUrl = typeof item.url === "string" && item.url.length > 0;
+      const hasKey = typeof item.key === "string" && item.key.length > 0;
+      const url = hasUrl ? (item.url as string) : "";
+
+      // Neither storage nor URL — an empty husk of a media reference.
+      if (!hasStorage && !hasUrl) {
+        counts.invalid++;
+        invalidRows.push({ table, id, reason: "no storage id and no URL" });
+        return;
+      }
+      // Both — the dual-mode shape forbids it (exactly one mode).
+      if (hasStorage && hasUrl) {
+        counts.invalid++;
+        invalidRows.push({ table, id, reason: "both storage id and URL" });
+        return;
+      }
+      // blob: / data: / base64 — bytes embedded in the reference.
+      if (
+        url.startsWith("blob:") ||
+        url.startsWith("data:") ||
+        url.startsWith("base64,") ||
+        url.includes("base64")
+      ) {
+        counts.invalid++;
+        invalidRows.push({
+          table,
+          id,
+          reason: `embedded bytes in URL (${url.slice(0, 40)}…)`,
+        });
+        return;
+      }
+      // A URL with no Cloudinary key is a broken reference: deletion
+      // can't know what to remove.
+      if (hasUrl && !hasKey) {
+        counts.invalid++;
+        invalidRows.push({ table, id, reason: "URL without a public_id key" });
+        return;
+      }
+      if (hasUrl) {
+        // Only PureWire's own media host may ride in as media.
+        const host = (() => {
+          try {
+            return new URL(url).host;
+          } catch {
+            return null;
+          }
+        })();
+        const allowed =
+          host === "res.cloudinary.com" ||
+          (host !== null && host.endsWith(".res.cloudinary.com"));
+        if (!allowed) {
+          counts.invalid++;
+          invalidRows.push({
+            table,
+            id,
+            reason: `media not hosted by PureWire's provider (${host ?? "unparseable"})`,
+          });
+          return;
+        }
+        counts.cloudinary++;
+        return;
+      }
+      // Storage id alone — the documented fallback path.
+      counts.convex++;
+    };
+
+    // ── posts ─────────────────────────────────────
+    const posts = await ctx.db.query("posts").take(1000);
+    for (const p of posts) {
+      for (const m of p.media ?? []) {
+        classify("posts", p._id, m);
+      }
+    }
+
+    // ── stories ───────────────────────────────────
+    const stories = await ctx.db.query("stories").take(1000);
+    for (const s of stories) {
+      classify("stories", s._id, s.media);
+    }
+
+    // ── comments (voice notes) ────────────────────
+    const comments = await ctx.db.query("comments").take(1000);
+    for (const c of comments) {
+      classify("comments", c._id, c.media);
+    }
+
+    return {
+      counts,
+      invalidRows: invalidRows.slice(0, 50),
+      invalidCount: invalidRows.length,
+    };
+  },
+});
+

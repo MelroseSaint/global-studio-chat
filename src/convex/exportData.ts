@@ -87,10 +87,9 @@ export const exportMyData = query({
         commentCount: p.commentCount,
       })),
     );
-    const mediaCount = postsWithMedia.reduce(
-      (n, p) => n + p.media.length,
-      0,
-    );
+    const mediaCount =
+      postsWithMedia.reduce((n, p) => n + p.media.length, 0) +
+      comments.reduce((n, c) => n + (c.media !== undefined ? 1 : 0), 0);
 
     return {
       exportedAt: new Date().toISOString(),
@@ -114,14 +113,29 @@ export const exportMyData = query({
         media: mediaCount,
       },
       posts: postsWithMedia,
-      comments: comments.map((c) => ({
-        id: c._id,
-        postId: c.postId,
-        // The top-level comment this replies to, when it's a reply.
-        parentId: c.parentId ?? null,
-        createdAt: c._creationTime,
-        content: c.content,
-      })),
+      // Comment voice notes resolve the same way as post media, so the
+      // ZIP download carries them alongside the post files.
+      comments: await Promise.all(
+        comments.map(async (c) => ({
+          id: c._id,
+          postId: c.postId,
+          // The top-level comment this replies to, when it's a reply.
+          parentId: c.parentId ?? null,
+          createdAt: c._creationTime,
+          content: c.content,
+          media:
+            c.media !== undefined
+              ? {
+                  kind: c.media.kind,
+                  url:
+                    c.media.url ??
+                    (c.media.storageId
+                      ? await ctx.storage.getUrl(c.media.storageId)
+                      : null),
+                }
+              : null,
+        })),
+      ),
       stories: stories.map((s) => ({
         id: s._id,
         createdAt: s._creationTime,

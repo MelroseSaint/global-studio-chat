@@ -403,6 +403,25 @@ const schema = defineSchema({
     // the clear like the author/timestamp — the viewer's client fetches the
     // post through the normal visibility rules.
     sharedPostId: v.optional(v.id("posts")),
+    // Optional single media item (audio) attached to the comment — a voice
+    // note, recorded or uploaded by the author. Same dual-mode shape as
+    // post/story media: a Cloudinary `url` + `key` (primary) or a Convex
+    // storage id (fallback). The bytes never live in Convex — only the
+    // reference — mirroring the media architecture everywhere else.
+    media: v.optional(
+      v.object({
+        storageId: v.optional(v.id("_storage")),
+        url: v.optional(v.string()),
+        key: v.optional(v.string()),
+        kind: v.union(
+          v.literal("image"),
+          v.literal("video"),
+          v.literal("audio"),
+        ),
+        stripped: v.optional(v.boolean()),
+        title: v.optional(v.string()),
+      }),
+    ),
   })
     .index("by_post", ["postId"])
     .index("by_author", ["authorId"])

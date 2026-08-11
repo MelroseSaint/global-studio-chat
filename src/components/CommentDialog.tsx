@@ -19,6 +19,8 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { AudioCommentButton, type CommentAudio } from "@/components/AudioCommentButton";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { autoClosePolicyPhrase } from "@/lib/comment-policy";
@@ -70,6 +72,15 @@ interface PreviewComment {
   // A post shared into the comment — rendered as a preview card below
   // the text (the id is public metadata; see schema.ts).
   sharedPostId?: string;
+  // A voice note attached to the comment — rendered with the native
+  // player, same as post audio (Cloudinary reference; see schema.ts).
+  media?: {
+    storageId?: string;
+    url?: string;
+    key?: string;
+    kind?: string;
+    title?: string;
+  } | null;
   likedByMe: boolean;
 }
 
@@ -220,6 +231,18 @@ function CommentPreview({
                       <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
                         {c.content}
                       </p>
+                      {c.media?.url ? (
+                        <div className="mt-1.5">
+                          <AudioPlayer
+                            track={{
+                              id: `comment:${c.media.key ?? c._id}`,
+                              src: c.media.url,
+                            }}
+                            variant="bare"
+                            className="max-w-xs"
+                          />
+                        </div>
+                      ) : null}
                       {c.sharedPostId ? (
                         <SharedPostCard postId={c.sharedPostId} />
                       ) : null}
@@ -337,6 +360,9 @@ export function CommentDialog({
   // A post attached to the comment, mirroring the DM share flow: the
   // composer shows a live preview and the comment carries the reference.
   const [sharingPostId, setSharingPostId] = useState<string | null>(null);
+  // A recorded/attached voice note — uploaded to Cloudinary before the
+  // comment is created, and the reference ships with addComment.
+  const [audio, setAudio] = useState<CommentAudio | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Effective state: author lock or the auto-close policy (age/count).
@@ -355,7 +381,7 @@ export function CommentDialog({
 
   const submit = async () => {
     const text = comment.trim();
-    if ((!text && !sharingPostId) || submitting || locked) return;
+    if ((!text && !sharingPostId && !audio) || submitting || locked) return;
     setSubmitting(true);
     try {
       // Proof-of-work before the write — same scheme as posting/commenting.
@@ -366,6 +392,7 @@ export function CommentDialog({
         ...(sharingPostId !== null
           ? { sharedPostId: sharingPostId as Id<"posts"> }
           : {}),
+        ...(audio !== null ? { media: audio } : {}),
         powChallenge: pow.powChallenge,
         powNonce: pow.powNonce,
         powIssuedAt: pow.powIssuedAt,
@@ -376,6 +403,7 @@ export function CommentDialog({
       }
       setComment("");
       setSharingPostId(null);
+      setAudio(null);
       onCommented?.();
       onOpenChange(false);
       toast.success("Comment posted.");
@@ -438,6 +466,9 @@ export function CommentDialog({
               >
                 {comment.length}/{MAX_LENGTH}
               </span>
+              {/* Record a voice note or attach an audio file — uploaded to
+                  Cloudinary now, reference ships with the comment. */}
+              <AudioCommentButton value={audio} onChange={setAudio} />
               {/* Attach a post to the comment — same live preview + send
                   flow as the DM composer, without leaving the popup. */}
               <SharedPostComposer
@@ -531,7 +562,7 @@ export function CommentDialog({
           <Button
             onClick={() => void submit()}
             disabled={
-              submitting || locked || (!comment.trim() && !sharingPostId)
+              submitting || locked || (!comment.trim() && !sharingPostId && !audio)
             }
           >
             {submitting ? (

@@ -21,6 +21,8 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { canonicalBase, seoExcerpt, usePageMeta } from "@/lib/seo";
 import { autoClosePolicyPhrase } from "@/lib/comment-policy";
+import { AudioCommentButton, type CommentAudio } from "@/components/AudioCommentButton";
+import { AudioPlayer } from "@/components/AudioPlayer";
 import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
@@ -177,6 +179,8 @@ export function PostDetail() {
   const { ref, inView } = useInView();
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // A recorded/attached voice note on the comment.
+  const [audio, setAudio] = useState<CommentAudio | null>(null);
   // A post being shared into this post's comments, mirroring the DM share
   // flow: set from the ?share=<postId> deep link (Share dialog's "Share in
   // a comment") or the composer's Attach-a-post picker. The composer shows
@@ -288,12 +292,20 @@ export function PostDetail() {
     // A post shared into the comment — rendered as a preview card below
     // the text (the id is public metadata; see schema.ts).
     sharedPostId?: string;
+    // A voice note attached to the comment.
+    media?: {
+      storageId?: string;
+      url?: string;
+      key?: string;
+      kind?: string;
+      title?: string;
+    } | null;
     likedByMe: boolean;
   }[];
 
   const submit = async () => {
     const text = comment.trim();
-    if ((!text && !sharingPostId) || submitting) return;
+    if ((!text && !sharingPostId && !audio) || submitting) return;
     setSubmitting(true);
     try {
       // Proof-of-work before the write — same scheme as posting.
@@ -304,6 +316,7 @@ export function PostDetail() {
         ...(sharingPostId !== null
           ? { sharedPostId: sharingPostId as Id<"posts"> }
           : {}),
+        ...(audio !== null ? { media: audio } : {}),
         powChallenge: pow.powChallenge,
         powNonce: pow.powNonce,
         powIssuedAt: pow.powIssuedAt,
@@ -313,6 +326,7 @@ export function PostDetail() {
         return;
       }
       setComment("");
+      setAudio(null);
       // The share was sent — drop it from the composer and the URL so a
       // reload doesn't re-arm it.
       if (sharingPostId !== null) {
@@ -413,7 +427,7 @@ export function PostDetail() {
               <Button
                 size="icon"
                 className="shrink-0 rounded-full"
-                disabled={(!comment.trim() && !sharingPostId) || submitting}
+                disabled={(!comment.trim() && !sharingPostId && !audio) || submitting}
                 onClick={() => void submit()}
                 aria-label="Send comment"
               >
@@ -448,6 +462,9 @@ export function PostDetail() {
               text={comment}
               onTextChange={setComment}
             />
+            {/* Record a voice note or attach an audio file — uploaded to
+                Cloudinary now, reference ships with the comment. */}
+            <AudioCommentButton value={audio} onChange={setAudio} />
           </div>
         </>
       )}
@@ -575,6 +592,18 @@ export function PostDetail() {
                   >
                     {c.content}
                   </p>
+                  {c.media?.url ? (
+                    <div className="mt-1.5">
+                      <AudioPlayer
+                        track={{
+                          id: `comment:${c.media.key ?? c._id}`,
+                          src: c.media.url,
+                        }}
+                        variant="bare"
+                        className="max-w-xs"
+                      />
+                    </div>
+                  ) : null}
                   {c.sharedPostId ? (
                     <SharedPostCard postId={c.sharedPostId} />
                   ) : null}                      {isLong ? (

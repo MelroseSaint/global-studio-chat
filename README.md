@@ -110,6 +110,12 @@ Commenting is a first-class conversation surface, not a redirect:
 - **Engage** — like/unlike any comment, reply to comments (replies hang
   one level deep under the top-level comment), and edit or delete your own
   comments, with reply counts kept in sync.
+- **Voice notes** — record up to 60 seconds from the mic or attach an
+  audio file (under 10 MB) in any comment composer — popup, post page, or
+  inline replies. The clip is scanned for AI/deepfake markers before
+  upload, stored in Cloudinary (Convex holds only the reference), and
+  plays back in the thread with the native PureWire audio player. A
+  voice-note-only comment is allowed — empty husks are not.
 
 ## Sharing posts
 
@@ -314,6 +320,44 @@ required for the important pages:
 | Bot check | Cloudflare Turnstile | Human-only email triggers |
 | Delivery | Vercel (primary) + Convex static-hosting mirror | `purewire.vercel.app` / `outgoing-seal-727.convex.site` |
 
+### Media storage architecture
+
+PureWire's media pipeline is **Cloudinary-first end to end**: Cloudinary
+stores the actual bytes; Convex stores only the reference (a `url` +
+`key`/public_id) plus the metadata needed to render and manage the asset.
+This holds for **every** upload path — posts, stories, direct messages,
+avatars/banners, and comment voice notes. Convex is never used as a
+binary media store:
+
+1. **Client-side validation** — the file is re-encoded for privacy (GPS /
+   device metadata stripped) and scanned for AI/deepfake markers before
+   it leaves the browser.
+2. **Cloudinary upload** — `prepareUpload` mints a server-signed upload
+   ticket (or an unsigned preset in legacy mode); the browser POSTs the
+   bytes straight to Cloudinary. They never pass through Convex.
+3. **Convex record** — only after Cloudinary confirms the upload with a
+   `secure_url` + `public_id` does the app create the Convex row, storing
+   the reference and metadata (`kind`, `format`, `stripped`, audio `title`,
+   etc.). No successful record is ever created without that confirmation.
+4. **Rendering** — `<img>` / `<video>` / the audio player load the
+   Cloudinary URL directly; Convex never proxies the bytes.
+5. **Cleanup** — deletions remove the Cloudinary asset via a signed
+   `destroy` call (fire-and-forget) on top of deleting the row; a failed
+   delete leaves a cheap orphan, never a broken row.
+
+**Fallback discipline** — when the `CLOUDINARY_*` env vars are absent (or a
+Cloudinary upload fails), the same ticket includes a Convex storage upload
+URL and the client re-posts there, so uploads never break — but that path
+stores a Convex `storageId` *instead of* a URL, and rows created through it
+are deleted through the same dual-mode cleanup. Enabling Cloudinary is a
+config change, not a code change.
+
+**Comment voice notes** — comment audio follows the exact same pipeline:
+record or attach, scan, upload to Cloudinary, store only the reference,
+play back with the native player. The data export resolves these
+references to downloadable URLs and drops them in the ZIP alongside the
+post media.
+
 ## Privacy & security
 
 - **Disposable-email blocking** — signup normalizes the address, extracts
@@ -462,7 +506,8 @@ for the same reason.
 | `npm run qa:admin-responsive` | Admin dashboard at 320/390/768 px widths |
 | `npm run qa:shell-layout` | Signed-in shell (feed, explore, messages, notifications, profile, settings) at mobile 390 / tablet 768 / desktop 1440 px: no overflow, no viewport leaks, feed tab labels unclipped, correct nav surface per width |
 | `npm run qa:pages-inflation` | Page inflation at 800px with root-font-size scaling |
-| `npm run qa:cloudinary-health` | Unsigned-preset upload probe |
+| `npm run qa:cloudinary-health` | Signed upload probe (end-to-end, cleans up after itself) |
+| `npm run qa:media-architecture` | Cloudinary-first media audit — fails on any Convex-embedded bytes, blob/base64, foreign-host, or broken reference across posts/stories/comments (harness-gated) |
 | `npm run qa:session-audit` | Session-lifetime guarantees |
 | `npm run qa:extend-sessions` | Session extension tooling |
 | `npm run qa:count-drift` | Data-integrity DQS audit (harness-gated) |

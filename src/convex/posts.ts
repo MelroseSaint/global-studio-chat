@@ -1552,12 +1552,31 @@ export const addComment = mutation({
     // The id of a post being shared into this comment (see schema.ts — the
     // reference is public metadata, rendered as a preview card).
     sharedPostId: v.optional(v.id("posts")),
+    // Optional single media item attached to the comment — a voice note
+    // (audio). Same dual-mode shape as post media: a Cloudinary url+key or
+    // a Convex storage id (fallback). Only audio is allowed on comments;
+    // the composer records/attaches one clip and the item ships here once
+    // Cloudinary confirms the upload.
+    media: v.optional(
+      v.object({
+        storageId: v.optional(v.id("_storage")),
+        url: v.optional(v.string()),
+        key: v.optional(v.string()),
+        kind: v.union(
+          v.literal("image"),
+          v.literal("video"),
+          v.literal("audio"),
+        ),
+        stripped: v.optional(v.boolean()),
+        title: v.optional(v.string()),
+      }),
+    ),
     // Client-side proof-of-work, same scheme as createPost.
     powChallenge: v.optional(v.string()),
     powNonce: v.optional(v.string()),
     powIssuedAt: v.optional(v.number()),
   },
-  handler: async (ctx, { postId, content, parentId: parentArg, sharedPostId, powChallenge, powNonce, powIssuedAt }) => {
+  handler: async (ctx, { postId, content, parentId: parentArg, sharedPostId, media, powChallenge, powNonce, powIssuedAt }) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
@@ -1567,17 +1586,73 @@ export const addComment = mutation({
     const testActor = await isTestAccount(ctx, userId);
     await requireProof(powChallenge, powNonce, powIssuedAt);
     const text = content.trim();
-    // No empty husks: a comment carries text, a shared post reference, or
-    // both — mirroring the DM message rule.
+    // No empty husks: a comment carries text, a shared post reference,
+    // an audio clip, or any combination — mirroring the DM message rule.
     if (
-      (text.length === 0 && sharedPostId === undefined) ||
+      (text.length === 0 &&
+        sharedPostId === undefined &&
+        media === undefined) ||
       text.length > 500
     ) {
       throw new Error(
-        sharedPostId === undefined
-          ? "Comment must be between 1 and 500 characters."
+        sharedPostId === undefined && media === undefined
+          ? "Comment must include text, an audio clip, or a shared post."
           : "Comment text must be 500 characters or fewer.",
       );
+    }
+    // ── Media gate (mirrors the createPost gate, single item) ────────────
+    // A comment may carry exactly one media item, and it must be audio (the
+    // composer only produces voice notes). Shape + URL validation is the
+    // same as posts: exactly one of storage id / external URL, https on
+    // PureWire's own media host — a caller can't hotlink a foreign domain
+    // or pass a javascript:/data: URL as comment media.
+    if (media !== undefined) {
+      if (media.kind !== "audio") {
+        throw new Error("Comments support audio clips only.");
+      }
+      const hasStorage = media.storageId !== undefined;
+      const hasUrl = media.url !== undefined;
+      if (hasStorage === hasUrl) {
+        throw new Error(
+          "Each media item needs either a storage id or a URL.",
+        );
+      }
+      if (hasUrl) {
+        const url = media.url ?? "";
+        let host: string | null = null;
+        try {
+          host = parseUrlHost(url);
+        } catch {
+          host = null;
+        }
+        if (host === null || !/^https:\/\//i.test(url)) {
+          throw new Error("Media URLs must be https.");
+        }
+        const cfg = cloudinaryConfig();
+        if (cfg === null) {
+          throw new Error(
+            "Media URLs are disabled while storage is in fallback mode.",
+          );
+        }
+        const allowed =
+          host === "res.cloudinary.com" ||
+          host.endsWith(".res.cloudinary.com");
+        if (!allowed) {
+          throw new Error("Media must be hosted by PureWire's media provider.");
+        }
+        // The media URL gets the blocklist scan too — an adult/phishing
+        // host can't ride into a comment as an audio attachment.
+        const mediaScan = await scanBlockedContent(ctx, url);
+        if (mediaScan.status === "blocked") {
+          await escalateSilently(ctx, userId, 3, "scam", "phish-block-comment-media");
+          return {
+            ok: false,
+            error:
+              mediaScan.message ??
+              "That audio link isn't allowed on PureWire.",
+          };
+        }
+      }
     }
     // A shared post must exist at comment time — a preview that instantly
     // breaks is worse than a rejection. (It can still be deleted later;
@@ -1621,6 +1696,7 @@ export const addComment = mutation({
           content: text,
           parentId,
           ...(sharedPostId !== undefined ? { sharedPostId } : {}),
+          ...(media !== undefined ? { media } : {}),
         });
       }
       return { ok: true };
@@ -1706,6 +1782,7 @@ export const addComment = mutation({
       content: text,
       parentId,
       ...(sharedPostId !== undefined ? { sharedPostId } : {}),
+      ...(media !== undefined ? { media } : {}),
     });
     await ctx.db.patch(postId, { commentCount: post.commentCount + 1 });
     // The thread may have just crossed the auto-close line (or an old
@@ -1942,10 +2019,11 @@ export const deleteComment = mutation({
         });
       }
     }
-    // Replies die with their parent — each sweeps its own likes first — and
-    // every removed row is accounted in the post's commentCount below. The
-    // bounded sweep loop (not a collect) matches the erasure path, so a
-    // very long reply thread can't balloon one mutation's memory.
+    // Replies die with their parent — each sweeps its own likes and media
+    // first — and every removed row is accounted in the post's commentCount
+    // below. The bounded sweep loop (not a collect) matches the erasure
+    // path, so a very long reply thread can't balloon one mutation's
+    // memory.
     let removed = 1;
     for (;;) {
       const children = await ctx.db
@@ -1956,8 +2034,17 @@ export const deleteComment = mutation({
       removed += children.length;
       for (const child of children) {
         await sweepCommentLikes(ctx, child._id);
+        if (child.media !== undefined) {
+          await cleanupMediaItems(ctx, [child.media]);
+        }
         await ctx.db.delete(child._id);
       }
+    }
+    // The targeted comment's own audio clip dies with it — never leave an
+    // orphaned Cloudinary asset (or storage file) behind a deleted voice
+    // note.
+    if (comment.media !== undefined) {
+      await cleanupMediaItems(ctx, [comment.media]);
     }
     // If this comment was itself a reply, the parent's replyCount drops by
     // one (the parent survives; it just lost a reply).
