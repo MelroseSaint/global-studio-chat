@@ -36,6 +36,17 @@ const schema = defineSchema({
     bannerStorageId: v.optional(v.union(v.null(), v.id("_storage"))),
     avatarUrl: v.optional(v.union(v.null(), v.string())),
     bannerUrl: v.optional(v.union(v.null(), v.string())),
+    // Verdict from the server-side AI media scan, applied to profile
+    // artwork (avatar/banner) at update time — no weaker path than posts.
+    // Stored so the admin queue and audits see which signal flagged it.
+    aiMediaStatus: v.optional(
+      v.union(
+        v.literal("clean"),
+        v.literal("review"),
+        v.literal("blocked"),
+      ),
+    ),
+    aiEvidence: v.optional(v.any()),
     links: v.optional(
       v.array(
         v.object({

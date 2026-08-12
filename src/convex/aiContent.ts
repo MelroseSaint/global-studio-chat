@@ -7,6 +7,12 @@ import {
   type C2paInfo,
 } from "@/lib/ai-media-scan";
 import { scanForRacism } from "@/lib/racism-guard";
+import {
+  analyzeJpegBytes,
+  normalizedAnalysisUrl,
+  type VisualVerdict,
+} from "@/lib/visual-forensics";
+import { cloudinaryConfig, keyFromPublicUrl } from "./mediaStorage";
 
 import { action } from "./_generated/server";
 
@@ -373,12 +379,74 @@ export interface AiMediaEvidence {
    * screenshot descriptions, EXIF captions, PNG text chunks). Null when
    * no text was extracted or the text was clean. */
   ocrRacism: { status: "review" | "blocked"; reason: string } | null;
+  /** Visual-content forensics on the normalized pixels — independent of
+   * every metadata/provenance signal. Null for non-images (audio/video)
+   * and when the analysis couldn't run. A `visual.confidence` of
+   * ai_likely/ai_confirmed escalates the verdict to review even when the
+   * byte scan is clean (a metadata-stripped screenshot must never sail
+   * through as human-created). */
+  visual: {
+    confidence: "human_likely" | "uncertain" | "ai_likely" | "ai_confirmed";
+    score: number;
+    unavailable: boolean;
+  } | null;
 }
 
 export type ScanMediaForAiResult =
   | { status: "clean"; c2paVerifiedHuman?: boolean; c2paClaimGenerator?: string; evidence: AiMediaEvidence }
   | { status: "review"; reason: string; evidence: AiMediaEvidence }
   | { status: "blocked"; reason: string; evidence: AiMediaEvidence };
+
+/**
+ * Run visual-content forensics on one image item, using the normalized
+ * analysis copy (never the original asset): Cloudinary items fetch the
+ * transformation URL (any format → JPEG, metadata stripped, orientation
+ * applied); Convex-storage items decode JPEG bytes directly. Returns the
+ * verdict, or `unavailable: true` when the analysis couldn't run.
+ */
+async function runVisualForensics(
+  item: { url?: string; storageId?: unknown; key?: string },
+  bytes: ArrayBuffer | null,
+): Promise<VisualVerdict> {
+  // Cloudinary path: the analysis copy is a server-side transformation of
+  // the stored asset — the uploader's format/encoding can't influence it.
+  const cfg = cloudinaryConfig();
+  if (item.url !== undefined && cfg !== null) {
+    const key = item.key ?? keyFromPublicUrl(item.url);
+    if (key !== null && key !== undefined) {
+      try {
+        const res = await fetch(normalizedAnalysisUrl(cfg.cloudName, key));
+        if (res.ok) {
+          const buf = new Uint8Array(await res.arrayBuffer());
+          return analyzeJpegBytes(buf);
+        }
+      } catch {
+        // Fall through to the raw-bytes decode below.
+      }
+    }
+  }
+  // Convex-storage (or Cloudinary-fetch-failure) fallback: decode the
+  // stored bytes directly. JPEG decodes in-isolate; other formats report
+  // unavailable (the byte scan still governs).
+  if (bytes !== null) {
+    return analyzeJpegBytes(new Uint8Array(bytes));
+  }
+  return {
+    confidence: "uncertain",
+    score: 0,
+    signals: {
+      noiseStd: 0,
+      elaMean: 0,
+      elaCv: 0,
+      hfEnergy: 0,
+      gradientLevels: 0,
+      maxLevelGap: 0,
+      edgeKurtosis: 0,
+      saturation: 0,
+    },
+    unavailable: true,
+  };
+}
 
 /**
  * Scan every image in a media list by reading its bytes from storage.
@@ -416,7 +484,11 @@ export const scanMediaForAi = action({
       byteScan: { status: "clean" },
       c2pa: null,
       ocrRacism: null,
+      visual: null,
     };
+    // The strongest visual verdict seen across all image items — used to
+    // escalate a metadata-clean screenshot into the human review queue.
+    let worstVisual: VisualVerdict | null = null;
     for (const item of media) {
       let bytes: ArrayBuffer | null = null;
       if (item.url !== undefined) {
@@ -430,19 +502,18 @@ export const scanMediaForAi = action({
           bytes = await blob.arrayBuffer();
         }
       }
-      if (bytes === null) {
-        continue;
-      }
-      const result: AiScanResult =
-        item.kind === "image"
-          ? scanImageBytes(bytes)
-          : scanMediaBytes(bytes);
-      if (result.status !== "clean") {
+      const result: AiScanResult | null =
+        bytes !== null
+          ? item.kind === "image"
+            ? scanImageBytes(bytes)
+            : scanMediaBytes(bytes)
+          : null;
+      if (result !== null && result.status !== "clean") {
         evidence.byteScan = { status: result.status, reason: result.reason };
         return { status: result.status, reason: result.reason ?? "Media flagged by the AI scan.", evidence };
       }
       // OCR-based racism check
-      if (result.ocrText !== undefined && result.ocrText.length > 0) {
+      if (result !== null && result.ocrText !== undefined && result.ocrText.length > 0) {
         const racism = scanForRacism(result.ocrText);
         if (racism.status === "blocked") {
           evidence.ocrRacism = { status: "blocked", reason: racism.reason };
@@ -453,9 +524,9 @@ export const scanMediaForAi = action({
           return { status: "review", reason: `Media text flagged: ${racism.reason}`, evidence };
         }
       }
-      // C2PA provenance � capture the first item that carries it (don't
+      // C2PA provenance — capture the first item that carries it (don't
       // overwrite, or the admin evidence panel only sees the last item).
-      const c2pa = (result as { c2pa?: C2paInfo }).c2pa;
+      const c2pa = (result as { c2pa?: C2paInfo } | null)?.c2pa;
       if (c2pa !== undefined && evidence.c2pa === null) {
         evidence.c2pa = {
           humanCapture: c2pa.humanCapture === true,
@@ -467,6 +538,47 @@ export const scanMediaForAi = action({
         if (c2paClaimGenerator === undefined) {
           c2paClaimGenerator = c2pa.claimGenerator;
         }
+      }
+      // Visual-content forensics on the normalized pixels — runs for every
+      // image regardless of what the byte scan found (a stripped screenshot
+      // is byte-clean but visually recognizable). The verdict escalates
+      // the overall result below; the strongest item's confidence is kept
+      // so the evidence drawer shows the deciding signal.
+      if (item.kind === "image" && bytes !== null) {
+        const visual = await runVisualForensics(item, bytes);
+        if (
+          worstVisual === null ||
+          visual.score > worstVisual.score
+        ) {
+          worstVisual = visual;
+        }
+      }
+    }
+    // Decision model: byte scan (blocked/review) wins outright; otherwise
+    // the strongest visual signal decides. ai_likely/ai_confirmed escalate
+    // a byte-clean image into the human queue — never silently published
+    // as human-created. unavailable is never a signal by itself.
+    if (worstVisual !== null) {
+      evidence.visual = {
+        confidence: worstVisual.confidence,
+        score: worstVisual.score,
+        unavailable: worstVisual.unavailable,
+      };
+      if (!worstVisual.unavailable && worstVisual.confidence === "ai_confirmed") {
+        return {
+          status: "review",
+          reason:
+            "This image shows strong AI-generation visual characteristics — a human review is required.",
+          evidence,
+        };
+      }
+      if (!worstVisual.unavailable && worstVisual.confidence === "ai_likely") {
+        return {
+          status: "review",
+          reason:
+            "This image shows possible AI-generation visual characteristics — a human review is required.",
+          evidence,
+        };
       }
     }
     return { status: "clean", c2paVerifiedHuman: anyHumanCapture, c2paClaimGenerator, evidence };

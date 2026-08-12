@@ -10,6 +10,13 @@ import {
   homeLocationValidator,
 } from "./location";
 import { keyFromPublicUrl } from "./media";
+import { cloudinaryConfig } from "./mediaStorage";
+import { scanImageBytes } from "@/lib/ai-media-scan";
+import {
+  analyzeJpegBytes,
+  normalizedAnalysisUrl,
+  type VisualVerdict,
+} from "@/lib/visual-forensics";
 import { publicUser } from "./privacy";
 import {
   detectFollowChurn,
@@ -377,6 +384,110 @@ export const updateProfile = mutation({
       args.avatarUrl !== undefined ||
       args.bannerStorageId !== undefined ||
       args.bannerUrl !== undefined;
+    // Server-side AI media scan on profile artwork — the same
+    // scanMediaForAi pipeline posts and stories run, so an avatar/banner
+    // is never a weaker validation path. A direct API caller cannot bypass
+    // it: the scan runs against the stored bytes/Cloudinary asset, not the
+    // client's claim. Blocked artwork is rejected outright; "review" is
+    // stored for the admin queue but does not block the user.
+    const newArtwork: { storageId?: string; url?: string; kind: "image" }[] = [];
+    if (args.avatarStorageId !== undefined && args.avatarStorageId !== null) {
+      newArtwork.push({ storageId: args.avatarStorageId, kind: "image" });
+    }
+    if (args.avatarUrl !== undefined && args.avatarUrl !== null) {
+      newArtwork.push({ url: args.avatarUrl, kind: "image" });
+    }
+    if (args.bannerStorageId !== undefined && args.bannerStorageId !== null) {
+      newArtwork.push({ storageId: args.bannerStorageId, kind: "image" });
+    }
+    if (args.bannerUrl !== undefined && args.bannerUrl !== null) {
+      newArtwork.push({ url: args.bannerUrl, kind: "image" });
+    }
+    if (newArtwork.length > 0) {
+      // Server-side AI media scan on profile artwork — the same byte +
+      // visual enforcement posts/stories get, run inline in the mutation
+      // (mutations here already use fetch; the pure scanners need no
+      // action runtime). A direct API caller cannot bypass it: the scan
+      // reads the stored bytes / Cloudinary asset itself, never the
+      // client's claim. Blocked artwork is rejected outright; "review" is
+      // stored for the admin queue but does not block the user.
+      let worst: "clean" | "review" | "blocked" = "clean";
+      let evidence: Record<string, unknown> = {};
+      for (const item of newArtwork) {
+        const storageId = item.storageId as Id<"_storage"> | undefined;
+        let bytes: ArrayBuffer | null = null;
+        if (storageId !== undefined) {
+          const url = await ctx.storage.getUrl(storageId);
+          if (url !== null) {
+            try {
+              const res = await fetch(url);
+              if (res.ok) bytes = await res.arrayBuffer();
+            } catch {
+              bytes = null;
+            }
+          }
+        } else if (item.url !== undefined) {
+          try {
+            const res = await fetch(item.url);
+            if (res.ok) bytes = await res.arrayBuffer();
+          } catch {
+            bytes = null;
+          }
+        }
+        // Byte-level scan (generator markers, EXIF, C2PA provenance).
+        if (bytes !== null) {
+          const byteScan = scanImageBytes(bytes);
+          if (byteScan.status !== "clean") {
+            worst = byteScan.status;
+            evidence = { source: "byteScan", reason: byteScan.reason };
+            break;
+          }
+        }
+        // Visual-content forensics on a normalized copy (Cloudinary
+        // transformation URL) or the raw bytes — independent of metadata,
+        // so a metadata-stripped screenshot can't sail through as clean.
+        let visual: VisualVerdict | null = null;
+        if (item.url !== undefined) {
+          const cfg = cloudinaryConfig();
+          const key = keyFromPublicUrl(item.url);
+          if (cfg !== null && key !== null) {
+            try {
+              const res = await fetch(normalizedAnalysisUrl(cfg.cloudName, key));
+              if (res.ok) {
+                visual = analyzeJpegBytes(new Uint8Array(await res.arrayBuffer()));
+              }
+            } catch {
+              visual = null;
+            }
+          }
+        }
+        if (visual === null && bytes !== null) {
+          visual = analyzeJpegBytes(new Uint8Array(bytes));
+        }
+        if (
+          visual !== null &&
+          !visual.unavailable &&
+          (visual.confidence === "ai_confirmed" || visual.confidence === "ai_likely")
+        ) {
+          worst = "review";
+          evidence = {
+            source: "visual",
+            confidence: visual.confidence,
+            score: visual.score,
+          };
+          break;
+        }
+      }
+      if (worst === "blocked") {
+        return {
+          ok: false,
+          error:
+            "That image was flagged by our automated content scan — please choose a different picture.",
+        };
+      }
+      patch.aiMediaStatus = worst;
+      patch.aiEvidence = evidence;
+    }
     if (artworkChanging) {
       const oldKeys: string[] = [];
       if (current?.avatarStorageId) {

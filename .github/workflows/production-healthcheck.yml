@@ -886,6 +886,116 @@ jobs:
               console.log(`Closed media-architecture alert issue #${issue.number}.`);
             }
 
+  ai-visual-hardening:
+    # Pins the visual AI-detection layer (scripts/ai-visual-hardening-qa.mjs):
+    # synthetic AI-like and human-like fixtures run through an adversarial
+    # transformation battery — re-encoding, resizing, cropping, screenshotting,
+    # recompression, format conversion, and combinations — and the QA fails if
+    # the measured separation collapses (AI-like stays >= ai_likely at >=256px,
+    # human-like stays below it, thumbnail bucketing stays honest). A metadata-
+    # stripped screenshot must never read as human-created, and a regression in
+    # the forensics (a signal silently stopping) must fail CI the moment it
+    # lands. Runs locally (pure synthetic fixtures) — no live site, no secrets.
+    name: AI visual-detection hardening guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the adversarial visual QA
+        id: visualqa
+        run: bash scripts/retry-once.sh ai-visual-hardening.log npm run qa:ai-visual-hardening
+
+      - name: Upload the QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-visual-hardening-log
+          path: ai-visual-hardening.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ai-visual-hardening";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `AI visual-detection hardening drift (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The adversarial visual QA found that AI-like vs human-like fixtures no longer",
+                "separate as measured — the detector no longer survives an adversarial",
+                "transformation (re-encode/resize/crop/screenshot/recompress), or a human-like",
+                "fixture now reads as AI.",
+                "",
+                "This means the visual layer of the AI-media pipeline has drifted — a metadata-",
+                "stripped screenshot may now pass as human-created, or real photos may be",
+                "wrongly flagged for review.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the ai-visual-hardening-log artifact for the measured split.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ai-visual-hardening";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open AI-visual-hardening alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed AI-visual-hardening alert issue #${issue.number}.`);
+            }
+
   phishing-scan:
     # Proves the phishing & account-integrity layer works end-to-end against
     # production: scripts/phishing-qa.mjs posts scam text, a PureWire

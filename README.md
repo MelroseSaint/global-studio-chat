@@ -508,6 +508,7 @@ for the same reason.
 | `npm run qa:pages-inflation` | Page inflation at 800px with root-font-size scaling |
 | `npm run qa:cloudinary-health` | Signed upload probe (end-to-end, cleans up after itself) |
 | `npm run qa:media-architecture` | Cloudinary-first media audit — fails on any Convex-embedded bytes, blob/base64, foreign-host, or broken reference across posts/stories/comments (harness-gated) |
+| `npm run qa:ai-visual-hardening` | Adversarial visual AI-detection QA — synthetic AI-like vs human-like fixtures through re-encode/resize/crop/screenshot/recompress/format-convert batteries; fails if measured separation collapses or a metadata-stripped screenshot reads as human |
 | `npm run qa:session-audit` | Session-lifetime guarantees |
 | `npm run qa:extend-sessions` | Session extension tooling |
 | `npm run qa:count-drift` | Data-integrity DQS audit (harness-gated) |
