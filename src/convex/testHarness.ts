@@ -558,13 +558,22 @@ async function extendSessionLifetimesImpl(
   // (the last batch) so a mid-migration run never misses newly-orphaned
   // prefs from rows it is about to extend.
   const prefs =
-    sessions < EXTEND_BATCH && tokens < EXTEND_BATCH
+    sessions.scanned < EXTEND_BATCH && tokens.scanned < EXTEND_BATCH
       ? await sweepOrphanPrefs(ctx)
       : 0;
-  // A batch smaller than the cap means that table has no rows left short
-  // of the horizon — both tables converged => the migration is done.
-  const done = sessions < EXTEND_BATCH && tokens < EXTEND_BATCH;
-  return { sessions, tokens, prefs, done };
+  // A batch whose scan returned fewer than the cap means that table has no
+  // rows left short of the horizon — both tables converged => the
+  // migration is done. Based on the SCAN size, not the extended count: a
+  // batch full of opt-out rows is correctly "done" even though nothing was
+  // extended.
+  const done =
+    sessions.scanned < EXTEND_BATCH && tokens.scanned < EXTEND_BATCH;
+  return {
+    sessions: sessions.extended,
+    tokens: tokens.extended,
+    prefs,
+    done,
+  };
 }
 
 /**
@@ -614,15 +623,34 @@ async function extendBatch(
   ctx: MutationCtx,
   table: "authSessions" | "authRefreshTokens",
   horizon: number,
-): Promise<number> {
+): Promise<{ extended: number; scanned: number }> {
   const rows = await ctx.db
     .query(table)
     .withIndex("by_expirationTime", (q) => q.lt("expirationTime", horizon))
     .take(EXTEND_BATCH);
+  let extended = 0;
   for (const row of rows) {
+    // A deliberate "Keep me signed in" opt-out (sessionPrefs marker) must
+    // NEVER be overridden by a convergence: the audit exempts those rows
+    // by design, so they stay short — the user chose a 30-day session.
+    // The pref check costs one indexed read per candidate (only short
+    // rows are candidates, so a converged table pays nothing), keeping the
+    // batch well under the mutation's 4096-document read cap.
+    const sessionId =
+      table === "authSessions"
+        ? (row as { _id: Id<"authSessions"> })._id
+        : (row as { sessionId: Id<"authSessions"> }).sessionId;
+    const pref = await ctx.db
+      .query("sessionPrefs")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .first();
+    if (pref !== null && !pref.remember) {
+      continue;
+    }
     await ctx.db.patch(row._id, { expirationTime: horizon });
+    extended++;
   }
-  return rows.length;
+  return { extended, scanned: rows.length };
 }
 
 /**
