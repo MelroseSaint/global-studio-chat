@@ -24,12 +24,16 @@
  *   4. The required onboarding prompt appears for the unset account;
  *      picking Creator dismisses it (selection is mandatory, and the
  *      prompt only clears once the doc updates reactively).
- *   5. Settings shows the Profile type card with Creator selected; a
+ *   5. Settings shows the Profile type card with Creator selected, above
+ *      Photo & banner (the declaration is the first card — the ordering
+ *      is pinned here so a future reorder can't silently regress); a
  *      click on User moves the selection and the note reflects USER.
  *   6. The profile page then shows the USER badge whose tooltip says the
  *      account "identifies as a User" — the title matches the choice.
  *   7. Flipping back to Creator in Settings moves the selection again and
  *      the profile badge returns to CREATOR.
+ *   8. The backend set/reject checks run after the browser (the prompt
+ *      needs an unset account) on the same fixture.
  *
  * All fixtures (user, sessions) are erased at the end, so the site is
  * left exactly as found. Run:
@@ -160,6 +164,17 @@ async function main() {
     const card = page.getByText("Profile type", { exact: true });
     await card.waitFor({ timeout: 30000 }).catch(() => {});
     check("Settings shows the Profile type card", await card.isVisible().catch(() => false));
+    const order = await page.evaluate(() => {
+      const body = document.body.innerText;
+      const pt = body.indexOf("Profile type");
+      const pb = body.indexOf("Photo & banner");
+      return { before: pt !== -1 && pb !== -1 && pt < pb, pt, pb };
+    });
+    check(
+      "Profile type card renders above Photo & banner",
+      order.before,
+      order.before ? undefined : `pt@${order.pt} pb@${order.pb}`,
+    );
     const creatorSelected = await page
       .locator('button[aria-pressed="true"]', { hasText: /^Creator/ })
       .isVisible()
