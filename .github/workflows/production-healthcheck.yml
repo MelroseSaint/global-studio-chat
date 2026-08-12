@@ -996,6 +996,120 @@ jobs:
               console.log(`Closed AI-visual-hardening alert issue #${issue.number}.`);
             }
 
+  ai-scan-integration:
+    # Proves the AI-media scan pipeline is LIVE on the deployed backend, not
+    # just correct in the repo: scripts/ai-scan-integration-qa.mjs uploads a
+    # real JPEG carrying a generator marker (EXIF Software: Midjourney)
+    # through Convex storage and runs the production scanMediaForAi action,
+    # asserting the byte-level scan blocks it and the structured evidence
+    # object is populated. The visual-forensics fixture QA (above) pins the
+    # detector math; this job pins the wiring — it fails the moment the
+    # deployed backend drifts from the repo (a reverted scan, a silently
+    # skipped deploy, a broken upload path) even when the fixtures still
+    # pass locally. Harness-gated like the other live QAs.
+    name: Live AI-scan pipeline (byte-level)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the live AI-scan integration QA
+        id: aiscan
+        run: bash scripts/retry-once.sh ai-scan-integration.log npm run qa:ai-scan-integration
+
+      - name: Upload the QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-scan-integration-log
+          path: ai-scan-integration.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ai-scan-integration";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Live AI-scan pipeline drift (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The live AI-scan integration QA failed against the deployed backend.",
+                "A real JPEG carrying a generator marker (EXIF Software: Midjourney) no",
+                "longer blocks through scanMediaForAi, or the evidence object is missing",
+                "— the deployed backend has drifted from the repo (reverted scan,",
+                "silently skipped deploy, or a broken upload path).",
+                "",
+                "This is separate from the visual-forensics fixture QA: it proves the",
+                "byte-level scan is actually running in production, not just correct",
+                "in the repo.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the ai-scan-integration-log artifact for the failure detail.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ai-scan-integration";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open AI-scan-integration alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed AI-scan-integration alert issue #${issue.number}.`);
+            }
+
   phishing-scan:
     # Proves the phishing & account-integrity layer works end-to-end against
     # production: scripts/phishing-qa.mjs posts scam text, a PureWire
