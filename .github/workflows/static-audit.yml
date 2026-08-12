@@ -10,19 +10,64 @@ concurrency:
   # On push events, share the admin-account-push group with
   # production-healthcheck so parallel runs never mint competing
   # admin sessions. PR runs get their own group per PR.
-  ##  queue: 2 (shared admin-account-push group with production-healthcheck)
-#  keeps the push gate meaningful without running the full 25-job suite
-#  for every commit in a burst — each run's live-site checks consume the
-#  Convex free-plan database-I/O budget. One run executes, two wait, and
-#  later arrivals replace the oldest QUEUED run, so the latest push is
-#  always verified while bursts collapse to ~3 runs instead of 15.
-#  (queue: max ran every push but blew the I/O budget; the default of 1
-#  starved this whole workflow under rapid pushes.)
+  ##  queue: max is REQUIRED here: without it, GitHub's default concurrency
+#  semantics keep only ONE pending run per group and cancel any later
+#  arrival — so a long-running healthcheck chain (15-30 min) plus rapid
+#  pushes starved this whole workflow (runs cancelled in ~1s with zero
+#  jobs, no check runs recorded). With the queue, every push-triggered
+#  run waits its turn FIFO instead of being cancelled, so the static-audit
+#  gate (typecheck/lint/build/SEO/mirror-freshness) actually runs. (The
+#  `queue` key only accepts `single` or `max` — a numeric limit is a parse
+#  error, so burst throttling must be done differently.)
   group: ${{ github.event_name == 'push' && 'admin-account-push' || format('static-audit-{0}', github.run_id) }}
   cancel-in-progress: false
-  queue: 2
+  queue: max
+
+permissions:
+  contents: read
+  actions: write # the push-burst gate cancels stale queued runs
 
 jobs:
+  # Burst throttle: when several pushes land in quick succession, every
+  # queued run of THIS workflow eventually executes FIFO under queue:max
+  # — each one hammering the production deployment with the full live
+  # suite. This gate runs first and cancels any OLDER queued run of the
+  # same workflow, so a burst collapses to the newest push's run (the
+  # latest commit is the one that matters) without ever starving the gate
+  # (the newest run always executes). In-flight runs are never touched.
+  push-burst-gate:
+    name: Push burst gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Cancel stale queued runs of this workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const self = context.runId;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: 'static-audit.yml',
+              event: 'push',
+              branch: context.ref.replace('refs/heads/', ''),
+              status: 'queued',
+              per_page: 30,
+            });
+            const stale = (data.workflow_runs || []).filter((r) => r.id !== self);
+            if (stale.length === 0) {
+              core.info('no older queued runs — this is the newest push');
+            }
+            for (const r of stale) {
+              try {
+                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: r.id });
+                core.info(`cancelled stale queued run ${r.id} (${r.head_sha.slice(0, 7)})`);
+              } catch (e) {
+                core.warning(`cancel ${r.id} failed: ${e.message}`);
+              }
+            }
+
   typecheck:
     name: TypeScript typecheck
     runs-on: ubuntu-latest
