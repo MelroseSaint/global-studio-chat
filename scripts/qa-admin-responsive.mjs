@@ -510,26 +510,33 @@ async function main() {
   console.log(`\nPureWire admin dashboard responsive QA (${SITE_URL})\n`);
   const browser = await launchBrowser({ headed: HEADED });
   try {
+    // ONE page, ONE sign-in: the browser context keeps the session, so the
+    // widths below just resize the viewport. Signing in afresh per width
+    // was the CI flake — after the first sign-in the context is already
+    // authenticated, /auth redirects instead of rendering #email, and the
+    // second signIn call times out waiting for the form (locally the
+    // hydration race happened to let #email flash before the redirect; on
+    // a slow runner the redirect always wins).
+    const page = await browser.newPage({
+      viewport: { width: WIDTHS[0][1], height: WIDTHS[0][2] },
+      deviceScaleFactor: 1,
+    });
+    page.setDefaultTimeout(TIMEOUT);
+    await signIn(page, {
+      siteUrl: SITE_URL,
+      email: ADMIN_EMAIL,
+      password: ADMIN_PASSWORD,
+      timeoutMs: TIMEOUT,
+      navTimeoutMs: NAV_TIMEOUT,
+    });
     for (const [label, width, height] of WIDTHS) {
       console.log(`\n--- ${label} (${width}px) ---`);
-      const page = await browser.newPage({
-        viewport: { width, height },
-        deviceScaleFactor: 1,
-      });
-      page.setDefaultTimeout(TIMEOUT);
-      await signIn(page, {
-        siteUrl: SITE_URL,
-        email: ADMIN_EMAIL,
-        password: ADMIN_PASSWORD,
-        timeoutMs: TIMEOUT,
-        navTimeoutMs: NAV_TIMEOUT,
-      });
+      await page.setViewportSize({ width, height });
       await inspectAdmin(page, label, width);
       // The corrected-count profile walk: at the desktop stop only.
       if (width === 1024) {
         await inspectProfile(page, label);
       }
-      await page.close();
     }
   } finally {
     await browser.close();

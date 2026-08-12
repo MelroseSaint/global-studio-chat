@@ -2,7 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { getAuthSessionId } from "@convex-dev/auth/server";
 import { SignJWT, importPKCS8 } from "jose";
 
-import { ADMIN_EMAIL } from "./auth";
+import { ADMIN_EMAIL, PERMANENT_SESSION_MS } from "./auth";
 import { eraseAccount } from "./account";
 import { maybeNotifyAutoClosed } from "./posts";
 import { internal } from "./_generated/api";
@@ -58,7 +58,12 @@ function requireHarness(secret: string): void {
   }
 }
 
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days, like the auth library
+// Minted sessions use the SAME permanent horizon as real sign-ins
+// (PERMANENT_SESSION_MS) — the library's 30-day default predates
+// PureWire's session config and left QA-minted ADMIN sessions flagged as
+// "expiring within a year" by the session-lifetime audit (qa_ accounts are
+// exempt by username; the real admin isn't). The JWT stays short-lived.
+const SESSION_TTL_MS = PERMANENT_SESSION_MS;
 const TOKEN_TTL_MS = 1000 * 60 * 60; // 1 hour, like the auth library
 
 // The permanent-session horizon is now passed in by the runner script
