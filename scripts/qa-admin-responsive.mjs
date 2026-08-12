@@ -29,6 +29,7 @@
  * browser, BROWSER_TIMEOUT_MS (default 30000).
  * Exit codes: 0 all checks passed, 1 a check failed, 2 missing password.
  */
+import { chromium } from "playwright";
 import {
   createReporter,
   launchBrowser,
@@ -108,13 +109,67 @@ const PICKER =
 // Narrow to the first enabled trigger (the picker) for every use.
 const pickerLocator = (page) => page.locator(PICKER).first();
 
+/**
+ * Navigate with a one-shot retry on a transient network failure. The QA
+ * walks 50+ live pages; a single Vercel/Convex blip on a shared CI runner
+ * must not red the whole gate. A genuine regression (404, redirect loop)
+ * is not masked — the second attempt fails the same way.
+ */
+async function gotoWithRetry(page, url, { waitUntil = "domcontentloaded" } = {}) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await page.goto(url, { waitUntil, timeout: NAV_TIMEOUT });
+      return;
+    } catch (err) {
+      if (attempt === 0) {
+        console.log(`    [retry] goto ${url} failed (${String(err.message ?? err).split("\n")[0]}) — retrying once`);
+        await page.waitForTimeout(1500);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/**
+ * Switch the admin to a section through the real dropdown, verifying the
+ * switch actually took (the trigger now shows the label) and retrying once
+ * if the click raced the portal teardown — Radix closes the dropdown as
+ * the item is clicked, and on a slow runner the item can detach between
+ * waitFor and click, which would otherwise crash the whole walk.
+ */
 async function selectSection(page, label) {
-  await pickerLocator(page).click();
-  const item = page
-    .locator('[data-slot="select-item"]', { hasText: label })
-    .first();
-  await item.waitFor({ state: "visible", timeout: TIMEOUT });
-  await item.click();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await pickerLocator(page).click();
+    const item = page
+      .locator('[data-slot="select-item"]', { hasText: label })
+      .first();
+    await item.waitFor({ state: "visible", timeout: TIMEOUT });
+    try {
+      await item.click();
+    } catch (err) {
+      // Re-query: the item was torn down mid-click (dropdown closing).
+      if (attempt === 0) {
+        console.log(`    [retry] select ${label} raced the dropdown close — retrying once`);
+        await page.waitForTimeout(600);
+        continue;
+      }
+      throw err;
+    }
+    // The picker trigger reflects the selected section; a slow render can
+    // lag the click, so poll briefly instead of assuming instantly.
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const t = await pickerLocator(page).textContent().catch(() => "");
+      if ((t ?? "").includes(label)) return;
+      await page.waitForTimeout(120);
+    }
+    if (attempt === 0) {
+      console.log(`    [retry] select ${label} did not stick — retrying once`);
+      continue;
+    }
+    throw new Error(`section picker never showed "${label}" after selecting`);
+  }
 }
 
 
@@ -202,8 +257,14 @@ const TAB_CONTROLS = [
   },
 ];
 
+// Where the crash handler reports from (filled by inspectAdmin/inspectProfile).
+const crashState = { width: "", section: "", url: "" };
+
 async function inspectAdmin(page, widthLabel, width) {
-  await page.goto(`${SITE_URL}/admin`, { waitUntil: "domcontentloaded" });
+  crashState.width = widthLabel;
+  crashState.section = "";
+  crashState.url = `${SITE_URL}/admin`;
+  await gotoWithRetry(page, `${SITE_URL}/admin`);
   await page.waitForSelector(PICKER, { timeout: TIMEOUT });
   // The Fire-tablet pass simulates Silk's font inflation (~1.3x root font
   // scaling) that headless Chrome doesn't reproduce on its own. Every
@@ -218,12 +279,21 @@ async function inspectAdmin(page, widthLabel, width) {
   await measurePage(page, `${widthLabel}: /admin`, check);
 
   // Stats strip: present at every width, and the grid adapts 2/3/5-across
-  // (phones / sm / md+) instead of the old swipe-to-reveal overflow.
+  // (phones / sm / md+) instead of the old swipe-to-reveal overflow. The
+  // strip streams in with the shell, so the 2/3/5 count is polled until
+  // the grid is laid out rather than read on a race.
   const statsGrid = page.locator('div[class*="sm:grid-cols-3"]').first();
-  check(`${widthLabel}: stats strip present`, await statsGrid.isVisible());
-  const statCols = await statsGrid.evaluate(
-    (el) => getComputedStyle(el).gridTemplateColumns.split(" ").length,
-  );
+  const gridDeadline = Date.now() + PANEL_WAIT_MS;
+  let statCols = 0;
+  while (Date.now() < gridDeadline && (await statsGrid.count()) === 0) {
+    await page.waitForTimeout(PANEL_POLL_MS);
+  }
+  check(`${widthLabel}: stats strip present`, (await statsGrid.count()) > 0);
+  if ((await statsGrid.count()) > 0) {
+    statCols = await statsGrid.evaluate(
+      (el) => getComputedStyle(el).gridTemplateColumns.split(" ").length,
+    );
+  }
   const expectedStatCols = statColsAt(width);
   check(
     `${widthLabel}: stats grid ${expectedStatCols}-across (not cramped)`,
@@ -280,6 +350,7 @@ async function inspectAdmin(page, widthLabel, width) {
   // fixed sleep) is what keeps this green on a slow CI runner — the
   // existing browser QA learned that lesson the hard way on the live site.
   for (const { tab, control, empty } of TAB_CONTROLS) {
+    crashState.section = tab;
     await selectSection(page, tab);
     const state = await waitForPanel(page, { control, empty });
     await measurePage(page, `${widthLabel}: ${tab} section`, check);
@@ -438,7 +509,10 @@ async function inspectAdmin(page, widthLabel, width) {
  * tablet geometry is already covered by the pages-inflation QA.
  */
 async function inspectProfile(page, widthLabel) {
-  await page.goto(`${SITE_URL}/u/adminmelrose`, { waitUntil: "domcontentloaded" });
+  crashState.width = widthLabel;
+  crashState.section = "profile";
+  crashState.url = `${SITE_URL}/u/adminmelrose`;
+  await gotoWithRetry(page, `${SITE_URL}/u/adminmelrose`);
   await page.waitForSelector("text=Posts", { timeout: TIMEOUT });
   const stats = await page.evaluate(() => {
     const text = document.body.innerText;
@@ -531,6 +605,7 @@ async function main() {
     });
     for (const [label, width, height] of WIDTHS) {
       console.log(`\n--- ${label} (${width}px) ---`);
+      crashState.width = label;
       await page.setViewportSize({ width, height });
       await inspectAdmin(page, label, width);
       // The corrected-count profile walk: at the desktop stop only.
@@ -545,7 +620,23 @@ async function main() {
   if (reporter.failed > 0) process.exit(1);
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error("\nAdmin responsive QA crashed:", e.message ?? e);
+  console.error(`  at ${crashState.width || "?"}px, section "${crashState.section || "?"}"`);
+  console.error(`  last URL: ${crashState.url || "?"}`);
+  // Capture the failing view for the CI log/artifact so a regression is
+  // identifiable even when the workflow log is the only evidence.
+  try {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(crashState.url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    await page.waitForTimeout(2500);
+    const shot = ".freebuff/admin-responsive-crash.png";
+    await page.screenshot({ path: shot, fullPage: false });
+    console.error(`  screenshot: ${shot}`);
+    await browser.close();
+  } catch (shotErr) {
+    console.error("  (screenshot failed:", String(shotErr.message ?? shotErr).split("\n")[0] + ")");
+  }
   process.exit(1);
 });

@@ -344,7 +344,18 @@ jobs:
         env:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
-        run: npm run qa:admin-responsive
+        # retry-once: this QA walks 50+ live pages; a single transient
+        # network blip on a shared runner must not red the push gate on its
+        # own. A genuine regression fails identically on the second attempt.
+        run: bash scripts/retry-once.sh admin-responsive.log npm run qa:admin-responsive
+      - name: Upload QA log
+        if: always() && env.ADMIN_PASSWORD != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-responsive-log
+          path: admin-responsive.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   pages-inflation-qa:
     name: Page inflation QA
