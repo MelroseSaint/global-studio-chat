@@ -162,6 +162,9 @@ const schema = defineSchema({
   posts: defineTable({
     authorId: v.id("users"),
     content: v.string(),
+    // When the author last edited the post (unix ms). Shown as a small
+    // "edited" note next to the timestamp; absent on new posts.
+    editedAt: v.optional(v.number()),
     media: v.optional(
       v.array(
         v.object({
@@ -431,6 +434,11 @@ const schema = defineSchema({
         ),
         stripped: v.optional(v.boolean()),
         title: v.optional(v.string()),
+        // Voice-note metadata: how long the clip is (seconds, for the
+        // duration chip next to the player) and an optional description
+        // the author typed for the voice note.
+        duration: v.optional(v.number()),
+        description: v.optional(v.string()),
       }),
     ),
   })

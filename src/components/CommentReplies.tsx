@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AudioCommentButton, type CommentAudio } from "@/components/AudioCommentButton";
-import { AudioPlayer } from "@/components/AudioPlayer";
+import { VoiceNote } from "@/components/VoiceNote";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostComposer } from "@/components/SharedPostComposer";
@@ -384,16 +384,10 @@ export function CommentReplies({
                         {r.content}
                       </p>
                       {r.media?.url ? (
-                        <div className="mt-1.5">
-                          <AudioPlayer
-                            track={{
-                              id: `comment:${r.media.key ?? r._id}`,
-                              src: r.media.url,
-                            }}
-                            variant="bare"
-                            className="max-w-xs"
-                          />
-                        </div>
+                        <VoiceNote
+                          media={r.media}
+                          trackId={`comment:${r.media.key ?? r._id}`}
+                        />
                       ) : null}
                       {r.sharedPostId ? (
                         <SharedPostCard postId={r.sharedPostId} />

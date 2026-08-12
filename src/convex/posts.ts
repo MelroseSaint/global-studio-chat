@@ -1569,6 +1569,10 @@ export const addComment = mutation({
         ),
         stripped: v.optional(v.boolean()),
         title: v.optional(v.string()),
+        // Voice-note metadata: measured duration in seconds (for the
+        // duration chip) and an optional description the author typed.
+        duration: v.optional(v.number()),
+        description: v.optional(v.string()),
       }),
     ),
     // Client-side proof-of-work, same scheme as createPost.
@@ -1616,6 +1620,23 @@ export const addComment = mutation({
         throw new Error(
           "Each media item needs either a storage id or a URL.",
         );
+      }
+      // Voice-note metadata: the duration is measured client-side from the
+      // actual clip (0-10 min sanity bound) and the description is short.
+      if (
+        media.duration !== undefined &&
+        (typeof media.duration !== "number" ||
+          !Number.isFinite(media.duration) ||
+          media.duration <= 0 ||
+          media.duration > 600)
+      ) {
+        throw new Error("Voice-note duration must be between 1 second and 10 minutes.");
+      }
+      if (
+        media.description !== undefined &&
+        media.description.length > 300
+      ) {
+        throw new Error("Voice-note description must be 300 characters or fewer.");
       }
       if (hasUrl) {
         const url = media.url ?? "";
@@ -1696,7 +1717,18 @@ export const addComment = mutation({
           content: text,
           parentId,
           ...(sharedPostId !== undefined ? { sharedPostId } : {}),
-          ...(media !== undefined ? { media } : {}),
+          // Voice-note description normalized (trimmed; empty → absent).
+          ...(media !== undefined
+            ? {
+                media:
+                  media.description !== undefined
+                    ? {
+                        ...media,
+                        description: media.description.trim() || undefined,
+                      }
+                    : media,
+              }
+            : {}),
         });
       }
       return { ok: true };
@@ -2077,6 +2109,122 @@ export const deleteComment = mutation({
  * can never be swapped for a blocked one after the fact — and the row is
  * stamped with editedAt so viewers see a small "edited" note.
  */
+export const editPost = mutation({
+  args: {
+    postId: v.id("posts"),
+    content: v.string(),
+    // Client-side proof-of-work, same scheme as createPost/addComment.
+    powChallenge: v.optional(v.string()),
+    powNonce: v.optional(v.string()),
+    powIssuedAt: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    { postId, content, powChallenge, powNonce, powIssuedAt },
+  ) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    await requireProof(powChallenge, powNonce, powIssuedAt);
+    const post = await ctx.db.get(postId);
+    if (post === null) {
+      throw new Error("Post not found");
+    }
+    if (post.authorId !== userId) {
+      throw new Error("You can only edit your own posts.");
+    }
+    const text = content.trim();
+    // Same content rule as createPostInternal: text, or media-only posts
+    // may drop their text entirely (the media stands alone).
+    if (
+      text.length === 0 &&
+      (post.media === undefined || post.media.length === 0)
+    ) {
+      throw new Error("Post must contain text or media.");
+    }
+    if (text.length > 1000) {
+      throw new Error("Post is too long (max 1000 characters).");
+    }
+    // A sandboxed account's post is invisible to everyone else, so its
+    // edits are stored silently without scans or escalation.
+    if (await isSandboxed(ctx, userId)) {
+      await ctx.db.patch(postId, { content: text, editedAt: Date.now() });
+      return { ok: true };
+    }
+    await enforceActive(ctx, userId);
+    // ── Re-scan the replacement text, mirroring createPostInternal ──────
+    const textScan = scanText(text);
+    if (textScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "ai", "ai-blocked");
+      await escalateForAiSpam(ctx, userId);
+      return {
+        ok: false,
+        error:
+          "AI-generated content isn't allowed on PureWire. Say it yourself — in your own words.",
+      };
+    }
+    const phishScan = await scanBlockedContent(ctx, text);
+    if (phishScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "phish-block-post");
+      return {
+        ok: false,
+        error:
+          phishScan.message ??
+          "That looks like a phishing or scam link — nothing on PureWire may try to steal accounts, money, or personal information.",
+      };
+    }
+    const adultScan = scanAdultContent(text);
+    if (adultScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 3, "scam", "adult-solicitation-post");
+      return {
+        ok: false,
+        error: adultScan.message ?? "Sexual solicitation is not allowed on PureWire.",
+      };
+    }
+    const racismScan = scanForRacism(text);
+    if (racismScan.status === "blocked") {
+      await escalateSilently(ctx, userId, 5, "harassment", "racism-block-post");
+      return {
+        ok: false,
+        error: `That can't be posted — ${racismScan.reason}.`,
+      };
+    }
+    // An edit that reads AI-suspicious, phishing-suspicious, or
+    // racism-suspicious routes the post into the human review queue like a
+    // new post would — an edit must not be a way to smuggle content past
+    // the gates that creation enforces.
+    let aiStatus: "clean" | "review" | undefined;
+    let aiStatusReason: string | undefined;
+    if (textScan.status === "review") {
+      aiStatus = "review";
+      aiStatusReason = textScan.reason;
+    }
+    if (phishScan.status === "review") {
+      aiStatus = "review";
+      aiStatusReason = aiStatusReason !== undefined
+        ? `${aiStatusReason} · ${phishScan.reason}`
+        : phishScan.reason;
+    }
+    if (racismScan.status === "review") {
+      aiStatus = "review";
+      aiStatusReason = aiStatusReason !== undefined
+        ? `${aiStatusReason} · ${racismScan.reason}`
+        : racismScan.reason;
+    }
+    // Note: media is not editable through this path — only the text body.
+    // Media-only posts keep their attachments untouched.
+    await ctx.db.patch(postId, {
+      content: text,
+      editedAt: Date.now(),
+      ...(aiStatus !== undefined
+        ? { aiStatus, aiStatusReason }
+        : { aiStatus: "clean" as const, aiStatusReason: undefined }),
+    });
+    return { ok: true };
+  },
+});
+
 export const editComment = mutation({
   args: {
     commentId: v.id("comments"),

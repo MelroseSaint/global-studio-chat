@@ -23,6 +23,10 @@ export interface CommentAudio {
   key?: string;
   kind: "audio";
   title?: string;
+  /** Measured clip length in seconds — shown as a duration chip. */
+  duration?: number;
+  /** Optional author-typed description for the voice note. */
+  description?: string;
 }
 
 /**
@@ -164,6 +168,34 @@ export function AudioCommentButton({
     setRecording(false);
   };
 
+  /**
+   * Measure the clip's real length (seconds) from its bytes — never the
+   * recording timer, so an uploaded file gets an honest duration too.
+   * Returns 0 when the browser can't probe it (the caller then omits
+   * duration rather than shipping a fake one).
+   */
+  const measureDuration = (blob: Blob) =>
+    new Promise<number>((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio();
+      const cleanup = () => {
+        URL.revokeObjectURL(url);
+        audio.src = "";
+      };
+      const fail = (v: number) => {
+        window.clearTimeout(timer);
+        cleanup();
+        resolve(v);
+      };
+      const timer = window.setTimeout(() => fail(0), 5000);
+      audio.onloadedmetadata = () => {
+        const d = audio.duration;
+        fail(Number.isFinite(d) && d > 0 ? d : 0);
+      };
+      audio.onerror = () => fail(0);
+      audio.src = url;
+    });
+
   /** Scan → upload → resolve the stored reference. Shared by record + file. */
   const attach = async (blob: Blob) => {
     setBusy(true);
@@ -174,6 +206,8 @@ export function AudioCommentButton({
         toast.error(verdict.reason);
         return;
       }
+      const duration = await measureDuration(blob);
+      const meta = duration > 0 ? { duration } : {};
       const ticket = await prepareUpload({ contentType: blob.type });
       if (ticket.mode === "convex") {
         const res = await fetch(ticket.uploadUrl, {
@@ -186,6 +220,7 @@ export function AudioCommentButton({
         onChange({
           storageId: storageId as Id<"_storage">,
           kind: "audio",
+          ...meta,
         });
       } else {
         const form = new FormData();
@@ -211,6 +246,7 @@ export function AudioCommentButton({
             url: parsed.secure_url,
             key: parsed.public_id,
             kind: "audio",
+            ...meta,
           });
         } else {
           // Resilience, same as the post composer: a Cloudinary failure
@@ -228,6 +264,7 @@ export function AudioCommentButton({
           onChange({
             storageId: storageId as Id<"_storage">,
             kind: "audio",
+            ...meta,
           });
         }
       }
@@ -259,21 +296,36 @@ export function AudioCommentButton({
 
   if (value !== null && src !== null) {
     return (
-      <div className="flex w-full items-center gap-1.5">
-        <AudioPlayer
-          track={{ id: `comment:${value.key ?? value.storageId}`, src }}
-          variant="bare"
-          className="min-w-0 flex-1"
+      <div className="flex w-full flex-col gap-1.5">
+        <div className="flex w-full items-center gap-1.5">
+          <AudioPlayer
+            track={{ id: `comment:${value.key ?? value.storageId}`, src }}
+            variant="bare"
+            className="min-w-0 flex-1"
+          />
+          <button
+            type="button"
+            onClick={remove}
+            disabled={busy}
+            aria-label="Remove voice note"
+            className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:text-destructive"
+          >
+            <Trash2 className="size-4" />
+          </button>
+        </div>
+        <input
+          type="text"
+          // Controlled by the parent-owned media object (the author's typed
+          // description rides the same onChange path as the rest of the
+          // item), so an edit prefills exactly what was stored.
+          value={value.description ?? ""}
+          onChange={(e) => {
+            onChange({ ...value, description: e.target.value });
+          }}
+          maxLength={300}
+          placeholder="Add a description to this voice note (optional)"
+          className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-xs outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
         />
-        <button
-          type="button"
-          onClick={remove}
-          disabled={busy}
-          aria-label="Remove voice note"
-          className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:text-destructive"
-        >
-          <Trash2 className="size-4" />
-        </button>
       </div>
     );
   }

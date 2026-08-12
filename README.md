@@ -114,8 +114,25 @@ Commenting is a first-class conversation surface, not a redirect:
   audio file (under 10 MB) in any comment composer — popup, post page, or
   inline replies. The clip is scanned for AI/deepfake markers before
   upload, stored in Cloudinary (Convex holds only the reference), and
-  plays back in the thread with the native PureWire audio player. A
-  voice-note-only comment is allowed — empty husks are not.
+  plays back in the thread with the native PureWire audio player. Each
+  voice note shows a measured **duration chip** (e.g. `0:42`) next to the
+  player and can carry an optional **description** typed by the author,
+  rendered beneath the player. A voice-note-only comment is allowed —
+  empty husks are not.
+- **Audio post titles** — audio posts carry an optional title (the
+  author's chosen text always wins over file metadata) shown prominently
+  above the post's player.
+
+## Editing content
+
+- **Posts** — the original poster can edit a post's text body from the
+  card's overflow menu (media and the creator disclosure stay as posted).
+  Edits are re-scanned through the same AI / blocklist / adult / racism
+  gates as new posts — an edit is never a way to smuggle content past
+  moderation — and the card shows a small **"· edited"** note next to the
+  timestamp.
+- **Comments** — the author can edit their own comments from the comment
+  menu; voice notes stay attached, and the thread shows an "edited" note.
 
 ## Sharing posts
 
@@ -354,9 +371,10 @@ config change, not a code change.
 
 **Comment voice notes** — comment audio follows the exact same pipeline:
 record or attach, scan, upload to Cloudinary, store only the reference,
-play back with the native player. The data export resolves these
-references to downloadable URLs and drops them in the ZIP alongside the
-post media.
+play back with the native player. Each clip also records its measured
+length (the duration chip) and optional description alongside the
+reference. The data export resolves these references to downloadable URLs
+and drops them in the ZIP alongside the post media.
 
 ## Privacy & security
 

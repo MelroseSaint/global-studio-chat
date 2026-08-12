@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { CommentDialog } from "@/components/CommentDialog";
+import { EditPostDialog } from "@/components/EditPostDialog";
 import { LinkCard } from "@/components/LinkCard";
 import { MessageDialog } from "@/components/MessageDialog";
 import { ReportDialog } from "@/components/ReportDialog";
@@ -77,6 +78,9 @@ export interface PostItem {
   _creationTime: number;
   authorId: Id<"users">;
   content: string;
+  // When the author last edited the post (unix ms) — shows the small
+  // "edited" note next to the timestamp.
+  editedAt?: number | null;
   media?: {
     storageId: Id<"_storage">;
     kind: "image" | "video" | "audio";
@@ -157,6 +161,7 @@ export function PostCard({
   const [commentCount, setCommentCount] = useState(post.commentCount);
   const [shareCount, setShareCount] = useState(post.shareCount);
   const [commentOpen, setCommentOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   // Remember the last (post, server-count) pair we adopted so we can tell
   // when the query catches up — or the card moves to a different post. On
@@ -350,6 +355,11 @@ export function PostCard({
               <span className="truncate">@{post.author?.username}</span>
               <span className="shrink-0">·</span>
               <span className="shrink-0">{timeAgo(post._creationTime)}</span>
+              {post.editedAt ? (
+                <span className="shrink-0 text-muted-foreground">
+                  · edited
+                </span>
+              ) : null}
             </span>
           </div>
           <DropdownMenu>
@@ -383,6 +393,14 @@ export function PostCard({
                       {post.autoCloseComments
                         ? "Auto-close comments"
                         : "Keep comments open"}
+                    </DropdownMenuItem>
+                  )}
+                  {isMine && (
+                    <DropdownMenuItem
+                      onClick={() => setEditOpen(true)}
+                    >
+                      <Pencil className="size-4" />
+                      Edit post
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem onClick={() => void handleDelete()}>
@@ -583,6 +601,13 @@ export function PostCard({
         onOpenChange={setCommentOpen}
         onCommented={() => setCommentCount((c) => c + 1)}
         onCommentDeleted={() => setCommentCount((c) => Math.max(0, c - 1))}
+      />
+
+      <EditPostDialog
+        postId={post._id}
+        initialContent={post.content}
+        open={editOpen}
+        onOpenChange={setEditOpen}
       />
 
       <ReportDialog

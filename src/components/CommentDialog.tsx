@@ -20,7 +20,7 @@ import { toast } from "sonner";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AudioCommentButton, type CommentAudio } from "@/components/AudioCommentButton";
-import { AudioPlayer } from "@/components/AudioPlayer";
+import { VoiceNote } from "@/components/VoiceNote";
 import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { autoClosePolicyPhrase } from "@/lib/comment-policy";
@@ -232,16 +232,10 @@ function CommentPreview({
                         {c.content}
                       </p>
                       {c.media?.url ? (
-                        <div className="mt-1.5">
-                          <AudioPlayer
-                            track={{
-                              id: `comment:${c.media.key ?? c._id}`,
-                              src: c.media.url,
-                            }}
-                            variant="bare"
-                            className="max-w-xs"
-                          />
-                        </div>
+                        <VoiceNote
+                          media={c.media}
+                          trackId={`comment:${c.media.key ?? c._id}`}
+                        />
                       ) : null}
                       {c.sharedPostId ? (
                         <SharedPostCard postId={c.sharedPostId} />
