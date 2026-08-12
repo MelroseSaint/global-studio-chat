@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Nightly full-suite run: the heavy browser QAs (admin-responsive) only
+  # execute here and on workflow_dispatch — push runs keep the fast static
+  # checks + harness QAs only, so the live-site I/O on the Convex free-plan
+  # budget stays bounded. Offset past the healthcheck's 03:00 UTC window.
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
 
 concurrency:
   # On push events, share the admin-account-push group with
@@ -378,6 +385,12 @@ jobs:
     # The browser QAs sign in on production with the admin password. When
     # the secret isn't configured the job SKIPS cleanly (green) instead of
     # failing every push — same gate the original single-job design used.
+    #
+    # Heaviest live browser E2E (50+ page navigations across 5 widths):
+    # nightly + manual only (schedule at 04:30 UTC + workflow_dispatch),
+    # so push runs don't burn the free-plan database-I/O budget walking the
+    # whole admin dashboard once per commit.
+    if: github.event_name != 'push' && github.event_name != 'pull_request'
     env:
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
     steps:

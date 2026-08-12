@@ -90,6 +90,12 @@ jobs:
     name: Sign-up + reset auth loop
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Heaviest live E2E (real signup + email verification + reset loop):
+    # nightly + manual only, so push runs stay lean on the Convex free-plan
+    # database-I/O budget. The push gate keeps the fast guards and harness
+    # QAs; this suite of browser E2Es runs on the 03:00 UTC schedule and on
+    # workflow_dispatch.
+    if: github.event_name != 'push'
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -1661,6 +1667,10 @@ jobs:
     name: DM share E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Heavy browser E2E — nightly + manual only (see the auth-loop note).
+    # The chain continues past it via blocklist-sync → shared-video-autoplay,
+    # so the downstream harness checks still run on push.
+    if: github.event_name != 'push'
     needs: shared-video-autoplay
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
@@ -1783,6 +1793,8 @@ jobs:
     name: Comment share E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Heavy browser E2E — nightly + manual only (see the auth-loop note).
+    if: github.event_name != 'push'
     needs: dm-share-qa
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
@@ -1906,6 +1918,8 @@ jobs:
     name: Post-author comment deletion E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Heavy browser E2E — nightly + manual only (see the auth-loop note).
+    if: github.event_name != 'push'
     needs: comment-share
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
@@ -2024,7 +2038,11 @@ jobs:
     name: Blocklist feed sync
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: post-author-delete
+    # Rewired past the nightly-only browser E2Es (dm-share → comment-share
+    # → post-author-delete all carry if: github.event_name != 'push'): this
+    # harness check must still run on push, and it only needs the
+    # serialization guarantee of the shared-video-autoplay step before it.
+    needs: shared-video-autoplay
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
