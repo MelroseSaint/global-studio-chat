@@ -1,6 +1,7 @@
 import { useMutation, usePaginatedQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
+  Activity,
   Database,
   Eye,
   Globe,
@@ -135,6 +136,22 @@ export function Support() {
           rules, and your data controls are documented on the{" "}
           <Link to="/about" className="text-primary hover:underline">
             About page
+          </Link>
+          .
+        </p>
+      </div>
+
+      {/* System status — the live health check, one tap away */}
+      <div className="flex items-start gap-2.5 rounded-xl border border-l-[3px] border-l-primary/60 bg-primary/5 px-3 py-2.5 text-sm">
+        <Activity className="mt-0.5 size-4 shrink-0 text-primary" />
+        <p className="leading-snug text-muted-foreground">
+          <span className="font-semibold text-foreground">
+            Is PureWire up right now?
+          </span>{" "}
+          Check the platform&apos;s live health — latency, community totals,
+          and the last check time — on the{" "}
+          <Link to="/status" className="text-primary hover:underline">
+            System status page
           </Link>
           .
         </p>

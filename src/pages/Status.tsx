@@ -1,13 +1,16 @@
 import { useQuery } from "convex/react";
 import {
   Activity,
+  ArrowLeft,
   CheckCircle2,
   Database,
   MessagesSquare,
   Users,
 } from "lucide-react";
+import { useLocation, useNavigate } from "react-router";
 
 import { api } from "@/convex/_generated/api";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 function formatCount(n: number | undefined): string {
@@ -19,9 +22,34 @@ function formatCount(n: number | undefined): string {
 
 export function Status() {
   const status = useQuery(api.status.systemStatus);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Always offer a way back — a visitor who lands here from a link (or
+  // deep-link) is never stuck on a dead-end page. React Router marks the
+  // very first entry with location.key "default"; when there's no history
+  // to step back through, fall back to the platform home instead of
+  // closing/reopening the app.
+  const goBack = () => {
+    if (location.key !== "default" && window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate("/");
+    }
+  };
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={goBack}
+        className="-ml-2 mb-2 gap-1.5 text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="size-4" />
+        Back
+      </Button>
       <div className="flex items-center gap-2">
         <Activity className="size-5 text-emerald-500" />
         <h1 className="text-xl font-bold">System status</h1>

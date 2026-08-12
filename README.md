@@ -451,7 +451,10 @@ and drops them in the ZIP alongside the post media.
   posts, comments, engagement, stories, and auth records; nothing of yours
   lingers (the QA harness runs the same `eraseAccount` cascade)
 - **Public system status** — `/status` shows live backend latency and
-  platform totals, no account needed
+  platform totals, no account needed. It is linked from the Landing
+  footer, About, and Help & Support, and always offers a **Back** button
+  (stepping to the previous page, or home on a direct visit) so nobody is
+  ever stranded on the page
 - **Admin announcements** — categorized, dismissible home-page banners,
   optionally scheduled to auto-activate at a future date, with a live
   preview in the composer
