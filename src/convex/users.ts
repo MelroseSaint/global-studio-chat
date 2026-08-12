@@ -584,6 +584,28 @@ export const setVideoAutoplay = mutation({
 });
 
 /**
+ * The member's explicit profile-type declaration: "creator" or "user".
+ * Changeable any time from Settings — the badge updates immediately
+ * everywhere (the field rides the users doc every surface reads). Changing
+ * it never touches content, followers, or history. Absent until chosen:
+ * the onboarding prompt requires the selection before it can be dismissed.
+ */
+export const setProfileType = mutation({
+  args: {
+    profileType: v.union(v.literal("creator"), v.literal("user")),
+  },
+  handler: async (ctx, { profileType }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new Error("Not authenticated");
+    }
+    await enforceActive(ctx, userId);
+    await ctx.db.patch(userId, { profileType });
+    return { ok: true };
+  },
+});
+
+/**
  * Granular DM permission: who may open a conversation with this user.
  * Enforced in dms.openConversation BEFORE any key derivation.
  */

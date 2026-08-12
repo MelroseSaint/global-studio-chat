@@ -35,6 +35,7 @@ import {
   RichText,
   SharedPostEmbed,
 } from "@/components/SharedPostEmbed";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { useVideoAutoplay } from "@/lib/video-autoplay";
@@ -64,6 +65,7 @@ export interface PostMedia {
 }
 
 interface PostAuthor {
+  profileType?: string | null;
   _id: Id<"users">;
   name?: string | null;
   username?: string | null;
@@ -351,6 +353,10 @@ export function PostCard({
             {post.author?.verified ? (
               <VerifiedBadge className="shrink-0" />
             ) : null}
+            <ProfileTypeBadge
+              profileType={post.author?.profileType}
+              className="shrink-0"
+            />
             <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
               <span className="truncate">@{post.author?.username}</span>
               <span className="shrink-0">·</span>

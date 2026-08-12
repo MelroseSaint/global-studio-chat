@@ -6,6 +6,7 @@ import { Link } from "react-router";
 
 import { api } from "@/convex/_generated/api";
 import { FollowButton } from "@/components/FollowButton";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { Empty } from "@/components/ui/empty";
@@ -80,6 +81,10 @@ export function Explore() {
                   <div className="min-w-0">
                     <p className="flex items-center gap-1 truncate font-semibold">
                       {u.name || u.username}
+                      <ProfileTypeBadge
+                        profileType={u.profileType}
+                        className="shrink-0"
+                      />
                       {u.verified ? <VerifiedBadge className="shrink-0" /> : null}
                     </p>
                     <p className="truncate text-sm text-muted-foreground">
@@ -136,6 +141,10 @@ export function Explore() {
                   <div className="min-w-0">
                     <p className="flex items-center gap-1 truncate font-semibold">
                       {u.name || u.username}
+                      <ProfileTypeBadge
+                        profileType={u.profileType}
+                        className="shrink-0"
+                      />
                       {u.verified ? <VerifiedBadge className="shrink-0" /> : null}
                     </p>
                     <p className="truncate text-sm text-muted-foreground">

@@ -47,6 +47,15 @@ const schema = defineSchema({
       ),
     ),
     aiEvidence: v.optional(v.any()),
+    // The account's explicit self-identification: "creator" (publishes
+    // original content) or "user" (browses/interacts). A constrained value
+    // — never arbitrary text. Absent until the member chooses; the app
+    // prompts until they do (no silent assignment). Purely a declaration:
+    // it implies nothing about verification, originality, or activity, and
+    // the originality/AI/spam systems operate independently of it.
+    profileType: v.optional(
+      v.union(v.literal("creator"), v.literal("user")),
+    ),
     links: v.optional(
       v.array(
         v.object({

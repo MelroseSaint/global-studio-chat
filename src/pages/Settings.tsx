@@ -8,10 +8,12 @@ import {
   LogOut,
   MapPin,
   MessageSquare,
+  Palette,
   Plus,
   Save,
   ShieldCheck,
   Trash2,
+  UserRound,
   VolumeX,
   X,
 } from "lucide-react";
@@ -95,6 +97,7 @@ function SettingsForm({ user }: { user: Profile }) {
   // inline video: the main feed's cards and the shared-post previews.
   const { autoplay, preference, setPreference } = useVideoAutoplay();
   const updateProfile = useMutation(api.users.updateProfile);
+  const setProfileType = useMutation(api.users.setProfileType);
   const deleteAccount = useMutation(api.account.deleteAccount);
   const currentSession = useQuery(api.account.getCurrentSession);
   const signOutOtherSessions = useMutation(api.account.signOutOtherSessions);
@@ -113,6 +116,22 @@ function SettingsForm({ user }: { user: Profile }) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [endingSessions, setEndingSessions] = useState(false);
+
+  // Profile-type declaration: saved immediately on selection — the badge
+  // updates everywhere the moment it lands (the reactive user doc drives
+  // every surface). Changing it never touches content or relationships.
+  const saveProfileType = async (profileType: "creator" | "user") => {
+    try {
+      await setProfileType({ profileType });
+      toast.success(
+        profileType === "creator"
+          ? "Profile type updated — your profile now shows the CREATOR badge."
+          : "Profile type updated — your profile now shows the USER badge.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update profile type.");
+    }
+  };
 
   // Personal keyword muting.
   const saveMutesMutation = useMutation(api.mutes.setMutedKeywords);
@@ -454,6 +473,74 @@ function SettingsForm({ user }: { user: Profile }) {
               />
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Profile type</CardTitle>
+          <CardDescription>
+            How you identify your profile. This is your own declaration — it
+            never affects your content, followers, or history, and you can
+            change it any time.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => void saveProfileType("creator")}
+              aria-pressed={user.profileType === "creator"}
+              className={cn(
+                "flex items-start gap-2.5 rounded-xl border p-3.5 text-left transition-colors",
+                user.profileType === "creator"
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                  : "border-border hover:border-primary/40 hover:bg-muted/40",
+              )}
+            >
+              <Palette className="mt-0.5 size-4.5 shrink-0 text-primary" />
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold">Creator</span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+                  I create and publish original content.
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveProfileType("user")}
+              aria-pressed={user.profileType === "user"}
+              className={cn(
+                "flex items-start gap-2.5 rounded-xl border p-3.5 text-left transition-colors",
+                user.profileType === "user"
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                  : "border-border hover:border-primary/40 hover:bg-muted/40",
+              )}
+            >
+              <UserRound className="mt-0.5 size-4.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold">User</span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+                  I primarily use PureWire to discover, interact, and
+                  participate.
+                </span>
+              </span>
+            </button>
+          </div>
+          {user.profileType ? (
+            <p className="text-xs text-muted-foreground">
+              Your profile shows the{" "}
+              <span className="font-medium text-foreground">
+                {user.profileType === "creator" ? "CREATOR" : "USER"}
+              </span>{" "}
+              badge next to your name. Creator is not a verified badge, and
+              User is not a restricted one.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              You haven&apos;t chosen yet — pick one above to show your badge.
+            </p>
+          )}
         </CardContent>
       </Card>
 

@@ -48,6 +48,13 @@ Beyond this README, the repo keeps its knowledge structured:
 - **Real people** — email verification at signup, verified badges for
   notable accounts, and no guest accounts. Sign in with your password;
   one-time email codes verify your account and secure password resets.
+- **Profile identity, your declaration** — every account picks a profile
+  type (**Creator** or **User**) during onboarding; the choice is required,
+  never assigned silently, and changeable any time in Settings. A small
+  badge next to the name shows the declaration across profiles, posts,
+  comments, replies, search results, follow lists, and messaging — and it
+  implies nothing about verification, originality, fame, or endorsement
+  (those stay separate systems).
 - **Sessions persist until you sign out** (up to 10 years) — PureWire does
   not log you out automatically.
 - **No algorithm, your choice** — the feed is **Global, Following, Latest,

@@ -17,6 +17,7 @@ import { NavLink, Outlet, useNavigate } from "react-router";
 import { api } from "@/convex/_generated/api";
 import { AudioPlayerShortcuts, MiniPlayer } from "@/components/MiniPlayer";
 import { PageLoader } from "@/components/PageLoader";
+import { ProfileTypePrompt } from "@/components/ProfileTypePrompt";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -557,6 +558,16 @@ export function AppLayout() {
           Mounted in the shell so listening survives navigation. */}
       <MiniPlayer />
       <AudioPlayerShortcuts />
+
+      {/* Required profile-type declaration: every signed-in member whose
+          profileType is unset (new signups and existing accounts alike)
+          picks Creator or User before this can be dismissed — nothing is
+          assigned silently. Dismissal and Escape are blocked; the choice
+          lands via setProfileType and the reactive user doc unmounts it. */}
+      <ProfileTypePrompt
+        open={user != null && user.profileType === undefined}
+        onOpenChange={() => {}}
+      />
       </div>
     </TooltipProvider>
   );

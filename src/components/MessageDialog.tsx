@@ -20,6 +20,7 @@ import { solveChallenge } from "@/lib/pow";
 import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import type { PostItem } from "@/components/PostCard";
 import { SharedPostEmbed } from "@/components/SharedPostEmbed";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,7 @@ interface Conversation {
     username?: string | null;
     avatarUrl?: string | null;
     verified?: boolean;
+    profileType?: string | null;
     dmPublicKey?: string | null;
   } | null;
 }
@@ -358,6 +360,7 @@ export function MessageDialog({
                       <span className="min-w-0">
                         <span className="flex items-center gap-1 truncate text-sm font-semibold">
                           {result.name || result.username}
+                          <ProfileTypeBadge profileType={result.profileType} />
                           {result.verified ? (
                             <VerifiedBadge className="size-4" />
                           ) : null}
@@ -393,6 +396,7 @@ export function MessageDialog({
                         <span className="truncate text-sm font-semibold">
                           {peerName(c)}
                         </span>
+                        <ProfileTypeBadge profileType={c.peer?.profileType} />
                         {c.peer?.verified ? (
                           <VerifiedBadge className="size-4" />
                         ) : null}

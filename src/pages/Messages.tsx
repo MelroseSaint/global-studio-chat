@@ -31,6 +31,7 @@ import { solveChallenge } from "@/lib/pow";
 import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostEmbed } from "@/components/SharedPostEmbed";
 import type { PostItem } from "@/components/PostCard";
@@ -71,6 +72,7 @@ interface Conversation {
     username?: string | null;
     avatarUrl?: string | null;
     verified?: boolean;
+    profileType?: string | null;
     dmPublicKey?: string | null;
   } | null;
 }
@@ -653,6 +655,7 @@ export function Messages() {
                       <span className="truncate text-sm font-semibold">
                         {peerName(c)}
                       </span>
+                      <ProfileTypeBadge profileType={c.peer?.profileType} />
                       {c.peer?.verified ? <VerifiedBadge className="size-4" /> : null}
                       <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                         {timeAgo(c.lastMessageAt)}
@@ -718,6 +721,7 @@ export function Messages() {
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1 truncate text-sm font-semibold">
                     {peerName(activeConv)}
+                    <ProfileTypeBadge profileType={activeConv.peer?.profileType} />
                     {activeConv.peer?.verified ? (
                       <VerifiedBadge className="size-4" />
                     ) : null}
@@ -1118,6 +1122,7 @@ export function Messages() {
                     <span className="min-w-0">
                       <span className="flex items-center gap-1 truncate text-sm font-semibold">
                         {result.name || result.username}
+                        <ProfileTypeBadge profileType={result.profileType} />
                         {result.verified ? <VerifiedBadge className="size-4" /> : null}
                       </span>
                       <span className="truncate text-xs text-muted-foreground">

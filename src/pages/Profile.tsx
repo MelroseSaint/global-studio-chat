@@ -14,6 +14,7 @@ import { MessageDialog } from "@/components/MessageDialog";
 import { FollowsList, type FollowsTab } from "@/components/FollowsList";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { UserAvatar } from "@/components/UserAvatar";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -192,13 +193,9 @@ export function Profile() {
           <h1 className="flex items-center gap-1.5 text-xl font-bold tracking-tight">
             {profile.name || profile.username}
             {profile.verified ? <VerifiedBadge className="shrink-0" /> : null}
+            <ProfileTypeBadge profileType={profile.profileType} className="shrink-0" />
           </h1>
           <p className="text-sm text-muted-foreground">@{profile.username}</p>
-          {profile.role === "creator" && (
-            <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">
-              ✦ Creator
-            </p>
-          )}
         </div>
 
         {profile.bio ? (

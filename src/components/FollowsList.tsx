@@ -6,6 +6,7 @@ import { Link } from "react-router";
 
 import { api } from "@/convex/_generated/api";
 import { FollowButton } from "@/components/FollowButton";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import {
@@ -77,6 +78,7 @@ export function FollowsList({
     username?: string | null;
     name?: string | null;
     verified?: boolean;
+    profileType?: string | null;
     avatarUrl?: string | null;
     isFollowing: boolean;
     isViewer: boolean;
@@ -172,6 +174,10 @@ export function FollowsList({
                     <div className="min-w-0">
                       <p className="flex items-center gap-1 truncate font-semibold">
                         {person.name || person.username}
+                        <ProfileTypeBadge
+                          profileType={person.profileType}
+                          className="shrink-0"
+                        />
                         {person.verified ? <VerifiedBadge className="shrink-0" /> : null}
                       </p>
                       <p className="truncate text-sm text-muted-foreground">

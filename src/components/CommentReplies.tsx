@@ -18,6 +18,7 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { AudioCommentButton, type CommentAudio } from "@/components/AudioCommentButton";
 import { VoiceNote } from "@/components/VoiceNote";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostComposer } from "@/components/SharedPostComposer";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -40,6 +41,7 @@ interface ReplyComment {
     username?: string | null;
     avatarUrl?: string | null;
     verified?: boolean | null;
+    profileType?: string | null;
   } | null;
   content: string;
   _creationTime: number;
@@ -335,12 +337,16 @@ export function CommentReplies({
                   ) : (
                     <div className="group rounded-2xl rounded-tl-sm bg-muted/40 px-3 py-2">
                       <div className="flex items-start justify-between gap-1">
-                        <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-xs">
+                        <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs">
                           <span className="font-semibold">
                             {r.author?.name ||
                               r.author?.username ||
                               "Unknown"}
                           </span>
+                          <ProfileTypeBadge
+                            profileType={r.author?.profileType}
+                            className="shrink-0"
+                          />
                           <span className="text-[11px] text-muted-foreground">
                             {timeAgo(r._creationTime)}
                             {r.editedAt ? " · edited" : ""}

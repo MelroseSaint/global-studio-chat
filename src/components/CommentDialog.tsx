@@ -23,6 +23,7 @@ import { AudioCommentButton, type CommentAudio } from "@/components/AudioComment
 import { VoiceNote } from "@/components/VoiceNote";
 import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { autoClosePolicyPhrase } from "@/lib/comment-policy";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
 import type { PostItem } from "@/components/PostCard";
@@ -62,6 +63,7 @@ interface PreviewComment {
     username?: string | null;
     avatarUrl?: string | null;
     verified?: boolean | null;
+    profileType?: string | null;
   } | null;
   content: string;
   _creationTime: number;
@@ -219,10 +221,14 @@ function CommentPreview({
                 ) : (
                   <div className="group flex items-start gap-1 rounded-2xl rounded-tl-sm bg-muted/60 px-3 py-2">
                     <div className="min-w-0 flex-1">
-                      <p className="flex flex-wrap items-baseline gap-x-1.5 text-xs">
+                      <p className="flex flex-wrap items-center gap-x-1.5 text-xs">
                         <span className="font-semibold">
                           {c.author?.name || c.author?.username || "Unknown"}
                         </span>
+                        <ProfileTypeBadge
+                          profileType={c.author?.profileType}
+                          className="shrink-0"
+                        />
                         <span className="text-[11px] text-muted-foreground">
                           {timeAgo(c._creationTime)}
                           {c.editedAt ? " · edited" : ""}

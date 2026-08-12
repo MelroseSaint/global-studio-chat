@@ -26,6 +26,7 @@ import { VoiceNote } from "@/components/VoiceNote";
 import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
+import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { PostCard, type PostItem } from "@/components/PostCard";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostComposer } from "@/components/SharedPostComposer";
@@ -280,6 +281,7 @@ export function PostDetail() {
       username?: string | null;
       avatarUrl?: string | null;
       verified?: boolean | null;
+      profileType?: string | null;
     } | null;
     content: string;
     _creationTime: number;
@@ -576,8 +578,12 @@ export function PostDetail() {
                 </div>
               ) : (
                 <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-2.5">
-                  <p className="flex flex-wrap items-baseline gap-x-1.5 text-sm font-semibold">
+                  <p className="flex flex-wrap items-center gap-x-1.5 text-sm font-semibold">
                     {c.author?.name || c.author?.username || "Unknown"}
+                    <ProfileTypeBadge
+                      profileType={c.author?.profileType}
+                      className="shrink-0"
+                    />
                     {c.editedAt ? (
                       <span className="text-[11px] font-normal text-muted-foreground">
                         · edited
