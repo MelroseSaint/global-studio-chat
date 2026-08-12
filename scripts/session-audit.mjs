@@ -65,8 +65,9 @@ async function main() {
   const horizonYears = report.horizonMs / (1000 * 60 * 60 * 24 * 365);
 
   console.log(
-    `Checked ${report.sessions} sessions and ${report.tokens} refresh tokens — ` +
-      `any row expiring within ${horizonYears} year is a violation.\n`,
+    `Scanned ${report.sessions} at-risk sessions and ${report.tokens} at-risk ` +
+      `refresh tokens (rows expiring within ${horizonYears} year) — any ` +
+      `non-exempt one is a violation.\n`,
   );
 
   if (report.violations.length === 0) {

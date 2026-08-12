@@ -444,7 +444,10 @@ jobs:
       - run: npm ci
       - name: Probe Cloudinary upload pipeline
         env:
-          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          # Cloud name with the same fallback the healthcheck uses: it can
+          # live in a variable OR secret OR default to the production cloud
+          # — a missing CLOUDINARY_CLOUD_NAME secret must not red the gate.
+          CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME || secrets.CLOUDINARY_CLOUD_NAME || 'saintscloud' }}
           CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}

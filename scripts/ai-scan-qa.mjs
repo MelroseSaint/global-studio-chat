@@ -33,6 +33,18 @@ registerHooks({
     if (specifier.startsWith("@/")) {
       target = new URL(`../src/${specifier.slice(2)}`, import.meta.url);
     } else if (specifier.startsWith("./")) {
+      // Let Node's own resolution try FIRST with the original specifier:
+      // dependency CJS files do `require('./lib/encoder')` and Node appends
+      // `.js` correctly when the specifier stays relative (remapping it to
+      // an absolute file:// URL would break that and throw MODULE_NOT_FOUND
+      // even though the file exists). Only when default resolution fails —
+      // i.e. OUR extensionless TS imports — do we remap and probe
+      // extensions explicitly.
+      try {
+        return nextResolve(specifier, context);
+      } catch {
+        // fall through to the extension probe below
+      }
       target = new URL(specifier, baseUrl);
     } else {
       return nextResolve(specifier, context);

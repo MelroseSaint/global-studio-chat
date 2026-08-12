@@ -168,6 +168,29 @@ const schema = defineSchema({
     .index("phone", ["phone"])
     .index("by_username", ["username"])
     .index("by_account_status", ["accountStatus"]),
+  // authSessions/authRefreshTokens are re-declared (overriding authTables)
+  // ONLY to add the by_expirationTime index the permanent-session audit
+  // needs. Everything else — field shapes and the auth library's original
+  // index names — is preserved verbatim so auth keeps working.
+  authSessions: defineTable({
+    userId: v.id("users"),
+    expirationTime: v.number(),
+  })
+    .index("userId", ["userId"])
+    .index("by_expirationTime", ["expirationTime"]),
+  authRefreshTokens: defineTable({
+    sessionId: v.id("authSessions"),
+    expirationTime: v.number(),
+    firstUsedTime: v.optional(v.number()),
+    // This is the ID of the refresh token that was exchanged to create this one.
+    parentRefreshTokenId: v.optional(v.id("authRefreshTokens")),
+  })
+    .index("sessionId", ["sessionId"])
+    .index("sessionIdAndParentRefreshTokenId", [
+      "sessionId",
+      "parentRefreshTokenId",
+    ])
+    .index("by_expirationTime", ["expirationTime"]),
   posts: defineTable({
     authorId: v.id("users"),
     content: v.string(),

@@ -61,10 +61,10 @@ function requireHarness(secret: string): void {
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days, like the auth library
 const TOKEN_TTL_MS = 1000 * 60 * 60; // 1 hour, like the auth library
 
-// The permanent-session horizon used by the migration below: 10 years,
-// matching the `session` config in convex/auth.ts. Sessions are meant to
-// last until the user signs out — never a timeout.
-const SESSION_HORIZON_MS = 1000 * 60 * 60 * 24 * 365 * 10;
+// The permanent-session horizon is now passed in by the runner script
+// (scripts/extend-sessions.mjs computes it once so every batch converges
+// on the same timestamp); it matches the `session` config in convex/auth.ts.
+// Sessions are meant to last until the user signs out — never a timeout.
 
 /** Insert an authSessions row and sign a JWT for it, mirroring tokens.js. */
 async function mintSession(
@@ -513,10 +513,16 @@ export const mintSessionForQaUsername = mutation({
  * harmless. Gated by the same two env gates as the rest of the module.
  */
 export const extendSessionLifetimes = mutation({
-  args: { secret: v.string() },
-  handler: async (ctx, { secret }) => {
+  // horizonMs is REQUIRED and fixed by the runner: the mutation patches
+  // rows to exactly this timestamp, and the runner re-queries with the
+  // SAME horizon each pass so patched rows drop out of the `lt` range and
+  // the migration converges. A fresh Date.now() per call would re-find
+  // every row it just patched (the horizon moves forward a few ms each
+  // call) and loop forever.
+  args: { secret: v.string(), horizonMs: v.number() },
+  handler: async (ctx, { secret, horizonMs }) => {
     try {
-      return await extendSessionLifetimesImpl(ctx, secret);
+      return await extendSessionLifetimesImpl(ctx, secret, horizonMs);
     } catch (e) {
       // Convex masks plain Error messages as "Server Error"; rethrow as a
       // ConvexError so the runner script reports the real reason.
@@ -525,16 +531,35 @@ export const extendSessionLifetimes = mutation({
   },
 });
 
+// A mutation may read at most 4096 documents, and extending a session row
+// costs a read + a write — so each call extends a BOUNDED batch and the
+// runner script loops until every short-lived row is converged (done).
+const EXTEND_BATCH = 300;
+
 async function extendSessionLifetimesImpl(
   ctx: MutationCtx,
   secret: string,
-): Promise<{ sessions: number; tokens: number; prefs: number }> {
+  horizon: number,
+): Promise<{
+  sessions: number;
+  tokens: number;
+  prefs: number;
+  done: boolean;
+}> {
   requireHarness(secret);
-  const horizon = Date.now() + SESSION_HORIZON_MS;
-  const sessions = await extendTable(ctx, "authSessions", horizon);
-  const tokens = await extendTable(ctx, "authRefreshTokens", horizon);
-  const prefs = await sweepOrphanPrefs(ctx);
-  return { sessions, tokens, prefs };
+  const sessions = await extendBatch(ctx, "authSessions", horizon);
+  const tokens = await extendBatch(ctx, "authRefreshTokens", horizon);
+  // Sweep orphaned prefs only once the extension itself is fully converged
+  // (the last batch) so a mid-migration run never misses newly-orphaned
+  // prefs from rows it is about to extend.
+  const prefs =
+    sessions < EXTEND_BATCH && tokens < EXTEND_BATCH
+      ? await sweepOrphanPrefs(ctx)
+      : 0;
+  // A batch smaller than the cap means that table has no rows left short
+  // of the horizon — both tables converged => the migration is done.
+  const done = sessions < EXTEND_BATCH && tokens < EXTEND_BATCH;
+  return { sessions, tokens, prefs, done };
 }
 
 /**
@@ -545,6 +570,10 @@ async function extendSessionLifetimesImpl(
  * sessions that still exist).
  */
 async function sweepOrphanPrefs(ctx: MutationCtx): Promise<number> {
+  // sessionPrefs only ever holds opt-out rows (a tiny subset), but keep the
+  // same bounded walk discipline as the rest of the migration: a per-row
+  // ctx.db.get (one extra read per candidate) plus an unbounded cursor walk
+  // would re-introduce the read-cap class this module keeps hitting.
   let swept = 0;
   let cursor: string | null = null;
   for (;;) {
@@ -568,39 +597,27 @@ async function sweepOrphanPrefs(ctx: MutationCtx): Promise<number> {
 }
 
 /**
- * Walk one auth-library table and push every row's expirationTime out to
- * the horizon. Convex allows only a single `paginate` per function, so
- * this pages with take() + an _id cursor filter instead — fully general
- * and visits every row exactly once regardless of table size.
+ * Extend up to EXTEND_BATCH short-lived rows of one auth table to the
+ * horizon. The by_expirationTime index (added to the auth tables in
+ * schema.ts) bounds the query to rows that can possibly need extending —
+ * a full-table cursor walk blew the 32k read cap as the tables outgrew
+ * it. Rows are patched to exactly `horizon`, so re-querying the same
+ * range converges: each call finds only the rows still short of the
+ * horizon, and the runner loops until a call returns fewer than the batch.
  */
-async function extendTable(
+async function extendBatch(
   ctx: MutationCtx,
   table: "authSessions" | "authRefreshTokens",
   horizon: number,
 ): Promise<number> {
-  let extended = 0;
-  let cursor: string | null = null;
-  for (;;) {
-    const rows = await ctx.db
-      .query(table)
-      .order("asc")
-      .filter((q) =>
-        q.gt(
-          q.field("_id"),
-          (cursor ?? "") as Id<"authSessions"> | Id<"authRefreshTokens">,
-        ),
-      )
-      .take(500);
-    if (rows.length === 0) break;
-    for (const row of rows) {
-      if (row.expirationTime < horizon) {
-        await ctx.db.patch(row._id, { expirationTime: horizon });
-        extended++;
-      }
-      cursor = row._id;
-    }
+  const rows = await ctx.db
+    .query(table)
+    .withIndex("by_expirationTime", (q) => q.lt("expirationTime", horizon))
+    .take(EXTEND_BATCH);
+  for (const row of rows) {
+    await ctx.db.patch(row._id, { expirationTime: horizon });
   }
-  return extended;
+  return rows.length;
 }
 
 /**
@@ -1395,8 +1412,6 @@ async function auditSessionLifetimesImpl(ctx: QueryCtx, secret: string) {
     userId: string | null;
     sessionId: string | null;
   }> = [];
-  let sessions = 0;
-  let tokens = 0;
 
   /** True when this session is a deliberate opt-out ("Keep me signed in"
    * off) or belongs to a qa_ harness account. Only candidate violations —
@@ -1427,76 +1442,67 @@ async function auditSessionLifetimesImpl(ctx: QueryCtx, secret: string) {
     return false;
   }
 
-  // Walk authSessions with take() + an _id cursor (Convex allows only a
-  // single paginate per function — this visits every row exactly once).
+  // Only rows that CAN be violations are read at all: the
+  // by_expirationTime index bounds both walks to rows expiring within the
+  // audit horizon. A healthy deployment (every session ~10 years out)
+  // reads a handful of opt-out / qa_ rows instead of the whole
+  // authSessions table — the full-table cursor walk blew the 32k read cap
+  // once the table outgrew it.
+  const MAX_AT_RISK_SCAN = 10_000;
   const sessionOwner = new Map<string, Id<"users">>(); // sessionId -> userId
-  let cursor: string | null = null;
-  for (;;) {
-    const rows = await ctx.db
-      .query("authSessions")
-      .order("asc")
-      .filter((q) =>
-        q.gt(q.field("_id"), (cursor ?? "") as Id<"authSessions">),
-      )
-      .take(500);
-    if (rows.length === 0) break;
-    for (const row of rows) {
-      sessions++;
-      sessionOwner.set(row._id, row.userId);
-      if (
-        row.expirationTime < horizon &&
-        violations.length < VIOLATION_CAP &&
-        !(await isExempt(row._id, row.userId))
-      ) {
-        violations.push({
-          table: "authSessions",
-          id: row._id,
-          expirationTime: row.expirationTime,
-          userId: row.userId,
-          sessionId: null,
-        });
-      }
-      cursor = row._id;
+  const atRiskSessions = await ctx.db
+    .query("authSessions")
+    .withIndex("by_expirationTime", (q) => q.lt("expirationTime", horizon))
+    .take(MAX_AT_RISK_SCAN);
+  for (const row of atRiskSessions) {
+    sessionOwner.set(row._id, row.userId);
+    if (
+      violations.length < VIOLATION_CAP &&
+      !(await isExempt(row._id, row.userId))
+    ) {
+      violations.push({
+        table: "authSessions",
+        id: row._id,
+        expirationTime: row.expirationTime,
+        userId: row.userId,
+        sessionId: null,
+      });
     }
   }
 
-  // Walk authRefreshTokens the same way, resolving each token's owner
-  // session to apply the same opt-out / qa_ exemptions.
-  let tokenCursor: string | null = null;
-  for (;;) {
-    const rows = await ctx.db
-      .query("authRefreshTokens")
-      .order("asc")
-      .filter((q) =>
-        q.gt(q.field("_id"), (tokenCursor ?? "") as Id<"authRefreshTokens">),
-      )
-      .take(500);
-    if (rows.length === 0) break;
-    for (const row of rows) {
-      tokens++;
-      const ownerId = sessionOwner.get(row.sessionId);
-      if (
-        row.expirationTime < horizon &&
-        violations.length < VIOLATION_CAP &&
-        !(await isExempt(row.sessionId, ownerId ?? null))
-      ) {
-        violations.push({
-          table: "authRefreshTokens",
-          id: row._id,
-          expirationTime: row.expirationTime,
-          userId: ownerId ?? null,
-          sessionId: row.sessionId,
-        });
-      }
-      tokenCursor = row._id;
+  // Same indexed walk for authRefreshTokens. The owner session may sit
+  // outside the at-risk window (a token expiring early while its session
+  // doesn't) — resolve it directly so the opt-out / qa_ exemptions still
+  // apply instead of assuming the session row was scanned above.
+  const atRiskTokens = await ctx.db
+    .query("authRefreshTokens")
+    .withIndex("by_expirationTime", (q) => q.lt("expirationTime", horizon))
+    .take(MAX_AT_RISK_SCAN);
+  for (const row of atRiskTokens) {
+    let ownerId = sessionOwner.get(row.sessionId) ?? null;
+    if (ownerId === null) {
+      const session = await ctx.db.get(row.sessionId);
+      ownerId = session?.userId ?? null;
+    }
+    if (
+      violations.length < VIOLATION_CAP &&
+      !(await isExempt(row.sessionId, ownerId))
+    ) {
+      violations.push({
+        table: "authRefreshTokens",
+        id: row._id,
+        expirationTime: row.expirationTime,
+        userId: ownerId,
+        sessionId: row.sessionId,
+      });
     }
   }
 
   return {
     checkedAt: now,
     horizonMs: AUDIT_HORIZON_MS,
-    sessions,
-    tokens,
+    sessions: atRiskSessions.length,
+    tokens: atRiskTokens.length,
     violations,
     truncated: violations.length >= VIOLATION_CAP,
   };

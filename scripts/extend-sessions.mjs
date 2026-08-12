@@ -50,17 +50,42 @@ async function main() {
     process.exit(2);
   }
 
-  const result = await client.mutation(api.testHarness.extendSessionLifetimes, {
-    secret: SECRET,
-  });
+  // The mutation extends a bounded batch per call (a single mutation may
+  // read at most 4096 docs, and each extension is a read + a write), so
+  // loop until a call reports the tables converged. The horizon is
+  // computed ONCE and passed to every pass — a fresh Date.now() per call
+  // would move the target a few ms forward each time and re-find every
+  // row it just patched (infinite loop). Each pass is otherwise
+  // independent and idempotent — rows already at the horizon are skipped.
+  const horizonMs = Date.now() + 1000 * 60 * 60 * 24 * 365 * 10;
+  let totalSessions = 0;
+  let totalTokens = 0;
+  let totalPrefs = 0;
+  for (let pass = 1; pass <= 200; pass++) {
+    const result = await client.mutation(
+      api.testHarness.extendSessionLifetimes,
+      { secret: SECRET, horizonMs },
+    );
+    totalSessions += result.sessions;
+    totalTokens += result.tokens;
+    totalPrefs += result.prefs;
+    process.stdout.write(
+      `  pass ${pass}: +${result.sessions} sessions, +${result.tokens} tokens` +
+        (result.prefs > 0 ? `, +${result.prefs} prefs` : "") + "\r",
+    );
+    if (result.done) break;
+    // Small pause so a runaway loop can't hammer the deployment.
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  process.stdout.write("\n");
   console.log(
-    `Extended ${result.sessions} sessions and ${result.tokens} refresh tokens to the permanent horizon.`,
+    `Extended ${totalSessions} sessions and ${totalTokens} refresh tokens to the permanent horizon.`,
   );
-  if (result.prefs > 0) {
-    console.log(`Swept ${result.prefs} orphaned session preference rows.`);
+  if (totalPrefs > 0) {
+    console.log(`Swept ${totalPrefs} orphaned session preference rows.`);
   }
   console.log(
-    result.sessions === 0 && result.tokens === 0
+    totalSessions === 0 && totalTokens === 0
       ? "Nothing needed extending — every session is already permanent."
       : "Done. Existing sessions no longer expire on a timeout.",
   );
