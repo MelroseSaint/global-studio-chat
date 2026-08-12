@@ -543,7 +543,7 @@ for the same reason.
 | `npm run qa:secrets` | Scans repo for leaked secrets |
 | `npm run qa:ai-scan` | AI scanner byte-level checks (C2PA, EXIF, PNG, MP4, WebP, ID3, FLAC) |
 | `npm run qa:ai-scan-integration` | End-to-end upload → scan → evidence pipeline (harness-gated) |
-| `npm run qa:profile-type` | Creator/User identity: onboarding prompt, Settings flip both ways, badge/title propagation (harness-gated) |
+| `npm run qa:profile-type` | Creator/User identity: full-screen onboarding gate, Settings flip both ways, badge/title propagation (harness-gated) |
 | `npm run qa:racism` | Racism prevention engine (72 adversarial test cases) |
 | `npm run qa:phishing` | Phishing scan tiers across all surfaces |
 | `npm run qa:blocklist` | Domain blocklist engine (49 checks, harness-gated) |

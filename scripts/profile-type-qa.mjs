@@ -15,15 +15,16 @@
  *
  * Backend half (deterministic, harness user):
  *   1. A fresh QA account has NO profileType (nothing is assigned
- *      silently) and the profile-type prompt is what surfaces it.
+ *      silently) and the full-screen identity gate is what surfaces it.
  *   2. setProfileType("user") persists; getCurrentUser reflects it.
  *   3. setProfileType rejects any value that isn't exactly "creator" or
  *      "user" (a constrained enum, never arbitrary text).
  *
  * Browser half (live site, fresh session):
- *   4. The required onboarding prompt appears for the unset account;
- *      picking Creator dismisses it (selection is mandatory, and the
- *      prompt only clears once the doc updates reactively).
+ *   4. The required onboarding gate appears for the unset account and the
+ *      app shell is gated behind it (identity comes first — no feed until
+ *      the declaration); picking Creator dismisses the gate once the doc
+ *      updates reactively.
  *   5. Settings shows the Profile type card with Creator selected, above
  *      Photo & banner (the declaration is the first card — the ordering
  *      is pinned here so a future reorder can't silently regress); a
@@ -137,23 +138,29 @@ async function main() {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });
-    const prompt = page.getByText("What type of profile are you?", {
+    const heading = page.getByText("What type of profile are you?", {
       exact: true,
     });
-    await prompt.waitFor({ timeout: 30000 }).catch(() => {});
+    await heading.waitFor({ timeout: 30000 }).catch(() => {});
     check(
-      "required onboarding prompt appears for the unset account",
-      await prompt.isVisible().catch(() => false),
+      "required onboarding gate appears for the unset account",
+      await heading.isVisible().catch(() => false),
     );
+    const shellHidden = !(await page
+      .locator("a", { hasText: "Home" })
+      .first()
+      .isVisible()
+      .catch(() => false));
+    check("app shell is gated behind the declaration (identity first)", shellHidden);
     await page
       .getByRole("button", { name: /I create and publish original content/ })
       .click({ timeout: 15000 })
       .catch(() => {});
     await page.getByRole("button", { name: /Continue/ }).click({ timeout: 15000 });
-    await prompt.waitFor({ state: "detached", timeout: 20000 }).catch(() => {});
+    await heading.waitFor({ state: "detached", timeout: 20000 }).catch(() => {});
     check(
-      "picking Creator dismisses the prompt (reactive doc update)",
-      !(await prompt.isVisible().catch(() => false)),
+      "picking Creator dismisses the gate (reactive doc update)",
+      !(await heading.isVisible().catch(() => false)),
     );
 
     // 4. Settings: Creator selected; flip to User.

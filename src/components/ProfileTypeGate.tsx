@@ -5,30 +5,23 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 type ProfileType = "creator" | "user";
 
 /**
- * The required profile-type selection. Shown to every signed-in member
- * whose `profileType` is unset — new signups right after they land, and
- * existing accounts until they choose. It cannot be dismissed without a
- * choice (the selection is the member's own declaration; nothing is ever
- * assigned silently). Changing it later is always possible in Settings.
+ * The required profile-type declaration, shown as a full-screen gate the
+ * moment a signed-in member's `profileType` is unset — new signups land on
+ * this step right after verification, before any app content. It renders
+ * INSTEAD of the app shell (identity comes first: no feed behind it), and
+ * cannot be dismissed without a choice. Nothing is ever assigned silently;
+ * the selection is the member's own declaration, and changing it later is
+ * always possible in Settings.
  */
-export function ProfileTypePrompt({
-  open,
-  onOpenChange,
+export function ProfileTypeGate({
+  username,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  username?: string;
 }) {
   const setProfileType = useMutation(api.users.setProfileType);
   const [selected, setSelected] = useState<ProfileType | null>(null);
@@ -40,11 +33,9 @@ export function ProfileTypePrompt({
     try {
       await setProfileType({ profileType: selected });
       // The users doc (getCurrentUser) updates reactively — the shell
-      // unmounts this prompt the moment the field lands.
-      onOpenChange(false);
+      // unmounts this gate the moment the field lands.
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save your profile type.");
-    } finally {
       setSaving(false);
     }
   };
@@ -82,16 +73,27 @@ export function ProfileTypePrompt({
   );
 
   return (
-    <Dialog open={open} onOpenChange={() => {}}>
-      <DialogContent className="sm:max-w-md" showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle>What type of profile are you?</DialogTitle>
-          <DialogDescription>
-            This is how you identify your profile — you can change it any
-            time in Settings. It doesn&apos;t affect what you can do, your
-            content, or your followers.
-          </DialogDescription>
-        </DialogHeader>
+    <div className="flex min-h-dvh items-center justify-center bg-background p-4">
+      <div className="w-full max-w-md">
+        <div className="mb-8 flex flex-col items-center gap-3 text-center">
+          <img
+            src="/lockup.svg"
+            alt="PureWire — say it anyway"
+            className="h-10 w-auto"
+          />
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">
+              What type of profile are you?
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {username ? `Welcome, ${username}. ` : ""}This is how you
+              identify your profile — you can change it any time in Settings.
+              It doesn&apos;t affect what you can do, your content, or your
+              followers.
+            </p>
+          </div>
+        </div>
+
         <div className="grid gap-2.5">
           {option(
             "creator",
@@ -106,16 +108,20 @@ export function ProfileTypePrompt({
             "I primarily use PureWire to discover, interact, and participate.",
           )}
         </div>
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
           Neither choice means more or less — Creator isn&apos;t a verified
           badge and User isn&apos;t a restricted one. Both profiles can post,
           share, and participate.
         </p>
-        <Button onClick={() => void confirm()} disabled={selected === null || saving}>
+        <Button
+          className="mt-5 w-full"
+          onClick={() => void confirm()}
+          disabled={selected === null || saving}
+        >
           {saving ? <Loader2 className="size-4 animate-spin" /> : null}
           Continue
         </Button>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }
