@@ -310,8 +310,18 @@ async function dismissProfileGate(page) {
   const heading = page.getByText("What type of profile are you?", {
     exact: true,
   });
-  const up = await heading.isVisible().catch(() => false);
-  if (!up) return;
+  // The React shell mounts the gate a beat after the redirect lands — wait
+  // for either the gate heading OR the dashboard to appear, then dismiss
+  // only if the gate actually came up.
+  const outcome = await Promise.race([
+    heading.waitFor({ state: "visible", timeout: NAV_TIMEOUT }).then(() => "gate"),
+    page
+      .getByRole("tab", { name: "Global" })
+      .first()
+      .waitFor({ state: "visible", timeout: NAV_TIMEOUT })
+      .then(() => "dash"),
+  ]).catch(() => "none");
+  if (outcome !== "gate") return;
   await page
     .getByRole("button", { name: /I create and publish original content/ })
     .click({ timeout: NAV_TIMEOUT })
