@@ -1258,6 +1258,133 @@ jobs:
           name: adult-content-log
           path: adult-content.log
 
+  profile-type:
+    # Pins the Creator/User identity declaration (scripts/profile-type-qa.mjs):
+    # a fresh account starts with NO profileType (never silently assigned),
+    # setProfileType persists and rejects anything but creator/user, and in
+    # the browser the required onboarding prompt appears and clears on a
+    # choice, the Settings selector flips Creator<->User in both directions,
+    # and the profile badge + tooltip always match the stored choice (the
+    # title follows the declaration). Harness-gated; mints a fresh session.
+    name: Profile-type identity E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: adult-content-qa
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the profile-type QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: profile-type
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://outgoing-seal-727.convex.cloud' }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: bash scripts/retry-once.sh profile-type.log npm run qa:profile-type
+
+      - name: Upload the profile-type QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-type-log
+          path: profile-type.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so an identity-declaration regression gets its own alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-profile-type";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Profile-type identity drift (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The profile-type identity QA failed against the live site.",
+                "A fresh account no longer starts without a profileType, the Settings",
+                "selector no longer flips Creator/User (or the badge no longer follows",
+                "the choice), or the onboarding prompt regressed.",
+                "",
+                "This means the identity declaration is broken — users may be assigned",
+                "a type silently, unable to change it, or wearing a badge that doesn't",
+                "match their choice.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the profile-type-log artifact for the failure detail.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-profile-type";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open profile-type alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed profile-type alert issue #${issue.number}.`);
+            }
+
   pwa-install-hint:
     # Verifies the PWA "Add to Home Screen" hint (PwaInstallHint.tsx)
     # renders where it should on the live site: iPhone + iPad (including

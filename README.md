@@ -526,7 +526,8 @@ All scripts runnable locally against the live site:
 The production-facing harness QAs (`qa:signup-e2e`, `qa:phishing`,
 `qa:blocklist`, `qa:reinstate`, `qa:admin-ip`, `qa:story-views`,
 `qa:shadowban`, `qa:session-audit`, `qa:count-drift`,
-`qa:ai-scan-integration`, `qa:cloudinary-health`, `qa:cleanup-*`) are
+`qa:ai-scan-integration`, `qa:cloudinary-health`, `qa:profile-type`,
+`qa:cleanup-*`) are
 invoked in CI through `scripts/retry-once.sh`, which retries **once** when a
 run fails with exit 1 — a flaky external feed or network blip can't red the
 nightly gate on its own, while a genuine regression still fails and still
@@ -542,6 +543,7 @@ for the same reason.
 | `npm run qa:secrets` | Scans repo for leaked secrets |
 | `npm run qa:ai-scan` | AI scanner byte-level checks (C2PA, EXIF, PNG, MP4, WebP, ID3, FLAC) |
 | `npm run qa:ai-scan-integration` | End-to-end upload → scan → evidence pipeline (harness-gated) |
+| `npm run qa:profile-type` | Creator/User identity: onboarding prompt, Settings flip both ways, badge/title propagation (harness-gated) |
 | `npm run qa:racism` | Racism prevention engine (72 adversarial test cases) |
 | `npm run qa:phishing` | Phishing scan tiers across all surfaces |
 | `npm run qa:blocklist` | Domain blocklist engine (49 checks, harness-gated) |
