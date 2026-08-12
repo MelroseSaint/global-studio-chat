@@ -300,6 +300,28 @@ async function dashboardVisible(page) {
     .catch(() => false);
 }
 
+/**
+ * A real sign-up lands on the required profile-type declaration (the
+ * full-screen identity gate — nothing is assigned silently). Dismiss it
+ * with a Creator pick so the dashboard checks can run. No-op when the
+ * account already declared (or the gate isn't up yet).
+ */
+async function dismissProfileGate(page) {
+  const heading = page.getByText("What type of profile are you?", {
+    exact: true,
+  });
+  const up = await heading.isVisible().catch(() => false);
+  if (!up) return;
+  await page
+    .getByRole("button", { name: /I create and publish original content/ })
+    .click({ timeout: NAV_TIMEOUT })
+    .catch(() => {});
+  await page.getByRole("button", { name: /Continue/ }).click({ timeout: NAV_TIMEOUT });
+  await heading
+    .waitFor({ state: "detached", timeout: NAV_TIMEOUT })
+    .catch(() => {});
+}
+
 /** Sign out and land back on the landing page. */
 async function signOut(page) {
   // Sign out now lives inside the "More" dropdown (both the desktop
@@ -423,6 +445,9 @@ async function main() {
       return;
     }
 
+    // The new account hits the required identity gate on first landing —
+    // pick Creator so the dashboard checks run against the real shell.
+    await dismissProfileGate(page);
     check("dashboard feed rendered (Global tab)", await dashboardVisible(page));
     check(
       "composer present",

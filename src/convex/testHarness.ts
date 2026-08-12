@@ -110,8 +110,9 @@ export const createTestUser = mutation({
     name: v.string(),
     username: v.string(),
     secret: v.string(),
+    unsetProfileType: v.optional(v.boolean()),
   },
-  handler: async (ctx, { name, username, secret }) => {
+  handler: async (ctx, { name, username, secret, unsetProfileType }) => {
     requireHarness(secret);
     const normalized = username.toLowerCase().replace(/[^a-z0-9_]/g, "");
     if (!normalized.startsWith("qa_") || normalized.length < 6) {
@@ -124,6 +125,10 @@ export const createTestUser = mutation({
     if (existing !== null) {
       throw new Error("That username is already taken.");
     }
+    // QA accounts default to the identity declaration so the full-screen
+    // onboarding gate never blocks a harness browser flow. QA scripts that
+    // specifically exercise the gate (profile-type-qa) pass
+    // unsetProfileType: true to mint an account with NO declaration.
     const userId = await ctx.db.insert("users", {
       username: normalized,
       name: name.trim() || normalized,
@@ -133,6 +138,7 @@ export const createTestUser = mutation({
       followingCount: 0,
       postsCount: 0,
       accountStatus: "active",
+      ...(unsetProfileType === true ? {} : { profileType: "creator" }),
     });
     const token = await mintSession(ctx, userId);
     // A real sign-in stores BOTH the access JWT and a refresh token; the

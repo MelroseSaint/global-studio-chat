@@ -101,6 +101,10 @@ async function main() {
       name: `ProfileType QA ${stamp}`,
       username,
       secret: HARNESS_SECRET,
+      // This QA deliberately exercises the onboarding gate, so the account
+      // must be minted with NO profileType (the harness defaults QA users
+      // to a declaration so other browser flows skip the gate).
+      unsetProfileType: true,
     });
     check("minted a fresh QA account", Boolean(created?.token), String(created).slice(0, 60));
     if (!created?.userId || !created.token) throw new Error("fixture mint failed");
