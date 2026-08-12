@@ -133,7 +133,19 @@ export default defineConfig({
           if (id.includes("@convex-dev") || id.includes("convex/")) {
             return "convex";
           }
-          if (id.includes("framer-motion")) return "motion";
+          // framer-motion v12 ships its runtime as the motion monorepo
+          // packages (motion-dom, motion-utils) — their paths don't contain
+          // "framer-motion", so without this they fall into the eager
+          // vendor catch-all below and get downloaded on pages that never
+          // animate. Route them to the motion chunk so they stay lazy with
+          // framer-motion itself.
+          if (
+            id.includes("framer-motion") ||
+            id.includes("motion-dom") ||
+            id.includes("motion-utils")
+          ) {
+            return "motion";
+          }
           if (id.includes("lucide-react")) return "icons";
           if (
             id.includes("radix") ||
@@ -141,6 +153,13 @@ export default defineConfig({
             id.includes("next-themes")
           ) {
             return "ui";
+          }
+          // jszip backs the Settings → data-export ZIP; no eager path
+          // imports it, so it gets its own chunk that only the lazy
+          // Settings route pulls in. Without this it hid inside the eager
+          // vendor chunk and was downloaded (and parsed) on every page.
+          if (id.includes("jszip")) {
+            return "export";
           }
           // Keep the whole react ecosystem in one chunk: react, react-dom,
           // react-router (and its deps), scheduler, react-is,

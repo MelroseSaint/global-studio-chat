@@ -29,6 +29,14 @@ const syncHiddenState = () => {
 };
 syncHiddenState();
 document.addEventListener("visibilitychange", syncHiddenState);
+// bfcache restore: when the browser returns to this page from the
+// back/forward cache it fires `pageshow` (persisted=true), not
+// `visibilitychange` — re-sync the hidden state so CSS animations resume
+// and any code that paused while away restarts. (The page itself can't be
+// bfcached while the Convex WebSocket is open — a browser limitation, not
+// something the app can remove — but a restored page must never be left
+// in the "hidden" state.)
+window.addEventListener("pageshow", syncHiddenState);
 
 // The public Landing stays eager, but it is self-contained (plain elements
 // + CSS — no radix UI kit, no framer-motion), so the entry bundle never
