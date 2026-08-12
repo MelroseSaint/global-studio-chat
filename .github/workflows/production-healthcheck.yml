@@ -43,19 +43,20 @@ permissions:
   actions: write # the push-burst gate cancels stale queued runs
 
 jobs:
-  # Burst throttle: when several pushes land in quick succession, every
-  # queued run of THIS workflow eventually executes FIFO under queue:max
-  # — each one hammering the production deployment with the full live
-  # suite. This gate runs first and cancels any OLDER queued run of the
-  # same workflow, so a burst collapses to the newest push's run (the
-  # latest commit is the one that matters) without ever starving the gate
-  # (the newest run always executes). In-flight runs are never touched.
+  # Burst throttle: when several pushes land in quick succession, the
+  # shared admin-account-push group runs them one-at-a-time FIFO, so each
+  # push's suite hammered the production deployment in turn. Run IDs are
+  # monotonic, so a NEWER queued run of this same workflow means this run
+  # is a stale member of a burst: it cancels ITSELF and lets the newest
+  # push's run do the verification. A lone push (no newer queued run)
+  # always runs the full suite — the push gate can never starve, and the
+  # latest commit is always the one that gets verified.
   push-burst-gate:
     name: Push burst gate
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     steps:
-      - name: Cancel stale queued runs of this workflow
+      - name: Cancel self when a newer push is queued
         uses: actions/github-script@v7
         with:
           script: |
@@ -70,16 +71,19 @@ jobs:
               status: 'queued',
               per_page: 30,
             });
-            const stale = (data.workflow_runs || []).filter((r) => r.id !== self);
-            if (stale.length === 0) {
-              core.info('no older queued runs — this is the newest push');
-            }
-            for (const r of stale) {
+            const newer = (data.workflow_runs || []).filter((r) => r.id > self);
+            if (newer.length === 0) {
+              core.info(`run ${self}: no newer queued run — this is the latest push, running the suite`);
+            } else {
+              core.info(
+                `run ${self}: superseded by newer queued run(s) ${newer.map((r) => r.id).join(", ")} — cancelling itself so the burst collapses to the latest push`,
+              );
               try {
-                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: r.id });
-                core.info(`cancelled stale queued run ${r.id} (${r.head_sha.slice(0, 7)})`);
+                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: self });
               } catch (e) {
-                core.warning(`cancel ${r.id} failed: ${e.message}`);
+                // Self-cancel may be refused in some token scopes; the run
+                // then continues normally (no burst collapse, no gate break).
+                core.warning(`self-cancel failed (${e.message}) — continuing`);
               }
             }
   auth-loop:
