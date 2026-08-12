@@ -387,6 +387,10 @@ export const sendMessage = mutation({
     // The id of a post being shared into the thread (see schema.ts — the
     // reference is public metadata; only a text caption would be encrypted).
     sharedPostId: v.optional(v.id("posts")),
+    // The id of a comment being shared into the thread — the comment-share
+    // mirror of sharedPostId: the message renders the original comment as
+    // a card. Same public-metadata treatment.
+    sharedCommentId: v.optional(v.id("comments")),
     // Client-side proof-of-work, same scheme as createPost. DM spam is the
     // classic bot attack vector — a puzzle per message multiplies with the
     // per-action rate limit.
@@ -402,6 +406,7 @@ export const sendMessage = mutation({
       iv,
       media,
       sharedPostId,
+      sharedCommentId,
       powChallenge,
       powNonce,
       powIssuedAt,
@@ -431,10 +436,12 @@ export const sendMessage = mutation({
       recipientId === undefined ||
       hidden.includes(recipientId) ||
       // No empty husks: every message carries encrypted text, an encrypted
-      // attachment, or a shared post reference (or any combination).
+      // attachment, a shared post reference, or a shared comment reference
+      // (or any combination).
       (ciphertext.length === 0 &&
         media === undefined &&
-        sharedPostId === undefined) ||
+        sharedPostId === undefined &&
+        sharedCommentId === undefined) ||
       ciphertext.length > 200_000 ||
       iv.length > 64
     ) {
@@ -448,6 +455,13 @@ export const sendMessage = mutation({
       (await ctx.db.get(sharedPostId)) === null
     ) {
       throw new Error("That post is no longer available");
+    }
+    // Same rule for a shared comment.
+    if (
+      sharedCommentId !== undefined &&
+      (await ctx.db.get(sharedCommentId)) === null
+    ) {
+      throw new Error("That comment is no longer available");
     }
     await enforceRateLimit(ctx, me, "dm");
     // Scan DM media URLs against the adult-content policy. The ciphertext
@@ -470,28 +484,35 @@ export const sendMessage = mutation({
       iv,
       ...(media !== undefined ? { media } : {}),
       ...(sharedPostId !== undefined ? { sharedPostId } : {}),
+      ...(sharedCommentId !== undefined ? { sharedCommentId } : {}),
     });
     await ctx.db.patch(conversationId, {
       lastMessageAt: now,
       lastMessageSenderId: me,
     });
-    // A message that shares a post gets a distinct "dm-share" notification
-    // (post + conversation attached) so the bell can say "shared a post
-    // with you" and open the exact thread — instead of the generic DM
-    // ping. Only the reference is metadata; the caption stays encrypted.
-    // QA-harness senders never ping a REAL member's bell — the message
-    // still lands in the thread (QA round trips stay honest) and a
-    // test-to-test notification still flows (the dm-share QA asserts it),
-    // but a test account can never ring a real user. The recipient check
-    // (not the sender's) is what makes test engagement invisible to real
-    // members while keeping the QA's own fixture observable.
+    // A message that shares a post (or comment) gets a distinct
+    // "dm-share" notification (reference + conversation attached) so the
+    // bell can say "shared a post/comment with you" and open the exact
+    // thread — instead of the generic DM ping. Only the reference is
+    // metadata; the caption stays encrypted. QA-harness senders never ping
+    // a REAL member's bell — the message still lands in the thread (QA
+    // round trips stay honest) and a test-to-test notification still flows
+    // (the dm-share QA asserts it), but a test account can never ring a
+    // real user. The recipient check (not the sender's) is what makes test
+    // engagement invisible to real members while keeping the QA's own
+    // fixture observable.
+    const isShare =
+      sharedPostId !== undefined || sharedCommentId !== undefined;
     if ((await isTestAccount(ctx, recipientId)) || !(await isTestAccount(ctx, me))) {
       await ctx.db.insert("notifications", {
         userId: recipientId,
-        type: sharedPostId !== undefined ? "dm-share" : "dm",
+        type: isShare ? "dm-share" : "dm",
         actorId: me,
         ...(sharedPostId !== undefined
           ? { postId: sharedPostId, conversationId }
+          : {}),
+        ...(sharedCommentId !== undefined
+          ? { sharedCommentId, conversationId }
           : {}),
         read: false,
       });

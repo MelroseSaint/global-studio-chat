@@ -88,6 +88,9 @@ export function Notifications() {
     // The post shared into the host post's comments ("comment-share") —
     // previewed instead of the host post's text.
     sharedPost?: { _id: string; content?: string } | null;
+    // The comment shared (into a post's comments or a DM) — previewed the
+    // same way as sharedPost; the bell says "shared a comment".
+    sharedComment?: { _id: string; content?: string } | null;
     actor: {
       _id: string;
       name?: string | null;
@@ -143,13 +146,21 @@ export function Notifications() {
           </>
         );
       case "dm-share":
-        return (
+        return n.sharedComment ? (
+          <>
+            <b>{who}</b> shared a comment with you
+          </>
+        ) : (
           <>
             <b>{who}</b> shared a post with you
           </>
         );
       case "comment-share":
-        return (
+        return n.sharedComment ? (
+          <>
+            <b>{who}</b> shared a comment in your post&apos;s comments
+          </>
+        ) : (
           <>
             <b>{who}</b> shared a post in your post&apos;s comments
           </>
@@ -278,11 +289,16 @@ export function Notifications() {
                   )}
                 </button>
               ) : null}
-              {/* A "comment-share" previews the SHARED post (the interesting
-                  part); every other type previews the referenced post. */}
+              {/* A share notification previews the SHARED item (the
+                  interesting part) — the shared comment when one is
+                  attached, the shared post for post-shares; every other
+                  type previews the referenced post. */}
               {(() => {
-                const previewPost =
-                  n.type === "comment-share" ? n.sharedPost : n.post;
+                const previewPost = n.sharedComment
+                  ? { _id: n.sharedComment._id, content: n.sharedComment.content }
+                  : n.type === "comment-share"
+                    ? n.sharedPost
+                    : n.post;
                 return previewPost?.content ? (
                   <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
                     “{previewPost.content.slice(0, 100)}”

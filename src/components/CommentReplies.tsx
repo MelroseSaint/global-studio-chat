@@ -5,6 +5,7 @@ import {
   Loader2,
   MoreHorizontal,
   Pencil,
+  Repeat2,
   Send,
   Trash2,
   X,
@@ -19,6 +20,8 @@ import { AudioCommentButton, type CommentAudio } from "@/components/AudioComment
 import { VoiceNote } from "@/components/VoiceNote";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
+import { CommentShareDialog } from "@/components/CommentShareDialog";
+import { SharedCommentEmbed } from "@/components/SharedCommentEmbed";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostComposer } from "@/components/SharedPostComposer";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -50,6 +53,9 @@ interface ReplyComment {
   // A post shared into the reply — rendered as a preview card below the
   // text (the id is public metadata; see schema.ts).
   sharedPostId?: string;
+  // Another comment shared into this reply — the comment-share mirror of
+  // sharedPostId, rendered as a preview card below the text.
+  sharedCommentId?: string;
   // A voice note attached to the reply.
   media?: {
     storageId?: string;
@@ -212,6 +218,8 @@ export function CommentReplies({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [busy, setBusy] = useState(false);
+  // Which reply is being shared (opens CommentShareDialog, preselected).
+  const [shareTarget, setShareTarget] = useState<string | null>(null);
   const editComment = useMutation(api.posts.editComment);
   const deleteComment = useMutation(api.posts.deleteComment);
   // Only run the replies query while the section is expanded.
@@ -398,6 +406,9 @@ export function CommentReplies({
                       {r.sharedPostId ? (
                         <SharedPostCard postId={r.sharedPostId} />
                       ) : null}
+                      {r.sharedCommentId ? (
+                        <SharedCommentEmbed commentId={r.sharedCommentId} />
+                      ) : null}
                       <div className="mt-1 flex items-center gap-3">
                         <CommentLikeButton
                           commentId={r._id as Id<"comments">}
@@ -418,6 +429,14 @@ export function CommentReplies({
                           className="text-xs font-semibold text-muted-foreground transition-colors hover:text-primary"
                         >
                           Reply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShareTarget(r._id)}
+                          className="flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors hover:text-primary"
+                        >
+                          <Repeat2 className="size-3" />
+                          Share
                         </button>
                       </div>
                     </div>
@@ -446,6 +465,13 @@ export function CommentReplies({
           </div>
         </div>
       ) : null}
+      <CommentShareDialog
+        open={shareTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) setShareTarget(null);
+        }}
+        presetCommentId={shareTarget}
+      />
     </div>
   );
 }

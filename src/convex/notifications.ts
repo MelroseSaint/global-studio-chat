@@ -36,11 +36,17 @@ export const listNotifications = query({
         // The post shared into the host post's comments ("comment-share")
         // — the bell previews this instead of the host post's text.
         const sharedPost = n.sharedPostId ? await ctx.db.get(n.sharedPostId) : null;
+        // The comment shared (into a post's comments or a DM) — the
+        // comment-share mirror of sharedPostId, previewed the same way.
+        const sharedComment = n.sharedCommentId
+          ? await ctx.db.get(n.sharedCommentId)
+          : null;
         return {
           ...n,
           actor: actor ? publicUser(actor) : null,
           post,
           sharedPost,
+          sharedComment,
         };
       }),
     );

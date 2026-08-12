@@ -32,6 +32,7 @@ import { scanForRacism } from "@/lib/racism-guard";
 import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
+import { SharedCommentEmbed } from "@/components/SharedCommentEmbed";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostEmbed } from "@/components/SharedPostEmbed";
 import type { PostItem } from "@/components/PostCard";
@@ -92,6 +93,9 @@ interface MessageRow {
   // A post shared into the thread — rendered as a preview card (the post
   // id is public metadata; only a text caption would be encrypted).
   sharedPostId?: string;
+  // A comment shared into the thread — rendered as a preview card (the
+  // comment id is public metadata; the comment-share mirror of sharedPostId).
+  sharedCommentId?: string;
 }
 
 type MediaKind = "image" | "video" | "audio";
@@ -882,6 +886,9 @@ export function Messages() {
                             ) : null}
                             {m.sharedPostId ? (
                               <SharedPostCard postId={m.sharedPostId} />
+                            ) : null}
+                            {m.sharedCommentId ? (
+                              <SharedCommentEmbed commentId={m.sharedCommentId} />
                             ) : null}
                           </>
                         )}

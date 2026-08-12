@@ -1552,6 +1552,11 @@ export const addComment = mutation({
     // The id of a post being shared into this comment (see schema.ts — the
     // reference is public metadata, rendered as a preview card).
     sharedPostId: v.optional(v.id("posts")),
+    // The id of another comment being shared into this comment — the
+    // comment-share mirror of sharedPostId: the row renders the original
+    // comment as a card. Same public-metadata treatment; the reference is
+    // resolved through the normal visibility rules at render time.
+    sharedCommentId: v.optional(v.id("comments")),
     // Optional single media item attached to the comment — a voice note
     // (audio). Same dual-mode shape as post media: a Cloudinary url+key or
     // a Convex storage id (fallback). Only audio is allowed on comments;
@@ -1580,7 +1585,20 @@ export const addComment = mutation({
     powNonce: v.optional(v.string()),
     powIssuedAt: v.optional(v.number()),
   },
-  handler: async (ctx, { postId, content, parentId: parentArg, sharedPostId, media, powChallenge, powNonce, powIssuedAt }) => {
+  handler: async (
+    ctx,
+    {
+      postId,
+      content,
+      parentId: parentArg,
+      sharedPostId,
+      sharedCommentId,
+      media,
+      powChallenge,
+      powNonce,
+      powIssuedAt,
+    },
+  ) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) {
       throw new Error("Not authenticated");
@@ -1590,16 +1608,20 @@ export const addComment = mutation({
     const testActor = await isTestAccount(ctx, userId);
     await requireProof(powChallenge, powNonce, powIssuedAt);
     const text = content.trim();
-    // No empty husks: a comment carries text, a shared post reference,
-    // an audio clip, or any combination — mirroring the DM message rule.
+    // No empty husks: a comment carries text, a shared post reference, a
+    // shared comment reference, an audio clip, or any combination —
+    // mirroring the DM message rule.
     if (
       (text.length === 0 &&
         sharedPostId === undefined &&
+        sharedCommentId === undefined &&
         media === undefined) ||
       text.length > 500
     ) {
       throw new Error(
-        sharedPostId === undefined && media === undefined
+        sharedPostId === undefined &&
+          sharedCommentId === undefined &&
+          media === undefined
           ? "Comment must include text, an audio clip, or a shared post."
           : "Comment text must be 500 characters or fewer.",
       );
@@ -1684,6 +1706,20 @@ export const addComment = mutation({
     ) {
       throw new Error("That post is no longer available");
     }
+    // A shared comment must exist at comment time, and it must live on a
+    // DIFFERENT post than the one it's being shared into — sharing a
+    // comment into the very thread it already hangs under would be a
+    // pointless self-copy. (It can still be deleted later; the preview
+    // then degrades to "no longer available".)
+    if (sharedCommentId !== undefined) {
+      const sharedComment = await ctx.db.get(sharedCommentId);
+      if (sharedComment === null) {
+        throw new Error("That comment is no longer available");
+      }
+      if (sharedComment.postId === postId) {
+        throw new Error("That comment is already on this post.");
+      }
+    }
     // Comment control: a closed thread stops ALL new comments (top-level
     // and replies) — whether the author locked it manually or the
     // auto-close policy closed it (age/comment-count). The thread stays
@@ -1717,6 +1753,7 @@ export const addComment = mutation({
           content: text,
           parentId,
           ...(sharedPostId !== undefined ? { sharedPostId } : {}),
+          ...(sharedCommentId !== undefined ? { sharedCommentId } : {}),
           // Voice-note description normalized (trimmed; empty → absent).
           ...(media !== undefined
             ? {
@@ -1814,6 +1851,7 @@ export const addComment = mutation({
       content: text,
       parentId,
       ...(sharedPostId !== undefined ? { sharedPostId } : {}),
+      ...(sharedCommentId !== undefined ? { sharedCommentId } : {}),
       ...(media !== undefined ? { media } : {}),
     });
     await ctx.db.patch(postId, { commentCount: post.commentCount + 1 });
@@ -1827,12 +1865,14 @@ export const addComment = mutation({
     });
     // A reply notifies the comment author they got a reply; a top-level
     // comment notifies the post author as before. Never self-notify. A
-    // comment that carries a shared post swaps the post author's ping for
-    // a distinct "comment-share" row (the bell says "shared a post in
-    // your post's comments" and previews the shared post) — mirroring
-    // dm-share. postId stays the host post so View opens the thread where
-    // the share landed; the shared post rides in sharedPostId.
-    const hasShare = sharedPostId !== undefined;
+    // comment that carries a shared post (or shared comment) swaps the
+    // post author's ping for a distinct "comment-share" row (the bell says
+    // "shared a post/comment in your post's comments" and previews the
+    // shared item) — mirroring dm-share. postId stays the host post so
+    // View opens the thread where the share landed; the shared item rides
+    // in sharedPostId / sharedCommentId.
+    const hasShare =
+      sharedPostId !== undefined || sharedCommentId !== undefined;
     if (parentId !== undefined) {
       if (parentAuthorId !== null && parentAuthorId !== userId && !testActor) {
         await ctx.db.insert("notifications", {
@@ -1859,6 +1899,7 @@ export const addComment = mutation({
           actorId: userId,
           postId,
           sharedPostId,
+          sharedCommentId,
           read: false,
         });
       }
@@ -1869,6 +1910,9 @@ export const addComment = mutation({
         actorId: userId,
         postId,
         ...(hasShare ? { sharedPostId } : {}),
+        ...(hasShare && sharedCommentId !== undefined
+          ? { sharedCommentId }
+          : {}),
         read: false,
       });
     }
@@ -2002,6 +2046,91 @@ export const listReplies = query({
 });
 
 /**
+ * Resolve a comment referenced by a share (comment-share preview cards in
+ * threads and DMs). Comment ids are public metadata — the reference
+ * travels in the clear — but the CONTENT is only returned under the same
+ * visibility rules the original thread applies: the viewer must not have
+ * blocked the author (or been blocked), and the author must not be
+ * silenced. A deleted comment returns null so the card degrades to "no
+ * longer available" instead of leaking text.
+ */
+export const getCommentForShare = query({
+  args: { commentId: v.id("comments") },
+  handler: async (ctx, { commentId }) => {
+    const viewerId = await getAuthUserId(ctx);
+    const comment = await ctx.db.get(commentId);
+    if (comment === null) {
+      return null;
+    }
+    const hidden = await hiddenAuthorIds(ctx, viewerId);
+    const silenced = await silencedAuthorIds(ctx, viewerId);
+    if (
+      hidden.includes(comment.authorId) ||
+      silenced.includes(comment.authorId)
+    ) {
+      return null;
+    }
+    const author = await ctx.db.get(comment.authorId);
+    if (author === null) {
+      return null;
+    }
+    return {
+      ...comment,
+      author: publicUser(author),
+      // The thread the original lives in, for the card's "View original"
+      // link.
+      hostPostId: comment.postId,
+    };
+  },
+});
+
+/**
+ * The viewer's most recent comments, newest first — the picker behind the
+ * comment-share flow. Every comment the viewer has made is shareable no
+ * matter its kind (text, voice note, reply), so the list includes the
+ * media flag and the host post for context.
+ */
+export const listMyRecentComments = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    const result = await ctx.db
+      .query("comments")
+      .withIndex("by_author", (q) => q.eq("authorId", userId))
+      .order("desc")
+      .paginate(paginationOpts);
+    const page = await Promise.all(
+      result.page.map(async (c) => {
+        const post = await ctx.db.get(c.postId);
+        return {
+          _id: c._id,
+          content: c.content,
+          _creationTime: c._creationTime,
+          postId: c.postId,
+          // The kind matters to the picker: a voice-note comment shows its
+          // chip, a shared-post comment shows its own preview marker.
+          hasMedia: c.media !== undefined,
+          mediaKind: c.media?.kind ?? null,
+          hasSharedPost: c.sharedPostId !== undefined,
+          hasSharedComment: c.sharedCommentId !== undefined,
+          isReply: c.parentId !== undefined,
+          hostPost: post
+            ? {
+                _id: post._id,
+                authorId: post.authorId,
+              }
+            : null,
+        };
+      }),
+    );
+    return { ...result, page };
+  },
+});
+
+/**
  * Remove a comment. Its author, the post's author (moderating their own
  * thread), or an admin may delete it; the post's denormalized
  * commentCount is kept honest so the badge on the card and the thread
@@ -2099,6 +2228,29 @@ export const deleteComment = mutation({
     // The comment's likes die with it — no orphan rows keyed to a deleted
     // comment.
     await sweepCommentLikes(ctx, commentId);
+    // Comment-share references die with the original: any comment or DM
+    // message that previewed this comment gets its sharedCommentId swept
+    // (the card degrades to "no longer available" instead of dangling), and
+    // notifications previewing it are removed the same way sweepPostEngagement
+    // handles sharedPostId rows. Bounded sweeps, indexed on the target id.
+    for (const row of await ctx.db
+      .query("comments")
+      .withIndex("by_shared_comment", (q) => q.eq("sharedCommentId", commentId))
+      .take(500)) {
+      await ctx.db.patch(row._id, { sharedCommentId: undefined });
+    }
+    for (const row of await ctx.db
+      .query("dmMessages")
+      .withIndex("by_shared_comment", (q) => q.eq("sharedCommentId", commentId))
+      .take(500)) {
+      await ctx.db.patch(row._id, { sharedCommentId: undefined });
+    }
+    for (const row of await ctx.db
+      .query("notifications")
+      .withIndex("by_shared_comment", (q) => q.eq("sharedCommentId", commentId))
+      .take(500)) {
+      await ctx.db.delete(row._id);
+    }
     await ctx.db.delete(commentId);
   },
 });

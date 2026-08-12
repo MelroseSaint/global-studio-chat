@@ -7,6 +7,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   Pencil,
+  Repeat2,
   ScanSearch,
   Send,
   ShieldAlert,
@@ -26,8 +27,10 @@ import { VoiceNote } from "@/components/VoiceNote";
 import { AutoCloseHint } from "@/components/AutoCloseHint";
 import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
+import { CommentShareDialog } from "@/components/CommentShareDialog";
 import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { PostCard, type PostItem } from "@/components/PostCard";
+import { SharedCommentEmbed } from "@/components/SharedCommentEmbed";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostComposer } from "@/components/SharedPostComposer";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -209,6 +212,8 @@ export function PostDetail() {
   const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(
     null,
   );
+  // Which comment is being shared (opens CommentShareDialog, preselected).
+  const [shareTarget, setShareTarget] = useState<string | null>(null);
 
   useEffect(() => {
     if (inView && status === "CanLoadMore") {
@@ -294,6 +299,9 @@ export function PostDetail() {
     // A post shared into the comment — rendered as a preview card below
     // the text (the id is public metadata; see schema.ts).
     sharedPostId?: string;
+    // Another comment shared into this one — the comment-share mirror of
+    // sharedPostId, rendered as a preview card below the text.
+    sharedCommentId?: string;
     // A voice note attached to the comment.
     media?: {
       storageId?: string;
@@ -606,7 +614,11 @@ export function PostDetail() {
                   ) : null}
                   {c.sharedPostId ? (
                     <SharedPostCard postId={c.sharedPostId} />
-                  ) : null}                      {isLong ? (
+                  ) : null}
+                  {c.sharedCommentId ? (
+                    <SharedCommentEmbed commentId={c.sharedCommentId} />
+                  ) : null}
+                      {isLong ? (
                         <button
                           type="button"
                           onClick={() => {
@@ -653,6 +665,14 @@ export function PostDetail() {
                         >
                           Reply
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setShareTarget(c._id)}
+                          className="flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors hover:text-primary"
+                        >
+                          <Repeat2 className="size-3" />
+                          Share
+                        </button>
                       </div>
                     </div>
                   )}
@@ -695,6 +715,14 @@ export function PostDetail() {
           </div>
         );
       })}
+
+      <CommentShareDialog
+        open={shareTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) setShareTarget(null);
+        }}
+        presetCommentId={shareTarget}
+      />
 
       <div ref={ref} className="flex justify-center py-4">
         {status === "LoadingMore" && (

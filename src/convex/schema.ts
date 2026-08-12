@@ -426,6 +426,14 @@ const schema = defineSchema({
     // the clear like the author/timestamp — the viewer's client fetches the
     // post through the normal visibility rules.
     sharedPostId: v.optional(v.id("posts")),
+    // Optional reference to another comment shared into this comment — the
+    // comment-share mirror of sharedPostId: the row renders the original
+    // comment as a card (text, voice note, author). Comment ids are public
+    // metadata; the viewer's client resolves the original through the
+    // normal visibility rules and degrades to "no longer available" if it
+    // was deleted. Deletions sweep this reference so no dangling card
+    // survives.
+    sharedCommentId: v.optional(v.id("comments")),
     // Optional single media item (audio) attached to the comment — a voice
     // note, recorded or uploaded by the author. Same dual-mode shape as
     // post/story media: a Cloudinary `url` + `key` (primary) or a Convex
@@ -461,7 +469,10 @@ const schema = defineSchema({
     .index("by_post_parent_likes", ["postId", "parentId", "likeCount"])
     // Reply sweeps: finding every reply hanging under a comment when the
     // comment dies (user delete, post delete, account erasure).
-    .index("by_parent", ["parentId"]),
+    .index("by_parent", ["parentId"])
+    // Comment-share sweeps: when a comment dies, every thread or DM row
+    // that previewed it (sharedCommentId) is found without a full scan.
+    .index("by_shared_comment", ["sharedCommentId"]),
   commentLikes: defineTable({
     commentId: v.id("comments"),
     userId: v.id("users"),
@@ -514,6 +525,9 @@ const schema = defineSchema({
     // thread where the share landed; this field carries the shared post for
     // the preview.
     sharedPostId: v.optional(v.id("posts")),
+    // The comment shared (into a post's comments or a DM) — the
+    // comment-share mirror of sharedPostId, previewed the same way.
+    sharedCommentId: v.optional(v.id("comments")),
     message: v.optional(v.string()),
     read: v.boolean(),
   })
@@ -523,7 +537,8 @@ const schema = defineSchema({
     // sharedPostId for comment-share preview rows. Indexed so a deletion
     // never scans the whole table.
     .index("by_post", ["postId"])
-    .index("by_shared_post", ["sharedPostId"]),
+    .index("by_shared_post", ["sharedPostId"])
+    .index("by_shared_comment", ["sharedCommentId"]),
   supportTickets: defineTable({
     userId: v.id("users"),
     subject: v.string(),
@@ -683,7 +698,15 @@ const schema = defineSchema({
     // card (media included). The text caption stays E2E-encrypted in
     // `ciphertext` like any other message.
     sharedPostId: v.optional(v.id("posts")),
-  }).index("by_conversation", ["conversationId"]),
+    // Optional reference to a comment shared into the thread — the
+    // comment-share mirror of sharedPostId: the message renders the
+    // original comment as a card. Same public-metadata treatment; the
+    // recipient resolves it through the normal visibility rules and sees
+    // "no longer available" if it was deleted (deletions sweep this).
+    sharedCommentId: v.optional(v.id("comments")),
+  })
+    .index("by_conversation", ["conversationId"])
+    .index("by_shared_comment", ["sharedCommentId"]),
   // Per-device "read up to here" watermark for one conversation, so the
   // unread badge is accurate without ever touching message bodies.
   dmReads: defineTable({

@@ -1265,6 +1265,12 @@ export const purgeNotificationChunk = mutation({
         const shared = await ctx.db.get(row.sharedPostId);
         if (shared === null) reason = "missing-shared-post";
       }
+      // Comment-share rows preview the SHARED comment in sharedCommentId
+      // — same dangling class: sweep it when the original comment dies.
+      if (reason === null && row.sharedCommentId !== undefined) {
+        const shared = await ctx.db.get(row.sharedCommentId);
+        if (shared === null) reason = "missing-shared-comment";
+      }
       if (reason === null && row.actorId !== undefined) {
         const actor = await ctx.db.get(row.actorId);
         if (actor === null) reason = "missing-actor";

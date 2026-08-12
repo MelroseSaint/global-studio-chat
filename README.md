@@ -172,6 +172,34 @@ text in comments.
   Both are distinct notification types (`dm-share` / `comment-share`) that
   light the unread badge like any other notification.
 
+## Sharing comments
+
+Comments travel as cards too — any kind (text, voice note, or reply) can
+be shared into another post's comments or sent directly into a DM:
+
+- **Share button on every comment** — popup dialog, post page, and inline
+  replies all offer **Share** next to Reply, so no matter where a comment
+  lives it can be passed along.
+- **Pick from your recent comments** — the Share dialog lists your most
+  recent comments (newest first, with voice-note and reply markers);
+  opening Share on a specific comment preselects it, and a switcher lets
+  you choose a different one.
+- **Into another post's comments** — paste a PureWire post link (or
+  quick-pick a recent post) and the original comment lands as a card in
+  that thread, rendered through the normal visibility rules (a deleted or
+  blocked original shows "no longer available", never a broken card).
+  Sharing onto the comment's own post is rejected — it would be a
+  pointless self-copy.
+- **Into a DM** — "Send via message" opens the same popup composer as
+  post-shares with the comment card attached; only the reference is
+  metadata, any caption stays end-to-end encrypted.
+- **Bell notifications** — sharing a comment into a DM or your post's
+  comments pings the recipient with "shared a comment with you" / "shared
+  a comment in your post's comments" (previewing the original comment).
+- **No dangling cards** — deleting a comment sweeps every reference to it
+  (thread cards and DM cards), and the nightly purge covers the same
+  class for notification previews.
+
 ## Content moderation pipeline
 
 Every piece of content goes through the same pipeline before it goes live:

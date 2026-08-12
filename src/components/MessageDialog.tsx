@@ -22,6 +22,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import type { PostItem } from "@/components/PostCard";
+import { SharedCommentEmbed } from "@/components/SharedCommentEmbed";
 import { SharedPostEmbed } from "@/components/SharedPostEmbed";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,6 +74,7 @@ export function MessageDialog({
   open,
   onOpenChange,
   sharePostId,
+  shareCommentId,
   initialUserId,
   onSent,
 }: {
@@ -80,6 +82,8 @@ export function MessageDialog({
   onOpenChange: (open: boolean) => void;
   /** A post to attach to the outgoing message (rendered as a card). */
   sharePostId?: string | null;
+  /** A comment to attach to the outgoing message (rendered as a card). */
+  shareCommentId?: string | null;
   /** A recipient to open a conversation with immediately (Profile → Message). */
   initialUserId?: string | null;
   onSent?: () => void;
@@ -227,7 +231,13 @@ export function MessageDialog({
 
   const send = async (force = false) => {
     const text = draft.trim();
-    if ((!text && !sharePostId) || !convKey || !selectedId || sending) return;
+    if (
+      (!text && !sharePostId && !shareCommentId) ||
+      !convKey ||
+      !selectedId ||
+      sending
+    )
+      return;
     // Pre-encryption gates, identical to the Messages page: PureWire never
     // sees plaintext, so the checks run on this device first.
     if (text) {
@@ -272,6 +282,9 @@ export function MessageDialog({
         iv,
         ...(sharePostId
           ? { sharedPostId: sharePostId as Id<"posts"> }
+          : {}),
+        ...(shareCommentId
+          ? { sharedCommentId: shareCommentId as Id<"comments"> }
           : {}),
         powChallenge: pow.powChallenge,
         powNonce: pow.powNonce,
@@ -479,7 +492,30 @@ export function MessageDialog({
               </div>
             ) : null}
 
-            {sharePostId ? (
+            {shareCommentId ? (
+              <div className="mb-2 rounded-xl border bg-muted/40">
+                <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5">
+                  <span className="flex items-center gap-1.5 text-xs font-medium">
+                    <MessageSquare className="size-3.5" />
+                    Sharing a comment
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Remove shared comment"
+                    className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    onClick={() => {
+                      setDraft("");
+                      onOpenChange(false);
+                    }}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+                <div className="px-3 py-2">
+                  <SharedCommentEmbed commentId={shareCommentId} />
+                </div>
+              </div>
+            ) : sharePostId ? (
               <div className="mb-2 rounded-xl border bg-muted/40">
                 <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5">
                   <span className="flex items-center gap-1.5 text-xs font-medium">

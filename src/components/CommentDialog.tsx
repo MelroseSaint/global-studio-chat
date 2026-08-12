@@ -10,6 +10,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   Pencil,
+  Repeat2,
   Send,
   Trash2,
 } from "lucide-react";
@@ -26,7 +27,9 @@ import { CommentLikeButton } from "@/components/CommentLikeButton";
 import { ProfileTypeBadge } from "@/components/ProfileTypeBadge";
 import { autoClosePolicyPhrase } from "@/lib/comment-policy";
 import { CommentReplies, CommentReplyComposer } from "@/components/CommentReplies";
+import { CommentShareDialog } from "@/components/CommentShareDialog";
 import type { PostItem } from "@/components/PostCard";
+import { SharedCommentEmbed } from "@/components/SharedCommentEmbed";
 import { SharedPostCard } from "@/components/SharedPostCard";
 import { SharedPostComposer } from "@/components/SharedPostComposer";
 import { PostMediaGrid, RichText } from "@/components/SharedPostEmbed";
@@ -74,6 +77,9 @@ interface PreviewComment {
   // A post shared into the comment — rendered as a preview card below
   // the text (the id is public metadata; see schema.ts).
   sharedPostId?: string;
+  // Another comment shared into this one — rendered as a preview card
+  // below the text (the comment-share mirror of sharedPostId).
+  sharedCommentId?: string;
   // A voice note attached to the comment — rendered with the native
   // player, same as post audio (Cloudinary reference; see schema.ts).
   media?: {
@@ -122,6 +128,8 @@ function CommentPreview({
   const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(
     null,
   );
+  // Which comment is being shared (opens CommentShareDialog, preselected).
+  const [shareTarget, setShareTarget] = useState<string | null>(null);
   const comments = results as unknown as PreviewComment[];
 
   if (status === "LoadingFirstPage" || comments.length === 0) return null;
@@ -246,6 +254,9 @@ function CommentPreview({
                       {c.sharedPostId ? (
                         <SharedPostCard postId={c.sharedPostId} />
                       ) : null}
+                      {c.sharedCommentId ? (
+                        <SharedCommentEmbed commentId={c.sharedCommentId} />
+                      ) : null}
                       <div className="mt-1 flex items-center gap-3">
                         <CommentLikeButton
                           commentId={c._id as Id<"comments">}
@@ -266,6 +277,14 @@ function CommentPreview({
                           className="text-xs font-semibold text-muted-foreground transition-colors hover:text-primary"
                         >
                           Reply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShareTarget(c._id)}
+                          className="flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors hover:text-primary"
+                        >
+                          <Repeat2 className="size-3" />
+                          Share
                         </button>
                       </div>
                     </div>
@@ -328,6 +347,13 @@ function CommentPreview({
           );
         })}
       </div>
+      <CommentShareDialog
+        open={shareTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) setShareTarget(null);
+        }}
+        presetCommentId={shareTarget}
+      />
     </div>
   );
 }
