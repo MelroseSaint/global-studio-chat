@@ -418,66 +418,6 @@ function SettingsForm({ user }: { user: Profile }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Photo & banner</CardTitle>
-          <CardDescription>
-            Upload real images — no URL strings, no middlemen.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-5">
-          <div className="flex flex-col gap-2">
-            <Label>Profile picture</Label>
-            <div className="flex items-center gap-4">
-              <UserAvatar
-                user={
-                  avatar[0]
-                    ? { ...user, avatarUrl: avatar[0].url }
-                    : user
-                }
-                className="size-16"
-              />
-              <MediaUpload
-                value={avatar}
-                onChange={(items) => setAvatar(items.slice(0, 1))}
-                max={1}
-                compact
-              />
-            </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label>Profile banner</Label>
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-32 items-center justify-center overflow-hidden rounded-lg border bg-muted">
-                {banner[0] ? (
-                  <img
-                    src={banner[0].url}
-                    alt=""
-                    className="size-full object-cover"
-                  />
-                ) : user.bannerUrl ? (
-                  <img
-                    src={user.bannerUrl}
-                    alt=""
-                    className="size-full object-cover"
-                  />
-                ) : (
-                  <span className="text-xs text-muted-foreground">
-                    No banner
-                  </span>
-                )}
-              </div>
-              <MediaUpload
-                value={banner}
-                onChange={(items) => setBanner(items.slice(0, 1))}
-                max={1}
-                compact
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <CardTitle className="text-base">Profile type</CardTitle>
           <CardDescription>
             How you identify your profile. This is your own declaration — it
@@ -541,6 +481,66 @@ function SettingsForm({ user }: { user: Profile }) {
               You haven&apos;t chosen yet — pick one above to show your badge.
             </p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Photo & banner</CardTitle>
+          <CardDescription>
+            Upload real images — no URL strings, no middlemen.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          <div className="flex flex-col gap-2">
+            <Label>Profile picture</Label>
+            <div className="flex items-center gap-4">
+              <UserAvatar
+                user={
+                  avatar[0]
+                    ? { ...user, avatarUrl: avatar[0].url }
+                    : user
+                }
+                className="size-16"
+              />
+              <MediaUpload
+                value={avatar}
+                onChange={(items) => setAvatar(items.slice(0, 1))}
+                max={1}
+                compact
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label>Profile banner</Label>
+            <div className="flex items-center gap-4">
+              <div className="flex h-16 w-32 items-center justify-center overflow-hidden rounded-lg border bg-muted">
+                {banner[0] ? (
+                  <img
+                    src={banner[0].url}
+                    alt=""
+                    className="size-full object-cover"
+                  />
+                ) : user.bannerUrl ? (
+                  <img
+                    src={user.bannerUrl}
+                    alt=""
+                    className="size-full object-cover"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    No banner
+                  </span>
+                )}
+              </div>
+              <MediaUpload
+                value={banner}
+                onChange={(items) => setBanner(items.slice(0, 1))}
+                max={1}
+                compact
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
 
