@@ -586,15 +586,26 @@ export async function silencedAuthorIds(
   if (viewer?.role === "admin") {
     return [];
   }
-  const silenced = await ctx.db
-    .query("users")
-    .filter((q) =>
-      q.or(
-        q.eq(q.field("accountStatus"), "suspicious"),
-        q.eq(q.field("shadowban"), true),
-      ),
-    )
-    .take(200);
+  // Two indexed lookups instead of a users-table scan. The old `.filter()`
+  // over the whole table made the feed's read set include EVERY user, so
+  // any user mutation (a profile edit, an admin status change, a QA
+  // harness account) re-ran every open feed subscription — the dominant
+  // cost on the busiest query in the deployment. Indexed, the feed only
+  // ever reads the few silenced accounts, so unrelated user churn stops
+  // waking the feed.
+  const [suspicious, shadowbanned] = await Promise.all([
+    ctx.db
+      .query("users")
+      .withIndex("by_account_status", (q) =>
+        q.eq("accountStatus", "suspicious"),
+      )
+      .take(200),
+    ctx.db
+      .query("users")
+      .withIndex("by_shadowban", (q) => q.eq("shadowban", true))
+      .take(200),
+  ]);
+  const silenced = [...suspicious, ...shadowbanned];
   // The silenced user always sees their own content — the hiding applies
   // to everyone else on the platform, not to themselves.
   return silenced.filter((u) => u._id !== viewerId).map((u) => u._id);

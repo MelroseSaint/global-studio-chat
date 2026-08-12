@@ -10,17 +10,17 @@ concurrency:
   # On push events, share the admin-account-push group with
   # production-healthcheck so parallel runs never mint competing
   # admin sessions. PR runs get their own group per PR.
-  #
-  # queue: max is REQUIRED here: without it, GitHub's default concurrency
-  # semantics keep only ONE pending run per group and cancel any later
-  # arrival — so a long-running healthcheck chain (15-30 min) plus rapid
-  # pushes starved this whole workflow (runs cancelled in ~1s with zero
-  # jobs, no check runs recorded). With the queue, every push-triggered
-  # run waits its turn FIFO instead of being cancelled, so the static-audit
-  # gate (typecheck/lint/build/SEO/mirror-freshness) actually runs.
+  ##  queue: 2 (shared admin-account-push group with production-healthcheck)
+#  keeps the push gate meaningful without running the full 25-job suite
+#  for every commit in a burst — each run's live-site checks consume the
+#  Convex free-plan database-I/O budget. One run executes, two wait, and
+#  later arrivals replace the oldest QUEUED run, so the latest push is
+#  always verified while bursts collapse to ~3 runs instead of 15.
+#  (queue: max ran every push but blew the I/O budget; the default of 1
+#  starved this whole workflow under rapid pushes.)
   group: ${{ github.event_name == 'push' && 'admin-account-push' || format('static-audit-{0}', github.run_id) }}
   cancel-in-progress: false
-  queue: max
+  queue: 2
 
 jobs:
   typecheck:

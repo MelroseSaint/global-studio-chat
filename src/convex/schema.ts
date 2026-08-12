@@ -167,7 +167,13 @@ const schema = defineSchema({
     .index("email", ["email"])
     .index("phone", ["phone"])
     .index("by_username", ["username"])
-    .index("by_account_status", ["accountStatus"]),
+    .index("by_account_status", ["accountStatus"])
+    // Shadowbanned accounts are excluded from feeds (silencedAuthorIds);
+    // indexed so the feed resolves the silenced set with two tiny ranged
+    // lookups instead of scanning the whole users table on every call — a
+    // scan puts every user doc in the query's read set and re-runs every
+    // open feed whenever ANY user row changes.
+    .index("by_shadowban", ["shadowban"]),
   // authSessions/authRefreshTokens are re-declared (overriding authTables)
   // ONLY to add the by_expirationTime index the permanent-session audit
   // needs. Everything else — field shapes and the auth library's original
@@ -898,7 +904,11 @@ const schema = defineSchema({
     scannedAt: v.number(),
   })
     .index("by_url_hash", ["urlHash"])
-    .index("by_verdict", ["verdict"]),
+    .index("by_verdict", ["verdict"])
+    // The nightly retention sweep deletes rows older than 30 days; indexed
+    // so the sweep only reads stale rows instead of scanning the whole
+    // scan-results table on every sync.
+    .index("by_scanned_at", ["scannedAt"]),
 
   // Account-creation velocity counter: one row per hourly bucket, incremented
   // on each new account (see SIGNUP_VELOCITY_LIMIT in auth.ts). Breached

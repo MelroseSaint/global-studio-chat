@@ -25,16 +25,17 @@ concurrency:
   # On push events, share the admin-account-push group with static-audit
   # so parallel workflow runs never mint competing admin sessions.
   # Scheduled and manual runs get their own group to avoid queuing.
-  #
-  # queue: max is REQUIRED here: GitHub's default concurrency keeps only
-  # ONE pending run per group and cancels any later arrival — with this
-  # long chain (15-30 min per push run) plus rapid pushes, pending runs
-  # were cancelled mid-flight and the shared group starved static-audit
-  # entirely. With the queue, runs wait FIFO instead of cancelling, and
-  # static-audit's push-triggered gate actually runs.
+  ##  queue: 2 keeps the queue draining without letting every push in a
+#  burst run the full 29-job live suite (each run hammers the production
+#  deployment: every browser-QA page load subscribes the feed + shell
+#  queries, which is what consumes the Convex free-plan database-I/O
+#  budget). One run executes, two wait, and later arrivals replace the
+#  oldest QUEUED run — so the latest push is always verified while bursts
+#  collapse to ~3 runs instead of 15. A higher queue (max) ran every push
+#  but starved the budget; the default (1) starved static-audit entirely.
   group: ${{ github.event_name == 'push' && 'admin-account-push' || 'production-healthcheck' }}
   cancel-in-progress: false
-  queue: max
+  queue: 2
 
 permissions:
   contents: read

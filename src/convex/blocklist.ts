@@ -881,11 +881,13 @@ export const purgeStaleScansInternal = internalMutation({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {
     const cutoff = now - RETENTION_MS;
-    // by_verdict isn't time-ordered; the table is small (one row per URL)
-    // and this is nightly, so a filtered take is the honest bounded scan.
+    // by_scanned_at orders the table by scan time, so the sweep reads only
+    // the stale prefix instead of scanning every row (the old filtered
+    // take read the whole table on each sync — the single biggest scan on
+    // the blocklist path once link scans accumulate).
     const stale = await ctx.db
       .query("linkScanResults")
-      .filter((q) => q.lt(q.field("scannedAt"), cutoff))
+      .withIndex("by_scanned_at", (q) => q.lt("scannedAt", cutoff))
       .take(RETENTION_BATCH);
     for (const row of stale) {
       await ctx.db.delete(row._id);
