@@ -31,7 +31,6 @@ concurrency:
 permissions:
   contents: read
   issues: write # open a deduplicated alert issue when a migration fails
-  administration: write # flip the MEDIA_MODE_EXPECTATION repo variable after the env sync
 
 jobs:
   migrate:
@@ -79,48 +78,11 @@ jobs:
             npx convex env set --prod CLOUDINARY_API_SECRET "$CLOUDINARY_API_SECRET"
           fi
 
-      # Complete the media flip automatically: once all three Cloudinary
-      # vars are live on the deployment (env list confirms), flip the
-      # MEDIA_MODE_EXPECTATION repo variable so the Media architecture
-      # guard verifies the new mode on the same run. Ordered so the
-      # expectation never leads the capability — if the sync failed, the
-      # variable stays `convex` and the guard stays honest. Rotating the
-      # stale CONVEX_DEPLOY_KEY is therefore the ONLY manual step left in
-      # docs/media-storage.md's Option A.
-      - name: Flip MEDIA_MODE_EXPECTATION after a successful sync
-        if: env.CONVEX_DEPLOY_KEY != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
-          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
-          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: |
-          if [ -z "$CLOUDINARY_CLOUD_NAME" ] || [ -z "$CLOUDINARY_API_KEY" ] || [ -z "$CLOUDINARY_API_SECRET" ]; then
-            echo "Cloudinary secrets incomplete — expectation stays as-is."
-            exit 0
-          fi
-          export CONVEX_DEPLOY_KEY
-          live="$(npx convex env list --prod 2>/dev/null | grep -c '^CLOUDINARY_' || true)"
-          if [ "${live:-0}" -lt 3 ]; then
-            echo "Only $live/3 CLOUDINARY_* vars live on the deployment — not flipping the expectation."
-            exit 0
-          fi
-          repo="${GITHUB_REPOSITORY}"
-          code_create=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$repo/actions/variables" \
-            -d '{"name":"MEDIA_MODE_EXPECTATION","value":"cloudinary"}')
-          if [ "$code_create" != "201" ]; then
-            code_patch=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
-              -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$repo/actions/variables/MEDIA_MODE_EXPECTATION" \
-              -d '{"value":"cloudinary"}')
-            echo "variable PATCH: $code_patch"
-          else
-            echo "variable created: 201"
-          fi
-
+      # The MEDIA_MODE_EXPECTATION repo variable is flipped by the owner
+      # after the sync lands (docs/media-storage.md): workflow-file
+      # permissions to mutate repo settings (administration: write) are
+      # rejected at startup on user-owned repos, so the flip stays a
+      # one-click manual step that can never lead the capability.
       - name: Deploy the backend to production
         if: env.CONVEX_DEPLOY_KEY != ''
         id: deploy

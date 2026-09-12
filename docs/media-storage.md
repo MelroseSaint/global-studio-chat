@@ -59,16 +59,17 @@ transferred to the deployment because that needs one of:
    Settings → Access Keys → **Deploy key** → create.
 2. GitHub → repo → Settings → Secrets and variables → Actions → update
    `CONVEX_DEPLOY_KEY`.
-3. Done. Push any commit to `main` (or re-run *Migrations*) and the
-   workflow finishes the flip end to end: the "Sync Cloudinary env from
-   repo secrets" step sets `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`,
-   and `CLOUDINARY_API_SECRET` on the deployment (never printing them),
-   then the "Flip MEDIA_MODE_EXPECTATION after a successful sync" step
-   verifies all three are live and flips the `MEDIA_MODE_EXPECTATION`
-   repo **variable** to `cloudinary`. The Media architecture guard then
-   enforces the declared mode on the same run. The expectation can never
-   lead the capability: if the sync fails or a secret is missing, the
-   variable stays `convex` and the guard stays honest.
+3. Push any commit to `main` (or re-run *Migrations*) and the
+   "Sync Cloudinary env from repo secrets" step sets
+   `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and
+   `CLOUDINARY_API_SECRET` on the deployment (never printing them).
+4. Flip the `MEDIA_MODE_EXPECTATION` repo **variable** to `cloudinary`
+   (Settings → Secrets and variables → Actions → Variables). This stays
+   a manual one-click step on purpose: a workflow can only mutate repo
+   settings with `administration: write`, which GitHub rejects at
+   startup for user-owned repositories. The expectation can never lead
+   the capability — until you flip it, the Media architecture guard
+   keeps asserting the honest current mode.
 
 ### Option B — one manual command
 
@@ -82,6 +83,8 @@ npx convex env set CLOUDINARY_UPLOAD_PRESET <unsigned preset name>
 
 Then flip the `MEDIA_MODE_EXPECTATION` repo **variable** to
 `cloudinary` (Settings → Secrets and variables → Actions → Variables).
+Without it the Media architecture guard keeps asserting `convex`, which
+stays honest until the flip is intentional.
 
 ### Cloudinary dashboard prerequisites
 
