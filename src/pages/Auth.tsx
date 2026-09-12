@@ -10,7 +10,7 @@ import {
   Sparkles,
   UserRound,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
@@ -354,18 +354,16 @@ export function Auth() {
   // The server's own explanation when an auth call dies with a masked
   // "Server Error": authPreflight reports which required env vars are
   // missing, and that becomes a human, operator-actionable message.
-  const [serverIssue, setServerIssue] = useState<string | null>(null);
-  useEffect(() => {
-    if (authPreflight === undefined) return;
-    if (!authPreflight.ok) {
-      const vars = authPreflight.missing.join(", ");
-      setServerIssue(
-        `The sign-in backend is misconfigured: missing server environment variable${authPreflight.missing.length > 1 ? "s" : ""} ${vars}. ` +
-          "An operator must set them with 'npx convex env set <NAME> <value>'.",
-      );
-    } else {
-      setServerIssue(null);
-    }
+  // Derived straight from the query (useMemo, not state + effect): the
+  // value has no life of its own, and a setState-in-effect here trips
+  // react-hooks/set-state-in-effect (cascading render).
+  const serverIssue = useMemo(() => {
+    if (authPreflight === undefined || authPreflight.ok) return null;
+    const vars = authPreflight.missing.join(", ");
+    return (
+      `The sign-in backend is misconfigured: missing server environment variable${authPreflight.missing.length > 1 ? "s" : ""} ${vars}. ` +
+      "An operator must set them with 'npx convex env set <NAME> <value>'."
+    );
   }, [authPreflight]);
   const [botToken, setBotToken] = useState<string | null>(null);
   const [botFailed, setBotFailed] = useState(false);
