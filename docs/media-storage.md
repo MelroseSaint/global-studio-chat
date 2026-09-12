@@ -76,7 +76,8 @@ transferred to the deployment because that needs one of:
 ```bash
 # from the repo root, CLI authenticated against the prod deployment
 npx convex env set CLOUDINARY_CLOUD_NAME saintscloud
-npx convex env set CLOUDINARY_API_KEY <key 361391315767925>
+npx convex env set CLOUDINARY_API_KEY <api key — held privately; correct
+# value is in the repo secret CLOUDINARY_API_KEY and .env.local (gitignored)>
 npx convex env set CLOUDINARY_API_SECRET <secret>
 npx convex env set CLOUDINARY_UPLOAD_PRESET <unsigned preset name>
 ```
