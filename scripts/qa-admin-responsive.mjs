@@ -538,12 +538,27 @@ async function inspectProfile(page, widthLabel) {
   // in (paginated query), then compare. Data-aware: the admin's real post
   // count changes as QA or the owner posts, so a fixed constant would go
   // stale — the reconciliation itself is what's pinned.
+  // Poll until BOTH sides of the comparison are stable across consecutive
+  // reads, not just until the cards stream in. The nightly full-suite run
+  // co-schedules other QAs that create/delete posts as fixture authors, so
+  // the header counter and the paginated card list are routinely sampled
+  // mid-churn — comparing two different instants produces a phantom
+  // mismatch. Stability-across-ticks is the churn-tolerant contract.
   const cardStart = Date.now();
   const cardDeadline = cardStart + PANEL_WAIT_MS;
   let cards = 0;
+  let stableTicks = 0;
+  let prev = "";
   while (Date.now() < cardDeadline) {
     cards = await page.locator("article").count();
-    if (stats.posts !== null && cards >= stats.posts) break;
+    const current = `${stats.posts}:${cards}`;
+    if (current === prev && current !== "null:0") {
+      stableTicks++;
+    } else {
+      stableTicks = 0;
+    }
+    prev = current;
+    if (stableTicks >= 3) break;
     await page.waitForTimeout(PANEL_POLL_MS);
   }
   check(

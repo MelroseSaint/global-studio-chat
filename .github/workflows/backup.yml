@@ -1,0 +1,61 @@
+name: Backup snapshot
+
+# Weekly production backup: `convex export --include-file-storage` produces
+# a ZIP snapshot (documents + stored files) and uploads it as a CI artifact
+# so a restore point ALWAYS exists outside the Convex dashboard (whose
+# snapshot list is the only other copy). This is the automation half of
+# docs/backup-restore.md — the restore drill was verified by hand on
+# 2026-09-12 (snapshot -> import --replace-all into dev -> functions push ->
+# live sitemap query on the restored deployment).
+#
+# Needs CONVEX_DEPLOY_KEY (the production deploy key). While that repo
+# secret is stale the job skips instead of failing — same convention as the
+# other secret-gated live jobs (a Dependabot PR run has no secrets at all
+# and skips the same way).
+
+on:
+  schedule:
+    # Sundays 04:30 UTC — after the nightly healthcheck window, before the
+    # weekly traffic low point.
+    - cron: "30 4 * * 0"
+  workflow_dispatch: {}
+
+concurrency:
+  group: convex-migrations
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: Export production snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Export production snapshot (data + file storage)
+        if: env.CONVEX_DEPLOY_KEY != ''
+        run: |
+          mkdir -p backups
+          npx convex export --include-file-storage \
+            --path "backups/purewire-prod-$(date -u +%Y-%m-%d).zip"
+          sha256sum "backups/purewire-prod-$(date -u +%Y-%m-%d).zip" | tee backups/SHA256SUMS.txt
+
+      - name: Upload snapshot artifact
+        if: always() && env.CONVEX_DEPLOY_KEY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: purewire-prod-snapshot
+          path: backups/
+          retention-days: 90
