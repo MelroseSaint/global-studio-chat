@@ -34,7 +34,7 @@
  *   TEST_HARNESS_SECRET=<secret> npm run qa:test-isolation
  *
  * Overrides: CONVEX_URL (default the production deployment), SITE_URL
- * (default the production host), ADMIN_USERNAME (default adminmelrose).
+ * (default the production host), ADMIN_USERNAME (default melroseadmin).
  * Exit codes: 0 all checks passed, 1 a check failed, 2 missing secret.
  */
 import { ConvexHttpClient } from "convex/browser";
@@ -47,7 +47,7 @@ const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://jovial-axolotl-209.convex.cloud";
 const SITE_URL = process.env.SITE_URL ?? "https://purewire.vercel.app";
 const HARNESS_SECRET = process.env.TEST_HARNESS_SECRET;
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "adminmelrose";
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "melroseadmin";
 
 let passed = 0;
 let failed = 0;

@@ -2427,7 +2427,7 @@ jobs:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
-          ADMIN_USERNAME: ${{ vars.ADMIN_USERNAME || 'adminmelrose' }}
+          ADMIN_USERNAME: ${{ vars.ADMIN_USERNAME || 'melroseadmin' }}
         run: bash scripts/retry-once.sh test-isolation.log npm run qa:test-isolation
 
       - name: Upload the test-isolation QA log

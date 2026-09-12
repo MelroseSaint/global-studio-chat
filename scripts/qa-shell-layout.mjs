@@ -101,7 +101,7 @@ const SURFACES = [
   ["/explore", "explore"],
   ["/messages", "messages"],
   ["/notifications", "notifications"],
-  ["/u/adminmelrose", "profile"],
+  ["/u/melroseadmin", "profile"],
   ["/settings", "settings"],
 ];
 

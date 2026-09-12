@@ -739,46 +739,96 @@ async function main() {
         const item = media[0];
         cloudUrl = item.url ?? null;
         cloudKey = item.key ?? null;
-        // Cloudinary-mode assertions: the stored item must be an external
-        // secure_url + public_id — never a Convex storage id.
-        check(
-          "post media is a Cloudinary secure_url",
-          typeof item.url === "string" &&
-            item.url.startsWith("https://res.cloudinary.com/"),
-          typeof item.url === "string"
-            ? `url: ${item.url.slice(0, 90)}`
-            : "no url on media item",
-        );
-        check(
-          "post media carries a public_id (key)",
-          typeof item.key === "string" && item.key.length > 0,
-          "no key on media item",
-        );
-        check(
-          "media bytes live outside Convex storage (no storageId)",
-          item.storageId === undefined,
-          item.storageId !== undefined
-            ? `storageId present: ${item.storageId}`
-            : "",
-        );
-        check(
-          "feed resolves the external URL (mediaUrls[0].url)",
-          typeof mediaUrls[0]?.url === "string" &&
-            mediaUrls[0].url === item.url,
-          typeof mediaUrls[0]?.url === "string"
-            ? `resolved: ${mediaUrls[0].url.slice(0, 90)}`
-            : "mediaUrls[0].url missing",
-        );
-        // The asset must actually be served by Cloudinary right now.
-        if (typeof cloudUrl === "string") {
-          const live = await fetch(cloudUrl, { method: "GET" })
-            .then((r) => r.status)
-            .catch(() => 0);
+        // Detect the deployment's media mode from the pipeline itself —
+        // prepareUpload hands out a Cloudinary ticket when CLOUDINARY_* is
+        // configured, a Convex upload URL otherwise. The assertions are
+        // strict PER MODE; they must never assume a mode the deployment
+        // isn't actually running (in fallback mode external URLs are
+        // rejected outright, so a storage id is the CORRECT storage).
+        let cloudinaryMode = false;
+        try {
+          const probe = await convex.action(api.media.prepareUpload, {
+            contentType: "image/png",
+          });
+          cloudinaryMode = probe?.mode === "cloudinary";
+        } catch {
+          cloudinaryMode = false;
+        }
+        if (cloudinaryMode) {
+          // Cloudinary-mode assertions: the stored item must be an external
+          // secure_url + public_id — never a Convex storage id.
           check(
-            "Cloudinary asset is live (HTTP 200)",
-            live === 200,
-            live ? `HTTP ${live}` : "fetch failed",
+            "post media is a Cloudinary secure_url",
+            typeof item.url === "string" &&
+              item.url.startsWith("https://res.cloudinary.com/"),
+            typeof item.url === "string"
+              ? `url: ${item.url.slice(0, 90)}`
+              : "no url on media item",
           );
+          check(
+            "post media carries a public_id (key)",
+            typeof item.key === "string" && item.key.length > 0,
+            "no key on media item",
+          );
+          check(
+            "media bytes live outside Convex storage (no storageId)",
+            item.storageId === undefined,
+            item.storageId !== undefined
+              ? `storageId present: ${item.storageId}`
+              : "",
+          );
+          check(
+            "feed resolves the external URL (mediaUrls[0].url)",
+            typeof mediaUrls[0]?.url === "string" &&
+              mediaUrls[0].url === item.url,
+            typeof mediaUrls[0]?.url === "string"
+              ? `resolved: ${mediaUrls[0].url.slice(0, 90)}`
+              : "mediaUrls[0].url missing",
+          );
+          // The asset must actually be served by Cloudinary right now.
+          if (typeof cloudUrl === "string") {
+            const live = await fetch(cloudUrl, { method: "GET" })
+              .then((r) => r.status)
+              .catch(() => 0);
+            check(
+              "Cloudinary asset is live (HTTP 200)",
+              live === 200,
+              live ? `HTTP ${live}` : "fetch failed",
+            );
+          }
+        } else {
+          // Convex-storage fallback mode: the item must be a storage id —
+          // an external URL would mean the mode gate leaked.
+          check(
+            "fallback mode: post media is a Convex storage id",
+            typeof item.storageId === "string",
+            item.storageId !== undefined
+              ? "storageId present"
+              : "no storageId on media item",
+          );
+          check(
+            "fallback mode: no external URL on the media item",
+            item.url === undefined && item.key === undefined,
+            item.url !== undefined ? `url: ${String(item.url).slice(0, 90)}` : "",
+          );
+          check(
+            "fallback mode: feed resolves the storage URL",
+            typeof mediaUrls[0]?.url === "string" &&
+              mediaUrls[0].url.includes("/api/storage/"),
+            typeof mediaUrls[0]?.url === "string"
+              ? `resolved: ${mediaUrls[0].url.slice(0, 90)}`
+              : "mediaUrls[0].url missing",
+          );
+          if (typeof mediaUrls[0]?.url === "string") {
+            const live = await fetch(mediaUrls[0].url, { method: "GET" })
+              .then((r) => r.status)
+              .catch(() => 0);
+            check(
+              "storage asset is live (HTTP 200)",
+              live === 200,
+              live ? `HTTP ${live}` : "fetch failed",
+            );
+          }
         }
       }
     }

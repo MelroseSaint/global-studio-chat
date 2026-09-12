@@ -38,7 +38,7 @@ import { api } from "../src/convex/_generated/api.js";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://jovial-axolotl-209.convex.cloud";
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "adminmelrose";
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "melroseadmin";
 // The workspace-level .freebuff/ (gitignored) sits two levels above this
 // script when the app lives in the nested project folder.
 const SEED_FILE = join(

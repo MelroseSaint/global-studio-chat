@@ -22,7 +22,7 @@
  *   … watch the counters in the browser …
  *   TEST_HARNESS_SECRET=<secret> node scripts/live-engage-e2e.mjs cleanup
  *
- * Overrides: CONVEX_URL, ADMIN_USERNAME (default adminmelrose).
+ * Overrides: CONVEX_URL, ADMIN_USERNAME (default melroseadmin).
  * Exit codes: 0 all assertions passed, 1 any failed.
  */
 import { readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -35,7 +35,7 @@ import { assertAdminIpVerified } from "./lib/qa-admin-ip.mjs";
 
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://jovial-axolotl-209.convex.cloud";
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "adminmelrose";
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "melroseadmin";
 const SEED_FILE = join(
   import.meta.dirname,
   "..",

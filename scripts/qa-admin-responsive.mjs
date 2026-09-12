@@ -511,8 +511,8 @@ async function inspectAdmin(page, widthLabel, width) {
 async function inspectProfile(page, widthLabel) {
   crashState.width = widthLabel;
   crashState.section = "profile";
-  crashState.url = `${SITE_URL}/u/adminmelrose`;
-  await gotoWithRetry(page, `${SITE_URL}/u/adminmelrose`);
+  crashState.url = `${SITE_URL}/u/melroseadmin`;
+  await gotoWithRetry(page, `${SITE_URL}/u/melroseadmin`);
   await page.waitForSelector("text=Posts", { timeout: TIMEOUT });
   const stats = await page.evaluate(() => {
     const text = document.body.innerText;

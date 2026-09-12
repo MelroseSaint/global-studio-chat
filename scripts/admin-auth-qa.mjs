@@ -47,7 +47,7 @@
  *   npx convex env remove TEST_HARNESS_SECRET
  *
  * Overrides: CONVEX_URL (default: the production deployment), ADMIN_EMAIL
- * (default monroedoses@gmail.com), ADMIN_USERNAME (default adminmelrose),
+ * (default monroedoses@gmail.com), ADMIN_USERNAME (default melroseadmin),
  * TEST_HARNESS_SECRET (enables the remove-account erasure QA).
  * Exit codes: 0 all checks passed, 1 a check failed, 2 missing password.
  */
@@ -61,7 +61,7 @@ import { assertAdminIpVerified } from "./lib/qa-admin-ip.mjs";
 const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://jovial-axolotl-209.convex.cloud";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "monroedoses@gmail.com";
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "adminmelrose";
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "melroseadmin";
 const ADMIN_PASSWORD = resolveAdminPassword();
 // Optional: enables the remove-account erasure QA (the harness mints
 // throwaway sessions without needing an email OTP).
