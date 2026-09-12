@@ -430,9 +430,10 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Run the admin dashboard responsive QA
-        if: env.ADMIN_PASSWORD != ''
+        if: env.ADMIN_PASSWORD != '' || env.TEST_HARNESS_SECRET != ''
         env:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
         # retry-once: this QA walks 50+ live pages; a single transient
         # network blip on a shared runner must not red the push gate on its
@@ -453,6 +454,7 @@ jobs:
     timeout-minutes: 10
     env:
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -462,9 +464,10 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Run the dense-page inflation QA
-        if: env.ADMIN_PASSWORD != ''
+        if: env.ADMIN_PASSWORD != '' || env.TEST_HARNESS_SECRET != ''
         env:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
         run: npm run qa:pages-inflation
 
