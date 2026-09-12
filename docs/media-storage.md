@@ -59,14 +59,16 @@ transferred to the deployment because that needs one of:
    Settings → Access Keys → **Deploy key** → create.
 2. GitHub → repo → Settings → Secrets and variables → Actions → update
    `CONVEX_DEPLOY_KEY`.
-3. Push any commit to `main` (or re-run *Migrations*). The
-   migrations workflow's "Sync media storage env" step now sets
-   `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and
-   `CLOUDINARY_API_SECRET` on the deployment from the repo secrets
-   (never printing them) before deploying.
-4. Flip the repo **variable** `MEDIA_MODE_EXPECTATION` to `cloudinary`.
-5. Re-run the *Media architecture guard* job — it must report
-   "live upload pipeline is in the declared mode (cloudinary)".
+3. Done. Push any commit to `main` (or re-run *Migrations*) and the
+   workflow finishes the flip end to end: the "Sync Cloudinary env from
+   repo secrets" step sets `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`,
+   and `CLOUDINARY_API_SECRET` on the deployment (never printing them),
+   then the "Flip MEDIA_MODE_EXPECTATION after a successful sync" step
+   verifies all three are live and flips the `MEDIA_MODE_EXPECTATION`
+   repo **variable** to `cloudinary`. The Media architecture guard then
+   enforces the declared mode on the same run. The expectation can never
+   lead the capability: if the sync fails or a secret is missing, the
+   variable stays `convex` and the guard stays honest.
 
 ### Option B — one manual command
 
@@ -78,7 +80,8 @@ npx convex env set CLOUDINARY_API_SECRET <secret>
 npx convex env set CLOUDINARY_UPLOAD_PRESET <unsigned preset name>
 ```
 
-Then flip `MEDIA_MODE_EXPECTATION` to `cloudinary` as in step 4–5 above.
+Then flip the `MEDIA_MODE_EXPECTATION` repo **variable** to
+`cloudinary` (Settings → Secrets and variables → Actions → Variables).
 
 ### Cloudinary dashboard prerequisites
 
