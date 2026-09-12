@@ -150,41 +150,38 @@ function authMetadataBlocked(err) {
 }
 
 /**
- * Presence of JWT_PRIVATE_KEY / JWKS. Normally read via `env get`, but a
- * deployment-scoped deploy key can be refused on that endpoint in some
- * environments ("team_and_project … MissingAccessToken") even though `env
- * set`, `run`, and `deploy` all work with the same key. Fall back to the
- * PUBLIC status:authPreflight query, which reports exactly these two vars.
+ * Presence of JWT_PRIVATE_KEY / JWKS.
+ *
+ * Primary source: the PUBLIC status:authPreflight query over plain HTTPS —
+ * no CLI, no auth, immune to the deploy-key quirks where spawned CLI
+ * processes can lose their credentials in some environments while npx-style
+ * invocations in the same job carry them fine.
  */
 async function keyPresence(deployment) {
+  const deploymentName = deployment.includes("--deployment") ? deployment[1] : "jovial-axolotl-209";
+  const url = `https://${deploymentName}.convex.cloud/api/query`;
+  let res;
   try {
-    return {
-      priv: envGet(deployment, "JWT_PRIVATE_KEY"),
-      jwks: envGet(deployment, "JWKS"),
-    };
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "status:authPreflight", args: {}, format: "json" }),
+    });
   } catch (err) {
-    if (!authMetadataBlocked(err)) throw err;
-    console.warn(
-      "ensure-jwt-keys: env get refused for this key (metadata endpoint needs " +
-        "a user token) — falling back to the public auth preflight.",
-    );
-    const res = runCli(["run", "status:authPreflight", ...deployment]);
-    if (!res.ok) {
-      throw new Error(`status:authPreflight failed: ${res.stderr || res.stdout}`);
-    }
-    const lastLine = (res.stdout ?? "").split(/\r?\n/).filter((l) => l.trim()).pop() ?? "";
-    let parsed;
-    try {
-      parsed = JSON.parse(lastLine);
-    } catch {
-      throw new Error(`auth preflight returned unparseable output: ${lastLine.slice(0, 200)}`);
-    }
-    const missing = new Set(parsed?.missing ?? []);
-    return {
-      priv: { exists: !missing.has("JWT_PRIVATE_KEY") },
-      jwks: { exists: !missing.has("JWKS") },
-    };
+    throw new Error(`auth preflight HTTP call failed: ${err?.message ?? err}`);
   }
+  if (!res.ok) {
+    throw new Error(`auth preflight HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  const body = await res.json();
+  if (body?.status !== "success") {
+    throw new Error(`auth preflight returned status ${body?.status}: ${JSON.stringify(body).slice(0, 200)}`);
+  }
+  const missing = new Set(body?.value?.missing ?? []);
+  return {
+    priv: { exists: !missing.has("JWT_PRIVATE_KEY") },
+    jwks: { exists: !missing.has("JWKS") },
+  };
 }
 
 async function main() {
