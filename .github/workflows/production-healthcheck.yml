@@ -3507,9 +3507,42 @@ jobs:
     env:
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     needs:
+      # ALL peer jobs — this sweep is the last line of defense and must
+      # only run once every fixture-creating QA has settled. A needs list
+      # shorter than the full peer set let the sweep race in-flight qa_*
+      # fixtures (observed 2026-09-12: sweep + 6 live posts from parallel
+      # jobs). Skipped jobs count as settled, so password-gated peers
+      # can't block it.
+      - content-baseline
+      - push-burst-gate
       - auth-loop
+      - seo-live-guard
+      - vercel-env-guard
+      - vercel-build-warnings
       - cloudinary-upload
+      - media-architecture
+      - ai-visual-hardening
+      - ai-scan-integration
+      - phishing-scan
+      - adult-content-qa
+      - profile-type
+      - pwa-install-hint
+      - shared-video-autoplay
+      - dm-share-qa
+      - comment-share
+      - post-author-delete
+      - blocklist-sync
+      - moderation-reinstate
+      - admin-ip-qa
+      - test-isolation
+      - email-domain-qa
+      - admin-workload-qa
+      - story-views-qa
+      - blocklist-qa
+      - inp-audit
       - refresh-timing-qa
+      - ios-layout-qa
+      - robots-live-guard
     # Run even when a peer QA FAILED — a crashed job is exactly when a
     # straggler qa_ account is most likely left behind. (Without this,
     # GitHub skips a dependent job whenever one of its needs fails.)
