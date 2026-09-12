@@ -110,22 +110,32 @@ async function main() {
   //    password isn't available but the deployment's test harness is on.
   const client = new ConvexHttpClient(CONVEX_URL);
   let token = null;
-  let via = "password";
+  let via = null;
   if (ADMIN_PASSWORD) {
-    const signIn = await client.action("auth:signIn", {
-      provider: "password",
-      params: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, flow: "signIn" },
-    });
-    token = signIn?.tokens?.token;
-  } else if (HARNESS_SECRET) {
-    via = "test-harness";
-    const minted = await client.mutation(api.testHarness.mintAdminSession, {
-      secret: HARNESS_SECRET,
-    });
-    token = minted?.token;
+    try {
+      const signIn = await client.action("auth:signIn", {
+        provider: "password",
+        params: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, flow: "signIn" },
+      });
+      token = signIn?.tokens?.token;
+      if (token) via = "password";
+    } catch (e) {
+      console.log(`  password sign-in failed (${String(e.message).slice(0, 80)})`);
+    }
+  }
+  if (!token && HARNESS_SECRET) {
+    try {
+      const minted = await client.mutation(api.testHarness.mintAdminSession, {
+        secret: HARNESS_SECRET,
+      });
+      token = minted?.token;
+      if (token) via = "test-harness";
+    } catch (e) {
+      console.log(`  harness mint failed (${String(e.message).slice(0, 80)})`);
+    }
   }
   check(
-    `signed in as the admin (via ${via})`,
+    `signed in as the admin (via ${via ?? "nothing"})`,
     typeof token === "string" && token.length > 0,
   );
   if (!token) {
