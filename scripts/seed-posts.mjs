@@ -2,13 +2,16 @@
 /**
  * PureWire — seed a few real posts as the admin account.
  *
- * Why: the dynamic-render guard (qa:dynamic-render) and the sitemap URL
- * health check (qa:sitemap-urls) both need at least one /post/:id URL in
- * the live sitemap to verify — on an empty database they fail with
- * "sitemap has no post/profile URLs", which is an empty-state, not a
- * regression. This script publishes a handful of original, text-only
- * admin posts through the REAL public write path so the guards always
- * have something to verify.
+ * ⚠️ OPERATOR-DIRECTED ONLY. On 2026-09-12 the owner removed every
+ * automation-seeded post from the admin profile and deleted the CI seed
+ * workflow: production runs with an intentionally EMPTY feed, and the
+ * only posts on it must be ones the owner publishes themselves. Never
+ * run this against production without the owner's explicit say-so; the
+ * content-baseline canary treats zero posts as the normal baseline.
+ *
+ * Why it exists: when the owner DOES want content seeded (a fresh
+ * deployment, or a requested reseed), this publishes a handful of
+ * original, text-only admin posts through the REAL public write path.
  *
  * Deliberately user-safe by design:
  *   - It signs in as the admin (never a QA account — qa_* posts are
