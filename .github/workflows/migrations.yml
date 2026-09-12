@@ -61,10 +61,10 @@ jobs:
       # explicit production deployment: CONVEX_DEPLOY_KEY may be a
       # deployment-scoped key, which `--prod` rejects ("Please set
       # CONVEX_DEPLOY_KEY…"), so every Convex CLI call names the deployment.
-      # Best-effort by design: a deployment-scoped key cannot run `env set`
-      # at all (MissingAccessToken — it carries no team/project scope), so
-      # the owner sets these vars via the CLI; this step only helps when a
-      # project-scoped key is configured.
+      # Best-effort by design: CI intermittently drops the deploy-key
+      # credential on BigBrain calls (observed both outcomes for identical
+      # code), so a failure here must not red the run — the owner sets
+      # these vars via the CLI anyway.
       - name: Sync Cloudinary env from repo secrets
         if: env.CONVEX_DEPLOY_KEY != ''
         continue-on-error: true
@@ -104,9 +104,12 @@ jobs:
           node scripts/ensure-jwt-keys.mjs --deployment jovial-axolotl-209
           # deploy has no --deployment flag; the env-file form targets the
           # production deployment (verified: prints the jovial-axolotl-209
-          # dashboard URL before pushing).
+          # dashboard URL before pushing). Retry-once: CI intermittently
+          # drops the deploy-key credential on BigBrain project resolution
+          # (observed both outcomes for identical code across runs).
           printf 'CONVEX_DEPLOYMENT=jovial-axolotl-209\n' > deploy-target.env
-          npx --no-install convex deploy --env-file deploy-target.env
+          bash scripts/retry-once.sh deploy.log \
+            npx --no-install convex deploy --env-file deploy-target.env
 
       # Record the deployed git commit so the nightly drift job can compare
       # the live backend against main HEAD (Convex exposes no commit
@@ -117,7 +120,7 @@ jobs:
         if: steps.deploy.conclusion == 'success' && env.CONVEX_DEPLOY_KEY != ''
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: npx --no-install convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}" --deployment jovial-axolotl-209
+        run: npx --no-install convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}" --deployment jovial-axolotl-209 || echo "recordDeploy failed (transient auth) — the drift check will re-establish the ledger"
 
       - name: Run all migrations
         if: env.CONVEX_DEPLOY_KEY != ''
@@ -126,7 +129,8 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: |
           set -o pipefail
-          npx --no-install convex run internal.migrationsRunner.runAllMigrations --deployment jovial-axolotl-209 2>&1 | tee migrations.log
+          bash scripts/retry-once.sh migrations.log \
+            npx --no-install convex run internal.migrationsRunner.runAllMigrations --deployment jovial-axolotl-209
 
       - name: Upload the migration log
         if: failure()
