@@ -144,6 +144,49 @@ async function envSet(deployment, name, value) {
   }
 }
 
+/** The deployment-scoped-key refusal shape for env metadata reads. */
+function authMetadataBlocked(err) {
+  return /MissingAccessToken|team_and_project/i.test(String(err?.message ?? err));
+}
+
+/**
+ * Presence of JWT_PRIVATE_KEY / JWKS. Normally read via `env get`, but a
+ * deployment-scoped deploy key can be refused on that endpoint in some
+ * environments ("team_and_project … MissingAccessToken") even though `env
+ * set`, `run`, and `deploy` all work with the same key. Fall back to the
+ * PUBLIC status:authPreflight query, which reports exactly these two vars.
+ */
+async function keyPresence(deployment) {
+  try {
+    return {
+      priv: envGet(deployment, "JWT_PRIVATE_KEY"),
+      jwks: envGet(deployment, "JWKS"),
+    };
+  } catch (err) {
+    if (!authMetadataBlocked(err)) throw err;
+    console.warn(
+      "ensure-jwt-keys: env get refused for this key (metadata endpoint needs " +
+        "a user token) — falling back to the public auth preflight.",
+    );
+    const res = runCli(["run", "status:authPreflight", ...deployment]);
+    if (!res.ok) {
+      throw new Error(`status:authPreflight failed: ${res.stderr || res.stdout}`);
+    }
+    const lastLine = (res.stdout ?? "").split(/\r?\n/).filter((l) => l.trim()).pop() ?? "";
+    let parsed;
+    try {
+      parsed = JSON.parse(lastLine);
+    } catch {
+      throw new Error(`auth preflight returned unparseable output: ${lastLine.slice(0, 200)}`);
+    }
+    const missing = new Set(parsed?.missing ?? []);
+    return {
+      priv: { exists: !missing.has("JWT_PRIVATE_KEY") },
+      jwks: { exists: !missing.has("JWKS") },
+    };
+  }
+}
+
 async function main() {
   const deployment = deploymentArgs();
   const where = deployment.includes("--deployment")
@@ -151,8 +194,7 @@ async function main() {
     : "default deployment";
   console.log(`ensure-jwt-keys: targeting ${where}`);
 
-  const priv = envGet(deployment, "JWT_PRIVATE_KEY");
-  const jwksExisting = envGet(deployment, "JWKS");
+  const { priv, jwks: jwksExisting } = await keyPresence(deployment);
   const hasPriv = priv.exists;
   const hasJwks = jwksExisting.exists;
 
