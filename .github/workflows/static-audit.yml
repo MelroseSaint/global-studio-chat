@@ -103,6 +103,32 @@ jobs:
       - run: npm ci
       - run: npm run lint
 
+  unit-tests:
+    name: Unit tests (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  dependency-audit:
+    name: Dependency audit (npm audit gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fails on high/critical advisories; accepted risks are documented
+      # in docs/security-review.md ("Accepted risks").
+      - run: node scripts/npm-audit-gate.mjs
+
   build:
     name: Vite build + critical-path guard
     runs-on: ubuntu-latest

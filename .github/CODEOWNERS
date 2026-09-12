@@ -1,0 +1,13 @@
+# Default code ownership. Review requests and required approvals route
+# here as the team grows; today it documents the single-owner reality and
+# makes Dependabot PRs land in the right place.
+*                       @MelroseSaint
+
+# Infrastructure and CI changes always need the owner.
+/.github/               @MelroseSaint
+
+# Security-sensitive surfaces.
+/src/convex/            @MelroseSaint
+/src/lib/dm-crypto.ts   @MelroseSaint
+/src/lib/phishing-report.ts @MelroseSaint
+/scripts/               @MelroseSaint

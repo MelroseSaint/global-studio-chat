@@ -1,0 +1,37 @@
+# Dependabot: keep dependencies current and surface vulnerabilities as
+# reviewable PRs instead of silent drift. Version updates run weekly
+# (grouped so the diff stays reviewable); security updates run immediately.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    # Group routine minor/patch bumps so a week of updates is one reviewable
+    # PR; major bumps stay separate and force a deliberate decision.
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+    # GitHub Actions versions too — the workflows pin @v4 style tags that
+    # Dependabot keeps current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "ci"
