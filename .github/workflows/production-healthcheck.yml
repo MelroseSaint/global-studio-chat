@@ -855,6 +855,12 @@ jobs:
 
       - name: Run the media-architecture audit
         id: audit
+        env:
+          # Declared storage mode for the architecture invariant
+          # ("Cloudinary holds the bytes, Convex stores only URLs").
+          # Flip the repo variable to `cloudinary` the moment the
+          # CLOUDINARY_* env vars land on the deployment.
+          MEDIA_MODE_EXPECTATION: ${{ vars.MEDIA_MODE_EXPECTATION || 'convex' }}
         run: bash scripts/retry-once.sh media-architecture.log npm run qa:media-architecture
 
       - name: Upload the audit log
