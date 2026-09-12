@@ -38,10 +38,16 @@ import {
   simulateSilkInflation,
 } from "./lib/qa-browser.mjs";
 import { passwordHint, resolveAdminPassword } from "./lib/qa-secrets.mjs";
+import { ConvexHttpClient } from "convex/browser";
+
+import { api } from "../src/convex/_generated/api.js";
 
 const SITE_URL = process.env.SITE_URL ?? "https://purewire.vercel.app";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "monroedoses@gmail.com";
 const ADMIN_PASSWORD = resolveAdminPassword();
+const HARNESS_SECRET = process.env.TEST_HARNESS_SECRET ?? "";
+const CONVEX_URL =
+  process.env.CONVEX_URL ?? "https://jovial-axolotl-209.convex.cloud";
 const HEADED = process.env.HEADED === "1";
 const TIMEOUT = Number(process.env.BROWSER_TIMEOUT_MS ?? 30000);
 const NAV_TIMEOUT = 45000;
@@ -577,8 +583,11 @@ async function inspectProfile(page, widthLabel) {
 }
 
 async function main() {
-  if (!ADMIN_PASSWORD) {
+  if (!ADMIN_PASSWORD && !HARNESS_SECRET) {
     console.log(passwordHint());
+    console.log(
+      "  or set TEST_HARNESS_SECRET to seed a harness-minted admin session.",
+    );
     process.exit(2);
   }
   console.log(`\nPureWire admin dashboard responsive QA (${SITE_URL})\n`);
@@ -596,13 +605,42 @@ async function main() {
       deviceScaleFactor: 1,
     });
     page.setDefaultTimeout(TIMEOUT);
-    await signIn(page, {
-      siteUrl: SITE_URL,
-      email: ADMIN_EMAIL,
-      password: ADMIN_PASSWORD,
-      timeoutMs: TIMEOUT,
-      navTimeoutMs: NAV_TIMEOUT,
-    });
+    if (ADMIN_PASSWORD) {
+      await signIn(page, {
+        siteUrl: SITE_URL,
+        email: ADMIN_EMAIL,
+        password: ADMIN_PASSWORD,
+        timeoutMs: TIMEOUT,
+        navTimeoutMs: NAV_TIMEOUT,
+      });
+    } else {
+      // Passwordless path: seed a harness-minted admin session into the
+      // browser's auth storage before any app script runs (BOTH the JWT
+      // and the refresh token — the auth client signs out on boot if the
+      // refresh token is missing). Same pattern as admin-workload-qa.
+      const client = new ConvexHttpClient(CONVEX_URL);
+      const admin = await client.mutation(api.testHarness.mintAdminSession, {
+        secret: HARNESS_SECRET,
+      });
+      if (!admin?.token) {
+        console.error("Harness mint of the admin session failed.");
+        process.exit(2);
+      }
+      const ns = CONVEX_URL.replace(/[^a-zA-Z0-9]/g, "");
+      await page.addInitScript(
+        (seed) => {
+          try {
+            localStorage.setItem(`__convexAuthJWT_${seed.ns}`, seed.token);
+            localStorage.setItem(
+              `__convexAuthRefreshToken_${seed.ns}`,
+              seed.refreshToken,
+            );
+          } catch (_) {}
+        },
+        { token: admin.token, refreshToken: admin.refreshToken, ns },
+      );
+      console.log("  (seeded a harness-minted admin session)");
+    }
     for (const [label, width, height] of WIDTHS) {
       console.log(`\n--- ${label} (${width}px) ---`);
       crashState.width = label;
