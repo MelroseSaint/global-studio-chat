@@ -1,0 +1,36 @@
+# Mail-forwarding / alias services — inbound mail is forwarded to a hidden
+# real address, so a verified alias proves nothing about the operator's
+# identity or location. Blocked the same way as disposable/temporary
+# domains (exact + any subdomain).
+#
+# Format: one bare domain per line, lowercase. `#` starts a comment.
+#
+# NOTE: only clear-cut forwarding/alias services belong here. Legitimate
+# privacy-forwarding products (SimpleLogin, AnonAddy/addy.io, DuckDuckGo
+# Email Protection) are intentionally NOT listed — they are real services
+# with real onboarding, not throwaway registrations.
+
+33mail.com
+forward.cat
+mailnull.com
+spamgourmet.com
+spamgourmet.org
+e4ward.com
+mailcatch.com
+jetable.org
+jetable.net
+fakemailgenerator.com
+aliasaddress.com
+altaddress.com
+dodgeit.com
+dodgit.com
+dodgit.org
+mailinatar.com
+mt2014.com
+mt2009.com
+thankyou2010.com
+sneakemail.com
+sneakmail.de
+spam.la
+spamgourmet.com
+maildrop.cc

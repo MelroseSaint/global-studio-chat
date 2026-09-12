@@ -1,0 +1,185 @@
+/**
+ * PureWire service worker — offline-capable PWA, no external dependencies.
+ *
+ * This file is a BUILD TEMPLATE: the Vite `precacheManifest` plugin reads it,
+ * replaces `__PUREWIRE_CACHE__` with a content-derived version (a hash of the
+ * build's asset list), and emits the result as /sw.js. Because the version is
+ * baked into the cache name, EVERY deploy produces a different sw.js — the
+ * browser reinstalls it, and the activate handler purges the previous
+ * deploy's cache. That is what prevents the post-deploy stale-chunk crash: an
+ * open tab that lazily imports a chunk by its old hash never finds it.
+ *
+ * Strategy:
+ * - Precaches the app shell (index, manifest, icons) at install time, plus
+ *   every hashed JS/CSS chunk listed in /precache-manifest.json (written by
+ *   the same build-time Vite plugin). That includes the lazy-loaded Admin
+ *   route, so the whole app — admin dashboard included — opens without a
+ *   connection after install, not only after each route has been visited.
+ * - Navigations are stale-while-revalidate: the cached shell answers
+ *   instantly (refresh feels instant — no waiting on the network for the
+ *   HTML), while the network copy is fetched in the background to refresh
+ *   the cache, with an offline fallback to whatever shell is cached. Safe
+ *   because the cache name is per-deploy: a new deployment installs a new
+ *   sw.js, precaches the new shell, and purges this cache on activate — so
+ *   a served shell can never be older than the currently-active deploy.
+ * - Hashed build assets (/assets/*) are immutable, so they are cache-first
+ *   with a background refresh — fast loads, no stale UI.
+ * - Every other same-origin GET (logos, manifest) is stale-while-revalidate.
+ * - Convex API calls (cross-origin POSTs to the backend) are never cached.
+ */
+
+const CACHE = "purewire-__PUREWIRE_CACHE__";
+
+// Cap on cached hashed assets. Each deploy emits new immutable /assets/*
+// files, so without eviction the cache would grow without bound. (The
+// per-deploy versioned cache name already purges the previous deploy's
+// assets wholesale on activate; this bound only limits within-deploy growth.)
+const MAX_ASSETS = 80;
+
+/** Keep the asset cache bounded by evicting the oldest entries. */
+async function pruneAssetCache() {
+  const cache = await caches.open(CACHE);
+  const keys = await cache.keys();
+  const assets = keys.filter((req) =>
+    new URL(req.url).pathname.startsWith("/assets/"),
+  );
+  if (assets.length > MAX_ASSETS) {
+    // The Cache API returns keys in insertion order — drop the oldest.
+    const stale = assets.slice(0, assets.length - MAX_ASSETS);
+    await Promise.all(stale.map((req) => cache.delete(req)));
+  }
+}
+
+const SHELL = [
+  "/",
+  "/index.html",
+  "/manifest.webmanifest",
+  "/logo.svg",
+  "/favicon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-192.png",
+  "/icon-maskable-512.png",
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then(async (cache) => {
+        // Precache the shell one file at a time: a single missing asset must
+        // never fail the whole install and silently disable offline support.
+        await Promise.all(
+          SHELL.map((url) => cache.add(url).catch(() => {})),
+        );
+        // Precache every hashed chunk the build emitted (the lazy Admin
+        // route included) from the manifest the Vite plugin wrote.
+        try {
+          const manifest = await fetch("./precache-manifest.json").then((r) =>
+            r.json(),
+          );
+          await Promise.all(
+            (manifest.assets ?? []).map((url) =>
+              cache.add(url).catch(() => {}),
+            ),
+          );
+        } catch {
+          // No manifest (e.g. dev server) — the shell alone is still
+          // precached, so offline support degrades rather than breaking.
+        }
+      })
+      .then(() => self.skipWaiting()),
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))),
+      )
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  // Only handle same-origin requests; the Convex backend is cross-origin
+  // and must always go to the network.
+  if (url.origin !== self.location.origin) return;
+
+  // Navigations: stale-while-revalidate — serve the cached shell NOW, then
+  // refresh the cache from the network in the background. A refresh (or any
+  // reload) no longer waits a network round trip for the HTML: the entry
+  // script and its preloaded chunks are already cache-first below, so the
+  // whole reload is served from cache and the network only revalidates.
+  // Only a real page (response.ok) is stored — an error page must never
+  // become the offline shell. When there's no cache yet, fall through to
+  // the network; offline with nothing cached, fall back to the shell or /
+  // if the network copy is unreachable.
+  if (request.mode === "navigate") {
+    event.respondWith(
+      caches.match("/index.html").then((hit) => {
+        const revalidate = fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              const copy = response.clone();
+              caches
+                .open(CACHE)
+                .then((cache) => cache.put("/index.html", copy))
+                .catch(() => {});
+            }
+            return response;
+          })
+          .catch(() => hit || caches.match("/"));
+        return hit || revalidate;
+      }),
+    );
+    return;
+  }
+
+  // Immutable hashed assets: cache-first, refresh in the background, and
+  // keep the cache bounded across deployments.
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      caches.match(request).then((hit) => {
+        const refresh = fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              caches
+                .open(CACHE)
+                .then((cache) => cache.put(request, response.clone()))
+                .then(() => pruneAssetCache())
+                .catch(() => {});
+            }
+            return response;
+          })
+          .catch(() => hit);
+        return hit || refresh;
+      }),
+    );
+    return;
+  }
+
+  // Everything else same-origin: stale-while-revalidate.
+  event.respondWith(
+    caches.match(request).then((hit) => {
+      const network = fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            caches
+              .open(CACHE)
+              .then((cache) => cache.put(request, response.clone()))
+              .catch(() => {});
+          }
+          return response;
+        })
+        .catch(() => hit);
+      return hit || network;
+    }),
+  );
+});

@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env.local
+.env*.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Convex CLI local state
+.convex/
+
+# Logs
+*.log
+
+# Freebuff desktop scratch (run docs, preview logs, QA render artifacts)
+.freebuff/
+desktop-v2.db
+desktop-v2.db-shm
+desktop-v2.db-wal
+
+# Installed community skills (downloaded from source repos)
+.agents/
+# Runtime output of the nightly SEO audit (scripts/seo-audit.mjs).
+seo-audit-metrics.md
+.claude/
+
+# Local data stores
+data/
+
+# Vercel CLI local state. Only the public project link file is committed so
+# GitHub Actions CI can resolve the project; .vercel/.env* (real env values)
+# and the generated README stay out of git.
+.vercel/*
+!.vercel/project.json
+skills-lock.json# TypeScript incremental build artifacts (tsc -b)
+*.tsbuildinfo
+

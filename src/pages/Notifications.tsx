@@ -1,0 +1,377 @@
+import { useMutation, usePaginatedQuery } from "convex/react";
+import { motion } from "framer-motion";
+import {
+  AtSign,
+  Bell,
+  CheckCheck,
+  ChevronDown,
+  ChevronUp,
+  Flag,
+  Heart,
+  Hourglass,
+  Mail,
+  MessageCircle,
+  Repeat2,
+  Reply,
+  Share2,
+  Trash2,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { useInView } from "react-intersection-observer";
+import { Link } from "react-router";
+
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { FollowsList, type FollowsTab } from "@/components/FollowsList";
+import { UserAvatar } from "@/components/UserAvatar";
+import { Button } from "@/components/ui/button";
+import { Empty } from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
+import { timeAgo } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+const ICONS = {
+  follow: UserPlus,
+  like: Heart,
+  comment: MessageCircle,
+  reply: Reply,
+  share: Repeat2,
+  mention: AtSign,
+  system: Bell,
+  ticket: Flag,
+  dm: Mail,
+  "dm-share": Share2,
+  "comment-share": Share2,
+  "comment-deleted": Trash2,
+  "comment-auto-closed": Hourglass,
+} as const;
+
+export function Notifications() {
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.notifications.listNotifications,
+    {},
+    { initialNumItems: 20 },
+  );
+  const markAllRead = useMutation(api.notifications.markAllRead);
+  const markRead = useMutation(api.notifications.markRead);
+
+  const { ref, inView } = useInView();
+
+  useEffect(() => {
+    if (inView && status === "CanLoadMore") {
+      void loadMore(20);
+    }
+  }, [inView, status, loadMore]);
+
+  // The circle of the person who just followed you: which account's
+  // Followers/Following dialog is open, if any.
+  const [circle, setCircle] = useState<{
+    username: string;
+    tab: FollowsTab;
+  } | null>(null);
+  // Per-notification expand state for the ticket/system message-body clamp
+  // — a long support response or platform announcement should never inflate
+  // a single row beyond a couple of lines.
+  const [expandedNotifs, setExpandedNotifs] = useState<Set<string>>(new Set());
+
+  const notifications = results as unknown as {
+    _id: string;
+    _creationTime: number;
+    type: keyof typeof ICONS;
+    read: boolean;
+    message?: string | null;
+    // The conversation a "dm-share" notification points at, so Open lands
+    // on the exact thread (with the shared card) instead of a user picker.
+    conversationId?: string | null;
+    // The post shared into the host post's comments ("comment-share") —
+    // previewed instead of the host post's text.
+    sharedPost?: { _id: string; content?: string } | null;
+    // The comment shared (into a post's comments or a DM) — previewed the
+    // same way as sharedPost; the bell says "shared a comment".
+    sharedComment?: { _id: string; content?: string } | null;
+    actor: {
+      _id: string;
+      name?: string | null;
+      username?: string | null;
+      avatarUrl?: string | null;
+    } | null;
+    post: { _id: string; content?: string } | null;
+  }[];
+
+  const label = (n: (typeof notifications)[number]) => {
+    const who = n.actor?.name ?? n.actor?.username ?? "Someone";
+    switch (n.type) {
+      case "follow":
+        return (
+          <>
+            <b>{who}</b> started following you
+          </>
+        );
+      case "like":
+        return (
+          <>
+            <b>{who}</b> liked your post
+          </>
+        );
+      case "comment":
+        return (
+          <>
+            <b>{who}</b> commented on your post
+          </>
+        );
+      case "reply":
+        return (
+          <>
+            <b>{who}</b> replied to your comment
+          </>
+        );
+      case "share":
+        return (
+          <>
+            <b>{who}</b> shared your post
+          </>
+        );
+      case "mention":
+        return (
+          <>
+            <b>{who}</b> mentioned you in a post
+          </>
+        );
+      case "dm":
+        return (
+          <>
+            <b>{who}</b> sent you an encrypted message
+          </>
+        );
+      case "dm-share":
+        return n.sharedComment ? (
+          <>
+            <b>{who}</b> shared a comment with you
+          </>
+        ) : (
+          <>
+            <b>{who}</b> shared a post with you
+          </>
+        );
+      case "comment-share":
+        return n.sharedComment ? (
+          <>
+            <b>{who}</b> shared a comment in your post&apos;s comments
+          </>
+        ) : (
+          <>
+            <b>{who}</b> shared a post in your post&apos;s comments
+          </>
+        );
+      case "comment-deleted":
+        return (
+          <>
+            <b>{who}</b> removed your comment
+          </>
+        );
+      case "comment-auto-closed":
+        return (
+          <>
+            Your post&apos;s comment thread auto-closed — reopen or opt it out
+          </>
+        );
+      case "ticket":
+        return (
+          <>
+            Your support request:{" "}
+            <b>{n.message ?? "update"}</b>
+          </>
+        );
+      case "system":
+        return <>{n.message ?? "Update from PureWire"}</>;
+    }
+  };
+
+  return (
+    <div className="pb-20 lg:pb-0">
+      <div className="flex items-center justify-between border-b px-4 py-4 sm:px-5">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">Notifications</h1>
+          <p className="text-sm text-muted-foreground">
+            When someone responds to your words, it lands here.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void markAllRead()}
+          className="gap-1.5"
+        >
+          <CheckCheck className="size-4" />
+          Mark all read
+        </Button>
+      </div>
+
+      {status === "LoadingFirstPage" && (
+        <div className="space-y-2 p-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 rounded-xl" />
+          ))}
+        </div>
+      )}
+
+      {notifications.length === 0 && status !== "LoadingFirstPage" && (
+        <div className="p-8">
+          <Empty
+            icon={Bell}
+            title="You're all caught up"
+            description="When someone reacts to your words, it shows up here."
+          />
+        </div>
+      )}
+
+      {notifications.map((n, i) => {
+        const Icon = ICONS[n.type];
+        // The username of the person who followed you — lets the follow row
+        // open their circle without repeating non-null assertions. Null for
+        // every other notification type (or when the actor is gone).
+        const followUsername =
+          n.type === "follow" ? (n.actor?.username ?? null) : null;
+        return (
+          <motion.div
+            key={n._id}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: Math.min(i * 0.02, 0.3) }}
+            onClick={() =>
+              void markRead({ notificationId: n._id as Id<"notifications"> })
+            }
+            className="flex w-full cursor-pointer items-center gap-3 border-b px-4 py-3.5 text-left transition-colors hover:bg-muted/40 sm:px-5"
+          >
+            <span className="relative shrink-0">
+              <UserAvatar user={n.actor} className="size-11" />
+              <span className="absolute -bottom-1 -right-1 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground ring-2 ring-background">
+                <Icon className="size-3" />
+              </span>
+            </span>
+            <div className="min-w-0 flex-1">
+              <p
+                className={cn(
+                  "text-sm leading-snug",
+                  n.read ? "text-muted-foreground" : "text-foreground",
+                  (n.type === "ticket" || n.type === "system") &&
+                    !expandedNotifs.has(n._id) &&
+                    "line-clamp-2",
+                )}
+              >
+                {label(n)}
+              </p>
+              {(n.type === "ticket" || n.type === "system") && (n.message ?? "").length > 100 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedNotifs((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(n._id)) next.delete(n._id);
+                      else next.add(n._id);
+                      return next;
+                    });
+                  }}
+                  className="mt-0.5 flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {expandedNotifs.has(n._id) ? (
+                    <>
+                      <ChevronUp className="size-3.5" />
+                      Show less
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="size-3.5" />
+                      Show more
+                    </>
+                  )}
+                </button>
+              ) : null}
+              {/* A share notification previews the SHARED item (the
+                  interesting part) — the shared comment when one is
+                  attached, the shared post for post-shares; every other
+                  type previews the referenced post. */}
+              {(() => {
+                const previewPost = n.sharedComment
+                  ? { _id: n.sharedComment._id, content: n.sharedComment.content }
+                  : n.type === "comment-share"
+                    ? n.sharedPost
+                    : n.post;
+                return previewPost?.content ? (
+                  <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                    “{previewPost.content.slice(0, 100)}”
+                  </p>
+                ) : null;
+              })()}
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {timeAgo(n._creationTime)}
+              </p>
+            </div>
+            {!n.read && (
+              <span className="size-2.5 shrink-0 rounded-full bg-primary" />
+            )}
+            {n.post && (
+              <Link
+                to={`/post/${n.post._id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                View
+              </Link>
+            )}
+            {n.type === "dm" && n.actor ? (
+              <Link
+                to={`/messages?user=${n.actor._id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                Open
+              </Link>
+            ) : null}
+            {n.type === "dm-share" && n.conversationId ? (
+              <Link
+                to={`/messages?convo=${n.conversationId}`}
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                Open
+              </Link>
+            ) : null}
+            {followUsername !== null ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCircle({ username: followUsername, tab: "followers" });
+                }}
+                className="flex shrink-0 items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <Users className="size-3" />
+                Circle
+              </button>
+            ) : null}
+          </motion.div>
+        );
+      })}
+
+      <FollowsList
+        // A changing key remounts the dialog fresh for each opened circle.
+        key={circle ? `${circle.username}:${circle.tab}` : "closed"}
+        username={circle?.username ?? ""}
+        initialTab={circle?.tab ?? "followers"}
+        open={circle !== null}
+        onOpenChange={(open) => {
+          if (!open) setCircle(null);
+        }}
+      />
+
+      <div ref={ref} className="flex justify-center py-4">
+        {status === "LoadingMore" && (
+          <span className="text-sm text-muted-foreground">Loading more…</span>
+        )}
+      </div>
+    </div>
+  );
+}

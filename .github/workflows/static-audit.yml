@@ -1,0 +1,581 @@
+name: Static Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Nightly full-suite run: the heavy browser QAs (admin-responsive) only
+  # execute here and on workflow_dispatch — push runs keep the fast static
+  # checks + harness QAs only, so the live-site I/O on the Convex free-plan
+  # budget stays bounded. Offset past the healthcheck's 03:00 UTC window.
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  # On push events, share the admin-account-push group with
+  # production-healthcheck so parallel runs never mint competing
+  # admin sessions. PR runs get their own group per PR.
+  ##  queue: max is REQUIRED here: without it, GitHub's default concurrency
+#  semantics keep only ONE pending run per group and cancel any later
+#  arrival — so a long-running healthcheck chain (15-30 min) plus rapid
+#  pushes starved this whole workflow (runs cancelled in ~1s with zero
+#  jobs, no check runs recorded). With the queue, every push-triggered
+#  run waits its turn FIFO instead of being cancelled, so the static-audit
+#  gate (typecheck/lint/build/SEO/mirror-freshness) actually runs. (The
+#  `queue` key only accepts `single` or `max` — a numeric limit is a parse
+#  error, so burst throttling must be done differently.)
+  group: ${{ github.event_name == 'push' && 'admin-account-push' || format('static-audit-{0}', github.run_id) }}
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+  actions: write # the push-burst gate cancels stale queued runs
+
+jobs:
+  # Burst throttle: when several pushes land in quick succession, the
+  # shared admin-account-push group runs them one-at-a-time FIFO, so each
+  # push's suite hammered the production deployment in turn. Run IDs are
+  # monotonic, so a NEWER queued run of this same workflow means this run
+  # is a stale member of a burst: it cancels ITSELF and lets the newest
+  # push's run do the verification. A lone push (no newer queued run)
+  # always runs the full suite — the push gate can never starve, and the
+  # latest commit is always the one that gets verified.
+  push-burst-gate:
+    name: Push burst gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Cancel self when a newer push is queued
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const self = context.runId;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: 'static-audit.yml',
+              event: 'push',
+              branch: context.ref.replace('refs/heads/', ''),
+              status: 'queued',
+              per_page: 30,
+            });
+            const newer = (data.workflow_runs || []).filter((r) => r.id > self);
+            if (newer.length === 0) {
+              core.info(`run ${self}: no newer queued run — this is the latest push, running the suite`);
+            } else {
+              core.info(
+                `run ${self}: superseded by newer queued run(s) ${newer.map((r) => r.id).join(", ")} — cancelling itself so the burst collapses to the latest push`,
+              );
+              try {
+                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: self });
+              } catch (e) {
+                // Self-cancel may be refused in some token scopes; the run
+                // then continues normally (no burst collapse, no gate break).
+                core.warning(`self-cancel failed (${e.message}) — continuing`);
+              }
+            }
+
+  typecheck:
+    name: TypeScript typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  build:
+    name: Vite build + critical-path guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The size guard runs on the freshly built dist: every chunk the HTML
+      # preloads executes before first paint, so a regression like re-adding
+      # the ui/motion chunks to the entry (a ~150 kB hit to EVERY page load)
+      # must fail CI, not silently slow the site. Baseline + deliberate
+      # re-baseline: scripts/critical-path-baseline.json (--update).
+      - name: Guard the critical-path JS size
+        run: node scripts/check-critical-path.mjs
+      # The PWA outputs are the reason refreshes are fast: main.tsx
+      # registers /sw.js in production, and the precacheManifest plugin
+      # emits BOTH sw.js (versioned cache name) and precache-manifest.json
+      # (every chunk the SW precaches). If either goes missing from the
+      # build, production silently 404s the SW and every refresh falls
+      # back to the network — fail CI instead of shipping that. Also
+      # asserts the sw.js cache name and manifest version agree (a
+      # mismatch would precache and purge different caches) and that every
+      # manifest asset exists on disk.
+      - name: Guard the PWA build outputs
+        run: node scripts/check-pwa-output.mjs
+
+  seo-static-files:
+    # The SEO basics must never regress silently. robots.txt is a static
+    # file (served ahead of the SPA fallback in vercel.json) that hardcodes
+    # the canonical host; sitemap.xml is now GENERATED at runtime by the
+    # Convex /sitemap.xml httpAction (the production healthcheck asserts it
+    # live), so this job guards the static parts: robots.txt must exist and
+    # its Sitemap line must point at SITE_URL_DEFAULT in vite.config.ts —
+    # the single repo-owned source of the canonical host.
+    name: SEO static files (robots.txt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert robots.txt exists and matches the canonical host
+        run: |
+          set -euo pipefail
+          host="$(grep -oP 'SITE_URL_DEFAULT = "\K[^"]+' vite.config.ts)"
+          host="${host%/}"
+          test -n "$host" \
+            || { echo "::error::could not read SITE_URL_DEFAULT from vite.config.ts"; exit 1; }
+          test -f public/robots.txt \
+            || { echo "::error::public/robots.txt is missing"; exit 1; }
+          grep -q "Sitemap: ${host}/sitemap.xml" public/robots.txt \
+            || { echo "::error::robots.txt Sitemap line drifted from ${host} (vite.config.ts)"; exit 1; }
+          echo "SEO static files OK — canonical host ${host}"
+
+  email-domain-gate:
+    # The disposable-email denylist is a repo-owned anti-abuse control: the
+    # generated module (src/convex/emailDomainList.ts) must never drift from
+    # the maintained blocked-email-domains/*.txt files, and the gate logic
+    # itself (normalize → extract domain → match → reject) must keep
+    # passing. Both are pure checks — no deployment or secret needed. The
+    # LIVE signup-rejection checks run in the production healthcheck, where
+    # TEST_HARNESS_SECRET exists.
+    name: Disposable-email denylist (drift + gate logic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Assert the generated module matches blocked-email-domains/*.txt
+        run: node scripts/generate-email-domain-list.mjs --check
+      - name: Run the pure gate-logic checks
+        run: npm run qa:email-domains
+
+  sitemap-url-health:
+    # Proves the dynamic sitemap only submits URLs that actually render —
+    # and (since the canonical guard landed) that each sampled post/profile
+    # carries a canonical EXACTLY equal to its sitemap URL with no redirect
+    # drift. The production healthcheck already runs this on every push to
+    # main + nightly; this job adds PR coverage so a visibility or
+    # canonicalization regression is caught before merge instead of after.
+    # Zero dependencies (plain Node fetch against the live site), same as
+    # the other production QA jobs in this workflow.
+    name: Sitemap URL health (live render + canonical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sample the live sitemap and verify every URL renders
+        run: npm run qa:sitemap-urls
+
+  mirror-freshness:
+    # The convex.site mirror used to silently lag the main host (the
+    # admin-dropdown incident: /admin there showed the old tab row while
+    # the main host had the dropdown). deploy.yml now syncs the mirror on
+    # every deploy; this job makes staleness a hard gate at push/PR time:
+    # it fetches the mirror's served Admin chunk and fails if the
+    # section-dropdown code (markers `purewire_admin_section` +
+    # `Shortcuts`) is absent. Zero dependencies (plain Node fetch against
+    # the live mirror) — same as sitemap-url-health above. On a push the
+    # mirror already reflects the previous deploy, so this only fails on
+    # a genuinely stale mirror, never on the push itself.
+    name: Mirror freshness (live Admin chunk has the section dropdown)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fetch the mirror's Admin chunk and assert the dropdown UI
+        run: npm run qa:mirror-freshness
+
+  secrets-scan:
+    name: Secrets scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:secrets
+
+  dqs-audit:
+    name: DQS data-integrity audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The audit asserts a CLEAN state, so it must run AFTER the sweeps that
+    # repair leftovers — otherwise it audits the previous run's debris
+    # (dangling DMs, silent flags, moderation rows, test users) and reds on
+    # rows the cleanup is about to erase. cleanup-test-domains is the last
+    # job in the QA→cleanup chain, so gating on it makes this the final
+    # integrity gate. `if: always()` keeps the audit running (and able to
+    # red) even if a sweep fails — a failed cleanup is exactly when the
+    # audit matters most.
+    needs: cleanup-test-domains
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run DQS audit against production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh count-drift.log npm run qa:count-drift
+
+  racism-qa:
+    name: Racism prevention QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:racism
+
+  phishing-qa:
+    name: Phishing & prohibited-domain QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # No longer gated on dqs-audit: the audit moved to the END of the chain
+    # (after the cleanup sweeps) so it verifies the final state. The QA
+    # chain creates throwaway test users by design; they are swept by
+    # cleanup-test-users and the audit then asserts zero remain.
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run the phishing + domain scan QA
+        if: env.TEST_HARNESS_SECRET != ''
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh phishing.log npm run qa:phishing
+
+  blocklist-qa:
+    name: Blocklist engine QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: phishing-qa
+    # Same harness gate as phishing-qa — skips cleanly when the secret
+    # is absent so the push/pull-request gate never reds on missing config.
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run the blocklist engine QA
+        if: env.TEST_HARNESS_SECRET != ''
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh blocklist-qa.log npm run qa:blocklist
+
+  ai-scan-qa:
+    name: AI content scan QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:ai-scan
+
+  automation-qa:
+    name: Automation detector QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:automation
+
+  ai-scan-integration:
+    name: AI scan integration QA (harness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: blocklist-qa
+    # `secrets` is rejected in `if:` expressions — map to an env var.
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run upload→scan→evidence pipeline test
+        if: env.TEST_HARNESS_SECRET != ''
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh ai-scan-integration.log npm run qa:ai-scan-integration
+
+  salt-qa:
+    name: Salt rotation QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run qa:salt
+
+  admin-responsive-qa:
+    name: Admin responsive QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The browser QAs sign in on production with the admin password. When
+    # the secret isn't configured the job SKIPS cleanly (green) instead of
+    # failing every push — same gate the original single-job design used.
+    #
+    # Heaviest live browser E2E (50+ page navigations across 5 widths):
+    # nightly + manual only (schedule at 04:30 UTC + workflow_dispatch),
+    # so push runs don't burn the free-plan database-I/O budget walking the
+    # whole admin dashboard once per commit.
+    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    env:
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run the admin dashboard responsive QA
+        if: env.ADMIN_PASSWORD != ''
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        # retry-once: this QA walks 50+ live pages; a single transient
+        # network blip on a shared runner must not red the push gate on its
+        # own. A genuine regression fails identically on the second attempt.
+        run: bash scripts/retry-once.sh admin-responsive.log npm run qa:admin-responsive
+      - name: Upload QA log
+        if: always() && env.ADMIN_PASSWORD != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-responsive-log
+          path: admin-responsive.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  pages-inflation-qa:
+    name: Page inflation QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run the dense-page inflation QA
+        if: env.ADMIN_PASSWORD != ''
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: npm run qa:pages-inflation
+
+  shell-layout-qa:
+    name: Shell layout QA (mobile/tablet/desktop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run the signed-in shell layout QA
+        if: env.TEST_HARNESS_SECRET != '' || env.ADMIN_PASSWORD != ''
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: npm run qa:shell-layout 2>&1 | tee shell-layout.log
+
+      - name: Upload the shell layout log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-layout-log
+          path: shell-layout.log
+
+  shadowban-qa:
+    name: Silent moderation QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: ai-scan-integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test shadowban lifecycle against production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh shadowban.log npm run qa:shadowban
+
+  reinstate-qa:
+    name: Admin reinstatement QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: shadowban-qa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test admin reinstatement workflow against production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh reinstate.log npm run qa:reinstate
+
+  cloudinary-health:
+    name: Cloudinary health probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Probe Cloudinary upload pipeline
+        env:
+          # Cloud name with the same fallback the healthcheck uses: it can
+          # live in a variable OR secret OR default to the production cloud
+          # — a missing CLOUDINARY_CLOUD_NAME secret must not red the gate.
+          CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME || secrets.CLOUDINARY_CLOUD_NAME || 'saintscloud' }}
+          CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        run: bash scripts/retry-once.sh cloudinary-health.log npm run qa:cloudinary-health
+
+  session-audit:
+    name: Session lifetime audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: reinstate-qa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Audit session lifetimes
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh session-audit.log npm run qa:session-audit
+
+  cleanup-test-users:
+    name: Sweep leftover QA users
+    runs-on: ubuntu-latest
+    needs:
+      - session-audit
+      - cloudinary-health
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Erase leftover QA test users from production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh cleanup-users.log npm run qa:cleanup-test-users
+
+  cleanup-test-domains:
+    name: Sweep leftover QA blocklist domains
+    runs-on: ubuntu-latest
+    needs:
+      - cleanup-test-users
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Erase leftover QA domains/patterns/sources from production
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+        run: bash scripts/retry-once.sh cleanup-domains.log npm run qa:cleanup-test-domains

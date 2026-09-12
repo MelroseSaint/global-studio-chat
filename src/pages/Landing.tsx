@@ -1,0 +1,807 @@
+import {
+  ArrowRight,
+  AtSign,
+  BadgeCheck,
+  Ban,
+  Compass,
+  Heart,
+  KeyRound,
+  LogOut,
+  Mail,
+  MessageCircle,
+  Quote,
+  Repeat2,
+  ShieldCheck,
+  Sparkles,
+  UserPlus,
+} from "lucide-react";
+import { useEffect, useState, type ComponentProps } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
+
+import { cloudinaryImageUrl } from "@/lib/cloudinary-media";
+import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
+
+type LandingUser = NonNullable<ReturnType<typeof useAuth>["user"]>;
+
+/**
+ * The Landing page is deliberately self-contained: it imports no UI-kit or
+ * animation library (no radix components, no framer-motion), so the public
+ * start page's first paint never downloads or executes the app shell's ui /
+ * motion chunks. Buttons, cards, the account menu, and the fade-up motion
+ * are plain elements + CSS (`.animate-pw-fade-up` in index.css) that render
+ * identically. The authed shell (AppLayout) and lazy pages pull those chunks
+ * on demand instead.
+ */
+
+// The exact class strings from @/components/ui/button (variant + size), kept
+// inline so the hero/nav CTAs look byte-identical to the Button component.
+const BTN_BASE =
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+const BTN_DEFAULT = "bg-primary text-primary-foreground hover:bg-primary/90";
+const BTN_GHOST = "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50";
+const BTN_OUTLINE =
+  "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50";
+const BTN_SM = "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5";
+const BTN_LG = "h-10 rounded-md px-6 has-[>svg]:px-4";
+
+/** Plain-elements card, matching @/components/ui/card. */
+function LandingCard({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-6 rounded-xl border bg-card py-6 text-card-foreground shadow-sm",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function LandingCardContent({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div className={cn("flex flex-col gap-3 p-6", className)} {...props} />
+  );
+}
+
+/** The header avatar without the radix Avatar wrapper (see UserAvatar). */
+function LandingAvatar({ user }: { user: LandingUser }) {
+  const src =
+    user.avatarUrl !== undefined && user.avatarUrl !== null
+      ? (cloudinaryImageUrl(user.avatarUrl, 128) ?? user.avatarUrl)
+      : (user.image ?? undefined);
+  const label = user.name ?? user.username ?? "?";
+  return (
+    <div className="relative flex size-7 shrink-0 overflow-hidden rounded-full border border-border/60 select-none">
+      {src ? (
+        <img src={src} alt={label} className="aspect-square size-full" />
+      ) : (
+        <div className="flex size-full items-center justify-center rounded-full bg-primary/10 font-semibold text-primary">
+          {label.slice(0, 1).toUpperCase()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The signed-in member's account menu on the landing header — the one place
+ * on the PWA's start screen (start_url "/") where someone already signed in
+ * can open the app, reach their profile, or sign out without having to
+ * navigate into the app shell and hunt through the mobile More menu. A
+ * lightweight state-based menu (no radix dropdown) so the Landing stays
+ * free of the ui chunk; closes on outside click.
+ */
+function LandingUserMenu({
+  user,
+  onSignOut,
+}: {
+  user: LandingUser;
+  onSignOut: () => void;
+}) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const username = user.username ?? "";
+  const profileTo = username ? `/u/${username}` : "/settings";
+  const go = (to: string) => {
+    setOpen(false);
+    navigate(to);
+  };
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-label="Account menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex cursor-pointer items-center gap-2 rounded-xl p-0.5 transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <LandingAvatar user={user} />
+      </button>
+      {open ? (
+        <>
+          {/* Invisible backdrop: a click anywhere outside closes the menu. */}
+          <button
+            type="button"
+            aria-hidden
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-40 cursor-default"
+          />
+          <div
+            role="menu"
+            className="absolute right-0 z-50 mt-1 w-56 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+          >
+            <div className="px-2 py-1.5">
+              <p className="text-sm font-medium">
+                {user.name ?? user.username ?? "Member"}
+                {user.verified ? " ✓" : ""}
+              </p>
+              <p className="text-xs text-muted-foreground">@{user.username}</p>
+            </div>
+            <div className="my-1 h-px bg-border" />
+            {[
+              { label: "Home", to: "/home" },
+              { label: "Profile", to: profileTo },
+              { label: "Settings", to: "/settings" },
+            ].map((item) => (
+              <button
+                key={item.to}
+                type="button"
+                role="menuitem"
+                onClick={() => go(item.to)}
+                className="flex w-full cursor-pointer items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+              >
+                {item.label}
+              </button>
+            ))}
+            <div className="my-1 h-px bg-border" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onSignOut();
+              }}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+            >
+              <LogOut className="size-4" />
+              Sign out
+            </button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+const features = [
+  {
+    icon: Quote,
+    title: "Say it anyway",
+    description:
+      "Other platforms tell you what you can say. PureWire gives you the space to say it — no corporate curation, no deciding what's acceptable for you.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Every post verified original",
+    description:
+      "Content is checked against the platform before it goes live. Stolen work and copycats never make it — your voice stays yours.",
+  },
+  {
+    icon: Compass,
+    title: "No algorithm, your choice",
+    description:
+      "Global, Following, Latest, Photos & videos — you pick what you see. Nobody quietly reshapes your feed for you.",
+  },
+  {
+    icon: UserPlus,
+    title: "Find your people",
+    description:
+      "Follow, @mention, and build a circle of the people who actually get you. No forced trends, no engagement bait.",
+  },
+  {
+    icon: BadgeCheck,
+    title: "Real people, verified",
+    description:
+      "Verify your email with a one-time code and the verified badge is yours — so you know who you're really talking to.",
+  },
+  {
+    icon: Ban,
+    title: "No ads, ever",
+    description:
+      "No advertising, no sponsorships, no algorithm selling your attention. Pure freedom, with a reason.",
+  },
+  {
+    icon: Sparkles,
+    title: "Human-made only",
+    description:
+      "No AI-generated text, images, audio, or video. PureWire is for your words and your work — not a machine's.",
+  },
+];
+
+const steps = [
+  {
+    title: "Create your account",
+    description:
+      "Sign up with your email, pick a username, and verify your identity with a one-time code. No phone numbers, no data harvesting.",
+  },
+  {
+    title: "Make it yours",
+    description:
+      "Upload your photo and banner, write a bio, link your other socials. Your profile belongs to you.",
+  },
+  {
+    title: "Start saying it",
+    description:
+      "Post, follow creators, drop stories, and join the conversation — on your own terms.",
+  },
+];
+
+// The PureWire Standard — freedom with a reason. These are the
+// lines we draw so freedom can exist for everyone.
+const standard = [
+  {
+    title: "Say what you mean.",
+    detail: "Express yourself honestly — that's the whole point.",
+  },
+  {
+    title: "Create what you want.",
+    detail: "Your work, your words, your way. Nothing forced.",
+  },
+  {
+    title: "Find your people.",
+    detail: "Follow who matters to you and build your own circle.",
+  },
+  {
+    title: "Disagree without destroying each other.",
+    detail: "Push back hard on ideas. Never on people.",
+  },
+  {
+    title: "Don't impersonate people.",
+    detail: "Real names for real humans. No pretending to be someone else.",
+  },
+  {
+    title: "Don't steal people's work.",
+    detail: "Every post is verified original. Credit is owed, not optional.",
+  },
+  {
+    title: "Don't spam the platform.",
+    detail: "Share what matters. Repetition and clutter crowd out real voices.",
+  },
+  {
+    title: "Don't use freedom as an excuse to take someone else's freedom away.",
+    detail: "Harassment, doxxing, and intimidation end where your freedom begins.",
+  },
+  {
+    title: "No AI-generated content.",
+    detail: "Say it yourself. Text, images, audio, and video must be made by human hands.",
+  },
+  {
+    title: "No adult platforms or sexual solicitation.",
+    detail:
+      "Adult sites and sexual-service advertising can't be shared, posted, or linked on PureWire.",
+  },
+];
+
+export function Landing() {
+  const { isAuthenticated, user, signOut, isLoading } = useAuth();
+  const location = useLocation();
+
+  const handleSignOut = () => {
+    void signOut();
+  };
+
+  // Scroll a section into view (offset for the sticky header) and update the
+  // URL hash so the page reflects where the user is. Uses the History API
+  // directly instead of relying on React Router's hash handling, which can
+  // silently drop same-path hash-only navigations.
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.history.replaceState(null, "", `/#${id}`);
+  };
+
+  // Direct deep links (e.g. loading /#standard from a bookmark or an
+  // external link) still need the router to finish painting before we
+  // measure, so the scroll lands on the right spot.
+  useEffect(() => {
+    const id = location.hash.replace("#", "");
+    if (id.length === 0) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 60);
+    return () => window.clearTimeout(timer);
+  }, [location.hash]);
+
+  // Warm the /auth chunk while the landing page is idle (requestIdleCallback
+  // runs when the main thread is free), so the first "Get started"/"Sign in"
+  // tap never pays chunk fetch + parse on the interaction's critical path.
+  useEffect(() => {
+    const idle = window.requestIdleCallback?.(
+      () => {
+        void import("@/pages/Auth").catch(() => {
+          // Warming is progressive — a failure changes nothing.
+        });
+      },
+      // Cap the idle wait at 300ms so the chunk is warm before a real human
+      // can tap a CTA (which keeps even the first nav tap out of the >200ms
+      // INP zone); on a busy main thread the browser just queues it.
+      { timeout: 300 },
+    );
+    return () => {
+      if (idle !== undefined) window.cancelIdleCallback?.(idle);
+    };
+  }, []);
+
+  // INP: tapping a nav link must paint something within the interaction's
+  // window. The router transition defers the destination render, so nothing
+  // repaints until the new page commits (~500ms on throttled mobile) and the
+  // tap's INP eats the whole mount. Showing a thin loading bar via a plain
+  // (non-transitioned) state update paints immediately — the tap responds
+  // fast, and the bar disappears when the new page commits (this page
+  // unmounts).
+  const [navigating, setNavigating] = useState(false);
+
+  // Safety net: a successful navigation unmounts this page (which clears the
+  // bar with it), but an interrupted navigation (e.g. the user hits Back
+  // before the destination commits) or a failed lazy chunk would otherwise
+  // leave the bar stuck. Time out so it can never linger.
+  useEffect(() => {
+    if (!navigating) return;
+    const timer = window.setTimeout(() => setNavigating(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [navigating]);
+
+  return (
+    <div className="flex min-h-dvh flex-col">
+      {navigating ? (
+        <div
+          aria-hidden
+          className="fixed inset-x-0 top-0 z-[60] h-0.5 animate-pulse bg-primary"
+        />
+      ) : null}
+      <header className="sticky top-0 z-40 border-b bg-background/80 pt-[env(safe-area-inset-top)] backdrop-blur">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4">
+          <Link to="/" className="flex items-center">
+            <img
+              src="/lockup.svg"
+              alt="PureWire — say it anyway"
+              className="h-10 w-auto"
+            />
+          </Link>
+          <nav className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => scrollToSection("features")}
+              className={cn(BTN_BASE, BTN_GHOST, BTN_SM, "hidden sm:inline-flex")}
+            >
+              Why PureWire
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToSection("standard")}
+              className={cn(BTN_BASE, BTN_GHOST, BTN_SM, "hidden sm:inline-flex")}
+            >
+              The Standard
+            </button>
+            <Link
+              to="/about"
+              onClick={() => setNavigating(true)}
+              className={cn(BTN_BASE, BTN_GHOST, BTN_SM, "hidden sm:inline-flex")}
+            >
+              About
+            </Link>
+            {/* Session restore on refresh: while the stored token is still
+                resolving, don't render the auth CTAs — a signed-in member
+                would otherwise see "Sign in"/"Get started" flash for a
+                frame before flipping to "Open app". A pulse placeholder
+                keeps the nav from shifting. */}
+            {isLoading ? (
+              <div
+                aria-hidden
+                className="h-9 w-36 animate-pulse rounded-md bg-muted/60"
+              />
+            ) : isAuthenticated ? (
+              <>
+                <Link
+                  to="/home"
+                  onClick={() => setNavigating(true)}
+                  className={cn(BTN_BASE, BTN_DEFAULT, BTN_SM)}
+                >
+                  Open app
+                  <ArrowRight className="size-4" />
+                </Link>
+                {user ? (
+                  <LandingUserMenu user={user} onSignOut={handleSignOut} />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Link
+                  to="/auth"
+                  onClick={() => setNavigating(true)}
+                  className={cn(BTN_BASE, BTN_GHOST, BTN_SM)}
+                >
+                  Sign in
+                </Link>
+                <Link
+                  to="/auth"
+                  onClick={() => setNavigating(true)}
+                  className={cn(BTN_BASE, BTN_DEFAULT, BTN_SM)}
+                >
+                  Get started
+                  <ArrowRight className="size-4" />
+                </Link>
+              </>
+            )}
+          </nav>
+        </div>
+      </header>
+
+      <main className="flex-1">
+        {/* Hero */}
+        <section className="relative overflow-hidden">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 opacity-40"
+            style={{
+              background:
+                "radial-gradient(700px 420px at 15% 10%, rgba(184,74,50,0.32), transparent), radial-gradient(700px 420px at 85% 15%, rgba(201,121,82,0.26), transparent), radial-gradient(800px 500px at 50% 110%, rgba(70,90,76,0.28), transparent)",
+            }}
+          />
+          <div className="relative mx-auto flex w-full max-w-6xl flex-col items-center gap-8 px-4 py-20 text-center sm:py-28">
+            <div
+              className="animate-pw-fade-up flex flex-col items-center gap-6"
+              style={{ animationDuration: "0.5s" }}
+            >
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-oxide/30 bg-oxide/10 px-3 py-1 text-xs font-medium text-oxide dark:text-oxide-light">
+                <Quote className="size-3" />
+                Say it anyway.
+              </span>
+              <h1 className="max-w-3xl text-4xl font-black tracking-tight sm:text-6xl">
+                Other platforms tell you{" "}
+                <span className="brand-gradient-text">what you can say.</span>
+                <br />
+                PureWire gives you the space to say it.
+              </h1>
+              <p className="max-w-xl text-base text-muted-foreground sm:text-lg">
+                A social platform built around expression, connection, and
+                freedom — not advertising, corporate sponsorships, or telling
+                you how you're supposed to participate. Every post verified
+                original. No ads. No algorithm. No copycats.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                {isLoading ? (
+                  <div
+                    aria-hidden
+                    className="h-11 w-44 animate-pulse rounded-md bg-muted/60"
+                  />
+                ) : (
+                  <Link
+                    to={isAuthenticated ? "/home" : "/auth"}
+                    onClick={() => setNavigating(true)}
+                    className={cn(BTN_BASE, BTN_DEFAULT, BTN_LG)}
+                  >
+                    {isAuthenticated ? "Open your feed" : "Join PureWire"}
+                    <ArrowRight className="size-4" />
+                  </Link>
+                )}
+                <button
+                  type="button"
+                  onClick={() => scrollToSection("standard")}
+                  className={cn(BTN_BASE, BTN_OUTLINE, BTN_LG)}
+                >
+                  See the PureWire Standard
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {isLoading
+                  ? ""
+                  : isAuthenticated
+                    ? "Welcome back — your feed is waiting."
+                    : "Sign up with just an email. Takes less than a minute."}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Join PureWire — the two ways in, and the no-guest promise */}
+        <section
+          id="join"
+          className="scroll-mt-16 border-y bg-muted/30"
+        >
+          <div className="mx-auto w-full max-w-6xl px-4 py-14">
+            <div className="mb-8 text-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-moss/40 bg-moss/10 px-3 py-1 text-xs font-medium text-moss">
+                <BadgeCheck className="size-3" />
+                Real people only
+              </span>
+              <h2 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
+                Two ways to join. Both verified.
+              </h2>
+              <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground sm:text-base">
+                Every account belongs to a real person who verified a real
+                email — so you always know who you&apos;re talking to.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="animate-pw-fade-up">
+                <LandingCard className="h-full transition-transform hover:-translate-y-0.5">
+                  <LandingCardContent className="flex flex-col gap-3 p-6">
+                    <div className="flex size-10 items-center justify-center rounded-xl brand-gradient-bg text-white">
+                      <KeyRound className="size-5" />
+                    </div>
+                    <h3 className="font-semibold tracking-tight">
+                      Your password
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Join with a password you choose. No third-party logins,
+                      no social accounts, no one else in your account.
+                    </p>
+                  </LandingCardContent>
+                </LandingCard>
+              </div>
+              <div
+                className="animate-pw-fade-up"
+                style={{ animationDelay: "0.1s" }}
+              >
+                <LandingCard className="h-full transition-transform hover:-translate-y-0.5">
+                  <LandingCardContent className="flex flex-col gap-3 p-6">
+                    <div className="flex size-10 items-center justify-center rounded-xl brand-gradient-bg text-white">
+                      <Mail className="size-5" />
+                    </div>
+                    <h3 className="font-semibold tracking-tight">
+                      A one-time email code
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      A single-use code lands in your inbox to confirm the
+                      account is really yours — and it&apos;s what earns your
+                      verified badge.
+                    </p>
+                  </LandingCardContent>
+                </LandingCard>
+              </div>
+            </div>
+            <p className="mt-8 text-center text-xs text-muted-foreground">
+              No guest accounts, no throwaway signups — one inbox gets one
+              verified badge. If an email isn&apos;t yours, it can&apos;t become an
+              account.
+            </p>
+          </div>
+        </section>
+
+        {/* Features */}
+        <section
+          id="features"
+          className="scroll-mt-16 mx-auto w-full max-w-6xl px-4 pb-20"
+        >
+          <div className="mb-8 text-center">
+            <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+              Built around freedom, not followers
+            </h2>
+            <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground sm:text-base">
+              PureWire is freedom with a reason: your expression matters, so we
+              protect it — from copycats, from ads, from algorithms.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {features.map((feature, i) => (
+              <div
+                key={feature.title}
+                className="animate-pw-fade-up"
+                style={{ animationDelay: `${i * 0.06}s` }}
+              >
+                <LandingCard className="h-full transition-transform hover:-translate-y-0.5">
+                  <LandingCardContent className="flex flex-col gap-3 p-6">
+                    <div className="flex size-10 items-center justify-center rounded-xl brand-gradient-bg text-white">
+                      <feature.icon className="size-5" />
+                    </div>
+                    <h3 className="font-semibold tracking-tight">
+                      {feature.title}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {feature.description}
+                    </p>
+                  </LandingCardContent>
+                </LandingCard>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* The PureWire Standard */}
+        <section id="standard" className="scroll-mt-16 border-t bg-muted/30">
+          <div className="mx-auto w-full max-w-6xl px-4 py-16">
+            <div className="mb-2 text-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-moss/40 bg-moss/10 px-3 py-1 text-xs font-medium text-moss">
+                <ShieldCheck className="size-3" />
+                Freedom with a reason
+              </span>
+            </div>
+            <div className="mb-10 text-center">
+              <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                The PureWire Standard
+              </h2>
+              <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground sm:text-base">
+                PureWire isn't "no rules." It's freedom with a reason. The
+                Standard exists so your freedom never has to cost someone
+                else's.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {standard.map((item, i) => (
+                <div
+                  key={item.title}
+                  className="animate-pw-fade-up"
+                  style={{ animationDelay: `${i * 0.05}s` }}
+                >
+                  <LandingCard className="h-full border-oxide/20">
+                    <LandingCardContent className="flex h-full flex-col gap-2 p-5">
+                      <span className="flex size-7 items-center justify-center rounded-full bg-oxide/15 text-xs font-bold text-oxide dark:text-oxide-light">
+                        {i + 1}
+                      </span>
+                      <p className="font-semibold leading-snug tracking-tight">
+                        {item.title}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {item.detail}
+                      </p>
+                    </LandingCardContent>
+                  </LandingCard>
+                </div>
+              ))}
+            </div>
+            <div className="mt-10 flex justify-center">
+              <Link
+                to="/support"
+                onClick={() => setNavigating(true)}
+                className={cn(BTN_BASE, BTN_OUTLINE, BTN_LG)}
+              >
+                Read the full Standard in Support
+                <ArrowRight className="size-4" />
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        {/* How it works */}
+        <section id="how" className="scroll-mt-16 border-t">
+          <div className="mx-auto w-full max-w-6xl px-4 py-16">
+            <div className="mb-8 text-center">
+              <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                Getting started is easy
+              </h2>
+            </div>
+            <div className="grid gap-6 sm:grid-cols-3">
+              {steps.map((step, i) => (
+                <div
+                  key={step.title}
+                  className="animate-pw-fade-up flex flex-col items-center gap-2 text-center"
+                  style={{ animationDelay: `${i * 0.1}s` }}
+                >
+                  <span className="flex size-10 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
+                    {i + 1}
+                  </span>
+                  <h3 className="font-semibold">{step.title}</h3>
+                  <p className="max-w-xs text-sm text-muted-foreground">
+                    {step.description}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-10 flex justify-center">
+              <Link
+                to={isAuthenticated ? "/home" : "/auth"}
+                onClick={() => setNavigating(true)}
+                className={cn(BTN_BASE, BTN_DEFAULT, BTN_LG)}
+              >
+                {isAuthenticated ? "Back to your feed" : "Create your account"}
+                <ArrowRight className="size-4" />
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        {/* Community strip */}
+        <section className="mx-auto w-full max-w-6xl px-4 py-16 text-center">
+          <div className="mx-auto flex max-w-2xl flex-col items-center gap-4">
+            <div className="flex items-center gap-4 text-muted-foreground">
+              <MessageCircle className="size-5" />
+              <AtSign className="size-5" />
+              <Repeat2 className="size-5" />
+              <Heart className="size-5" />
+            </div>
+            <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
+              Say it anyway.
+            </h2>
+            <p className="text-sm text-muted-foreground sm:text-base">
+              Post your original thoughts, share your moments, and connect with
+              people who get you — on a platform that works for you, not for
+              advertisers.
+            </p>
+            <Link
+              to={isAuthenticated ? "/home" : "/auth"}
+              onClick={() => setNavigating(true)}
+              className={cn(BTN_BASE, BTN_DEFAULT, BTN_LG)}
+            >
+              {isAuthenticated ? "Open PureWire" : "Get started free"}
+              <ArrowRight className="size-4" />
+            </Link>
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t">
+        <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-3 px-4 py-8 text-sm text-muted-foreground sm:flex-row">
+          <div className="flex items-center gap-2">
+            <img src="/logo.svg" alt="PureWire" className="size-6 rounded-lg" />
+            <span className="font-semibold text-foreground">PureWire</span>
+          </div>
+          <p>
+            © {new Date().getFullYear()} PureWire. Say it anyway — no ads, ever.
+          </p>
+          <div className="flex items-center gap-4">
+            <Link
+              to="/about"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
+              About
+            </Link>
+            <Link
+              to="/privacy"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
+              Privacy
+            </Link>
+            <Link
+              to="/terms"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
+              Terms
+            </Link>
+            <Link
+              to="/status"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
+              Status
+            </Link>
+            {isAuthenticated ? (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="hover:text-foreground hover:underline"
+              >
+                Sign out
+              </button>
+            ) : (
+              <Link
+                to="/auth"
+                onClick={() => setNavigating(true)}
+                className="hover:text-foreground hover:underline"
+              >
+                Sign in
+              </Link>
+            )}
+            <Link
+              to="/support"
+              onClick={() => setNavigating(true)}
+              className="hover:text-foreground hover:underline"
+            >
+              Support
+            </Link>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}

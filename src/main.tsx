@@ -1,0 +1,202 @@
+import { StrictMode, Suspense, lazy, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { createBrowserRouter, RouterProvider } from "react-router";
+import { ConvexAuthProvider } from "@convex-dev/auth/react";
+import { ConvexReactClient } from "convex/react";
+import { UpdateBanner } from "@convex-dev/static-hosting/react";
+
+import { ErrorBoundary, RouteError } from "@/components/ErrorBoundary";
+import { LazyToaster } from "@/components/LazyToaster";
+import { PageLoader } from "@/components/PageLoader";
+import { RequireAuth } from "@/components/RequireAuth";
+import "@/index.css";
+import { applyDeviceAttributes } from "@/lib/device";
+import { PUBLIC_ROUTES } from "@/lib/routes";
+
+// Detect the device BEFORE first paint so `<html>` already carries the
+// data-device / data-ios / data-touch / data-standalone attributes the
+// shell CSS hooks on — no flash of the wrong layout on iPad or installed
+// iPhones.
+applyDeviceAttributes();
+
+// Suspend CSS animations while the tab is hidden. requestAnimationFrame
+// stops automatically in a background tab, but CSS animations keep
+// compositing (skeleton shimmer, story rings, heart pulses) and burn
+// CPU/GPU on low-end devices (A13-era iPads) for frames nobody sees.
+// index.css pauses everything while html[data-hidden] is set.
+const syncHiddenState = () => {
+  document.documentElement.dataset.hidden = String(document.hidden);
+};
+syncHiddenState();
+document.addEventListener("visibilitychange", syncHiddenState);
+// bfcache restore: when the browser returns to this page from the
+// back/forward cache it fires `pageshow` (persisted=true), not
+// `visibilitychange` — re-sync the hidden state so CSS animations resume
+// and any code that paused while away restarts. (The page itself can't be
+// bfcached while the Convex WebSocket is open — a browser limitation, not
+// something the app can remove — but a restored page must never be left
+// in the "hidden" state.)
+window.addEventListener("pageshow", syncHiddenState);
+
+// The public Landing stays eager, but it is self-contained (plain elements
+// + CSS — no radix UI kit, no framer-motion), so the entry bundle never
+// preloads the ui / motion / icons chunks on the critical path. The authed
+// shell and the 404 page are code-split like every other route: they pull
+// the ui/motion chunks on demand instead of shipping them to everyone.
+import { Landing } from "@/pages/Landing";
+
+const AppLayout = lazy(() =>
+  import("@/components/AppLayout").then((m) => ({ default: m.AppLayout })),
+);
+const NotFound = lazy(() =>
+  import("@/pages/NotFound").then((m) => ({ default: m.NotFound })),
+);
+
+// Pages export named components, so each lazy factory remaps its named export
+// onto the `default` that React.lazy resolves.
+const About = lazy(() => import("@/pages/About").then((m) => ({ default: m.About })));
+const Admin = lazy(() => import("@/pages/Admin").then((m) => ({ default: m.Admin })));
+const Auth = lazy(() => import("@/pages/Auth").then((m) => ({ default: m.Auth })));
+const Explore = lazy(() =>
+  import("@/pages/Explore").then((m) => ({ default: m.Explore })),
+);
+const Feed = lazy(() => import("@/pages/Feed").then((m) => ({ default: m.Feed })));
+const Messages = lazy(() =>
+  import("@/pages/Messages").then((m) => ({ default: m.Messages })),
+);
+const Notifications = lazy(() =>
+  import("@/pages/Notifications").then((m) => ({ default: m.Notifications })),
+);
+const PostDetail = lazy(() =>
+  import("@/pages/PostDetail").then((m) => ({ default: m.PostDetail })),
+);
+const Privacy = lazy(() =>
+  import("@/pages/Privacy").then((m) => ({ default: m.Privacy })),
+);
+const Profile = lazy(() =>
+  import("@/pages/Profile").then((m) => ({ default: m.Profile })),
+);
+const Settings = lazy(() =>
+  import("@/pages/Settings").then((m) => ({ default: m.Settings })),
+);
+const Status = lazy(() =>
+  import("@/pages/Status").then((m) => ({ default: m.Status })),
+);
+const Support = lazy(() =>
+  import("@/pages/Support").then((m) => ({ default: m.Support })),
+);
+const Terms = lazy(() => import("@/pages/Terms").then((m) => ({ default: m.Terms })));
+
+// One element per shared public route (PUBLIC_ROUTES). Adding a route to
+// the manifest registers it here AND in the SEO sitemap automatically.
+const PUBLIC_ELEMENTS: Record<(typeof PUBLIC_ROUTES)[number], ReactNode> = {
+  "/": <Landing />,
+  "/auth": <Auth />,
+  "/about": <About />,
+  "/privacy": <Privacy />,
+  "/terms": <Terms />,
+  "/status": <Status />,
+};
+
+// Data router: every navigation state update runs inside React's
+// startTransition, so a route change never blocks the next paint — the
+// previous UI stays visible until the destination's render commits (and
+// Suspense shows the loader only while a lazy chunk streams in). Tap-to-
+// navigate INP stays low even when the destination page (e.g. /auth) mounts
+// heavy content, instead of the click waiting out the full mount.
+//
+// The pathless root carries the route-level errorElement: when a route
+// element throws during render (a failing Convex query, a data-shape
+// mismatch), the data router renders the nearest errorElement itself — it
+// does NOT propagate to the ErrorBoundary wrapping the RouterProvider, so
+// without this a single bad query would replace the app with React Router's
+// bare "Unexpected Application Error!" screen. RouteError shows the app's
+// own calm, reloadable fallback instead.
+const router = createBrowserRouter([
+  {
+    errorElement: <RouteError />,
+    children: [
+      ...PUBLIC_ROUTES.map((path) => ({ path, element: PUBLIC_ELEMENTS[path] })),
+      {
+        element: (
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        ),
+        children: [
+          { path: "/home", element: <Feed /> },
+          { path: "/messages", element: <Messages /> },
+          { path: "/explore", element: <Explore /> },
+          { path: "/notifications", element: <Notifications /> },
+          { path: "/u/:username", element: <Profile /> },
+          { path: "/post/:postId", element: <PostDetail /> },
+          { path: "/settings", element: <Settings /> },
+          { path: "/support", element: <Support /> },
+          { path: "/admin", element: <Admin /> },
+        ],
+      },
+      { path: "*", element: <NotFound /> },
+    ],
+  },
+]);
+
+const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
+
+// Warm the two connections every page needs before the first paint: the
+// Convex backend (realtime queries) and Cloudinary (media delivery).
+// Without these, the browser only opens those sockets after the JS boots;
+// preconnecting overlaps DNS + TLS with the script download.
+{
+  const preconnects = [
+    import.meta.env.VITE_CONVEX_URL,
+    "https://res.cloudinary.com",
+  ].filter((u): u is string => typeof u === "string" && u.length > 0);
+  for (const url of new Set(preconnects)) {
+    try {
+      const link = document.createElement("link");
+      link.rel = "preconnect";
+      link.href = url;
+      document.head.appendChild(link);
+    } catch {
+      // Preconnects are a hint — never block startup on them.
+    }
+  }
+}
+
+// PWA: register the offline-capable service worker in production only (in
+// dev it would fight Vite's HMR and live reload).
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Offline support is progressive — a failed registration never blocks
+      // the app.
+    });
+  });
+}
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    {/* A failing query (e.g. backend drift) must never blank the app — the
+        boundary renders a reload fallback instead. */}
+    <ErrorBoundary>
+      <ConvexAuthProvider client={convex}>
+        <Suspense fallback={<PageLoader />}>
+          <RouterProvider router={router} />
+        </Suspense>
+        {/* Live-reload prompt when a new deployment ships. */}
+        <UpdateBanner
+          message="A new version of PureWire is available"
+          buttonText="Refresh"
+          className="brand-gradient-bg"
+          style={{
+            borderRadius: "999px",
+            padding: "0.65rem 0.75rem 0.65rem 1.25rem",
+            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)",
+            fontSize: "14px",
+          }}
+        />
+        <LazyToaster />
+      </ConvexAuthProvider>
+    </ErrorBoundary>
+  </StrictMode>,
+);

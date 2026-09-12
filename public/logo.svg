@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="PureWire">
+  <title>PureWire</title>
+  <!-- Black rounded-square background (app-icon style) -->
+  <rect width="64" height="64" rx="15" fill="#0a0a0a"/>
+  <!-- Red glow border -->
+  <rect x="1.5" y="1.5" width="61" height="61" rx="13.5" fill="none" stroke="#d90507" stroke-opacity="0.55" stroke-width="3"/>
+
+  <!-- The red sweeping arc at the top (metallic gloss) -->
+  <defs>
+    <linearGradient id="arcGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff5a4d"/>
+      <stop offset="45%" stop-color="#e01e12"/>
+      <stop offset="100%" stop-color="#b00604"/>
+    </linearGradient>
+    <linearGradient id="metalGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6a6a6a"/>
+      <stop offset="50%" stop-color="#3a3a3a"/>
+      <stop offset="100%" stop-color="#2a2a2a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sweeping arc across the top -->
+  <path d="M10 26 C 20 10, 44 10, 54 26" stroke="url(#arcGrad)" stroke-width="5" stroke-linecap="round" fill="none"/>
+  <!-- Highlight along the arc top edge -->
+  <path d="M12.2 23.6 C 21.4 9.8, 42.6 9.8, 51.8 23.6" stroke="#ff9d8f" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.85"/>
+
+  <!-- Dark brushed-metal geometric mark: angular R (triangle + rising stroke) -->
+  <path d="M18 47 L 30 32 L 42 47 Z" fill="url(#metalGrad)"/>
+  <rect x="18" y="32" width="5.5" height="21" rx="2.2" fill="url(#metalGrad)"/>
+  <path d="M30 41 C 35 38, 40 39, 44.5 42.5 L 43 48 C 38 44.5, 34 44, 30 46.5 Z" fill="url(#metalGrad)"/>
+  <!-- Red accent on the right edge -->
+  <path d="M42 36 L 48.5 40 L 46.5 46 L 42 44" fill="#d90507" opacity="0.9"/>
+</svg>

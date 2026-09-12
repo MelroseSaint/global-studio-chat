@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" class="dark">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="mask-icon" href="/logo.svg" color="#d90507" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <!-- Apple's ideal apple-touch-icon is 180×180 (icon-180.png); the
+       192px icon was only ever a nearest-size approximation. -->
+  <link rel="apple-touch-icon" href="/icon-180.png" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+  />
+  <meta name="description" content="PureWire — say it anyway. A social platform built on expression and freedom — not advertising or corporate sponsorships. Every post is verified original." />
+  <meta name="theme-color" content="#171918" />
+  <meta name="robots" content="index, follow" />
+  <!-- Canonical host is repo-owned (see the siteUrl plugin in vite.config.ts);
+       override with PUREWIRE_SITE_URL when a custom domain lands. -->
+  <link rel="canonical" href="%PUREWIRE_SITE_URL%" />
+
+  <!-- PWA install / mobile-web-app presentation -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="PureWire" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:site_name" content="PureWire" />
+  <meta property="og:title" content="PureWire — Say it anyway." />
+  <meta property="og:description" content="PureWire — say it anyway. A social platform built on expression and freedom — not advertising or corporate sponsorships. Every post is verified original." />
+  <meta property="og:url" content="%PUREWIRE_SITE_URL%" />
+  <meta property="og:image" content="%PUREWIRE_SITE_URL%/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="PureWire — say it anyway. A social platform built on expression and freedom, with every post verified original." />
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="PureWire — Say it anyway." />
+  <meta name="twitter:description" content="PureWire — say it anyway. A social platform built on expression and freedom — not advertising or corporate sponsorships. Every post is verified original." />
+  <meta name="twitter:image" content="%PUREWIRE_SITE_URL%/og-image.png" />
+  <meta name="twitter:image:alt" content="PureWire — say it anyway. A social platform built on expression and freedom, with every post verified original." />
+
+  <title>PureWire — Say it anyway.</title>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "PureWire",
+    "url": "%PUREWIRE_SITE_URL%",
+    "description": "PureWire — say it anyway. A social platform built on expression and freedom — not advertising or corporate sponsorships. Every post is verified original."
+  }
+  </script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

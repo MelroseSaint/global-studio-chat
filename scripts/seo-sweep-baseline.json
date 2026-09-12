@@ -1,0 +1,12 @@
+{
+  "post": {
+    "flags": [
+      "thin-content"
+    ]
+  },
+  "profile": {
+    "flags": [
+      "thin-content"
+    ]
+  }
+}

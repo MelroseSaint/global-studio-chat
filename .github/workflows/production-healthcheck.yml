@@ -1,0 +1,3569 @@
+name: Production Health Check
+
+# Runs the full sign-up + password-reset auth loop against the live site
+# (scripts/signup-e2e-prod.mjs). Runs on every push to `main` — so a bad
+# deploy or a breaking change alerts immediately instead of waiting until
+# the nightly run — plus once a night at 03:00 UTC to catch anything the
+# push-triggered runs missed. Also runnable manually from the Actions tab.
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Nightly at 03:00 UTC — well outside usual deploy windows.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      # A deep audit on demand: sample EVERY post and profile in the live
+      # sitemap instead of the default 8-per-class (up to 1000 + 1000).
+      full_sweep:
+        description: "Full sitemap sweep (all posts + profiles)"
+        type: boolean
+        default: false
+
+concurrency:
+  # On push events, share the admin-account-push group with static-audit
+  # so parallel workflow runs never mint competing admin sessions.
+  # Scheduled and manual runs get their own group to avoid queuing.
+  ##  queue: max is REQUIRED here: GitHub's default concurrency keeps only
+#  ONE pending run per group and cancels any later arrival — with this
+#  long chain (15-30 min per push run) plus rapid pushes, pending runs
+#  were cancelled mid-flight and the shared group starved static-audit
+#  entirely. With the queue, runs wait FIFO instead of cancelling, and
+#  static-audit's push-triggered gate actually runs. (The `queue` key
+#  only accepts `single` or `max` — a numeric limit is a parse error, so
+#  burst throttling must be done differently; see the push-gate job.)
+  group: ${{ github.event_name == 'push' && 'admin-account-push' || 'production-healthcheck' }}
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+  issues: write # open a deduplicated alert issue when a check fails
+  actions: write # the push-burst gate cancels stale queued runs
+
+jobs:
+  # Burst throttle: when several pushes land in quick succession, the
+  # shared admin-account-push group runs them one-at-a-time FIFO, so each
+  # push's suite hammered the production deployment in turn. Run IDs are
+  # monotonic, so a NEWER queued run of this same workflow means this run
+  # is a stale member of a burst: it cancels ITSELF and lets the newest
+  # push's run do the verification. A lone push (no newer queued run)
+  # always runs the full suite — the push gate can never starve, and the
+  # latest commit is always the one that gets verified.
+  push-burst-gate:
+    name: Push burst gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Cancel self when a newer push is queued
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const self = context.runId;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: 'production-healthcheck.yml',
+              event: 'push',
+              branch: context.ref.replace('refs/heads/', ''),
+              status: 'queued',
+              per_page: 30,
+            });
+            const newer = (data.workflow_runs || []).filter((r) => r.id > self);
+            if (newer.length === 0) {
+              core.info(`run ${self}: no newer queued run — this is the latest push, running the suite`);
+            } else {
+              core.info(
+                `run ${self}: superseded by newer queued run(s) ${newer.map((r) => r.id).join(", ")} — cancelling itself so the burst collapses to the latest push`,
+              );
+              try {
+                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: self });
+              } catch (e) {
+                // Self-cancel may be refused in some token scopes; the run
+                // then continues normally (no burst collapse, no gate break).
+                core.warning(`self-cancel failed (${e.message}) — continuing`);
+              }
+            }
+  auth-loop:
+    name: Sign-up + reset auth loop
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Heaviest live E2E (real signup + email verification + reset loop):
+    # nightly + manual only, so push runs stay lean on the Convex free-plan
+    # database-I/O budget. The push gate keeps the fast guards and harness
+    # QAs; this suite of browser E2Es runs on the 03:00 UTC schedule and on
+    # workflow_dispatch.
+    if: github.event_name != 'push'
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the production auth-loop E2E
+        id: e2e
+        env:
+          # The Resend key is required — the script reads the OTP codes from
+          # Resend's API. Add it under Settings > Secrets > Actions.
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # The E2E must run against the MAIN host (purewire.vercel.app): the
+          # mirror (jovial-axolotl-209.convex.site) serves a static bundle that
+          # can predate the Cloudinary signed-upload code, which would make
+          # the media checks fail for the wrong reason. Default to production;
+          # overridable via repository variables.
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+          # Cloudinary creds enable the signed-destroy confirmation step —
+          # without them the final "asset is gone" check can't verify the
+          # app's cleanup actually destroyed the uploaded media.
+          CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME || 'saintscloud' }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        run: bash scripts/retry-once.sh healthcheck.log npm run qa:signup-e2e
+
+      - name: Upload the E2E log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: healthcheck-log
+          path: healthcheck.log
+
+      # Live PWA guard: the deployed /sw.js must serve real, rendered
+      # JavaScript with a versioned cache name that matches the deployed
+      # precache-manifest.json, and every manifest asset must come back as
+      # real JS/CSS — never the SPA shell (the vercel.json catch-all used
+      # to mask missing /assets/* as 200 HTML). A regression here means
+      # refreshes silently lose their cache and the PWA/offline story dies
+      # on the live site, even if the build output looks fine.
+      - name: Live PWA guard (sw.js + precache manifest + asset types)
+        run: npm run qa:pwa-output:live
+
+      # Alerting: GitHub already emails on failed runs. This also opens a
+      # single persistent issue (label prod-healthcheck) so a failing nightly
+      # check is visible on the repo and never silently lost — and never
+      # spams one issue per night, because an open alert blocks a new one.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-healthcheck";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Production health check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "A PureWire production check failed against the live site.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the run log (healthcheck-log artifact) for the failing check.",
+                "The throwaway account, if one was left behind, is named in the log.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      # Self-healing: when a run passes, close any open alert issue so the
+      # next real failure can open a fresh one instead of being swallowed by
+      # a stale alert.
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-healthcheck";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed alert issue #${issue.number}.`);
+            }
+
+  seo-live-guard:
+    # The SEO checks used to live inside the auth-loop job AFTER its signup
+    # E2E step — so a failed E2E silently skipped all three of them, and an
+    # SEO regression went unmeasured on exactly the runs where the site was
+    # already struggling. They are now their own job: the SEO basics guard
+    # (canonical/OG tags, robots, sitemap), the sitemap URL health sweep,
+    # and the dynamic-rendering guard run on every push + nightly REGARDLESS
+    # of the auth loop's outcome, and open their own deduplicated alert
+    # issue (prod-seo-live) when any of them fails.
+    name: SEO live guard (basics + sitemap health + dynamic render)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # SEO basics guard: every URL-bearing meta tag on the live homepage
+      # must resolve to the EXPECTED_SITE_URL host (never the Convex
+      # static-hosting mirror or a stale VITE_SITE_URL dashboard var), the
+      # OG locale must be present, and robots.txt + the XML sitemap must be
+      # served. A regression here is silent, so it fails the job and opens
+      # the alert issue below.
+      - name: SEO basics guard (canonical host, OG tags, robots, sitemap)
+        env:
+          # The one true host. Bump this here when a custom domain lands
+          # (and the PUREWIRE_SITE_URL default in vite.config.ts).
+          EXPECTED_SITE_URL: ${{ vars.EXPECTED_SITE_URL || 'https://purewire.vercel.app' }}
+        run: |
+          set -euo pipefail
+          html="$(curl -fsSL "$EXPECTED_SITE_URL/")"
+          for tag in \
+            'rel="canonical" href="' \
+            'property="og:url" content="' \
+            'property="og:image" content="' \
+            'name="twitter:image" content="' \
+            '"url": "' ; do
+            echo "$html" | grep -qF "${tag}${EXPECTED_SITE_URL}" \
+              || { echo "::error::tag '${tag}' does not resolve to $EXPECTED_SITE_URL"; exit 1; }
+          done
+          echo "$html" | grep -q 'property="og:locale"' \
+            || { echo "::error::og:locale meta is missing"; exit 1; }
+          curl -fsSL "$EXPECTED_SITE_URL/robots.txt" | grep -qi "sitemap:" \
+            || { echo "::error::robots.txt is not served"; exit 1; }
+          curl -fsSL "$EXPECTED_SITE_URL/sitemap.xml" | grep -q "<urlset" \
+            || { echo "::error::sitemap.xml is not served"; exit 1; }
+          echo "SEO basics OK: canonical + OG/twitter tags on $EXPECTED_SITE_URL"
+
+      # Sitemap URL health: the dynamic sitemap only earns its place if the
+      # URLs it submits actually render. Sample the newest posts + profiles
+      # (plus the fixed pages) and assert each returns 200 with REAL content
+      # — server-rendered Article/ProfilePage JSON-LD for posts/profiles,
+      # never a 404 or the SPA shell — so a visibility regression can never
+      # silently submit dead URLs. Zero-dependency script (no npm ci).
+      - name: Sitemap URL health (sampled posts + profiles)
+        env:
+          SITEMAP_SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+          EXPECTED_SITEMAP_HOST: ${{ vars.EXPECTED_SITE_URL || 'https://purewire.vercel.app' }}
+        run: |
+          if [ "${{ github.event.inputs.full_sweep }}" = "true" ]; then
+            node scripts/sitemap-url-health.mjs --all
+          else
+            node scripts/sitemap-url-health.mjs
+          fi
+
+      # Dynamic rendering guard: a Googlebot fetch of the newest /post/:id,
+      # /u/:handle, and /about must return the server-rendered OG page
+      # (Article / ProfilePage / AboutPage JSON-LD, and the About page's
+      # fee text) — never the SPA shell — while a plain browser must still
+      # get the SPA. A regression here means search engines see a blank app
+      # and every OG/JSON-LD investment is dead.
+      - name: Dynamic rendering guard (Googlebot vs browser)
+        env:
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: node scripts/dynamic-render-check.mjs
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-seo-live";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `SEO live guard regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "One of the live SEO checks failed against production:",
+                "- SEO basics: a canonical/OG/twitter tag no longer resolves",
+                "  to the canonical host, og:locale is missing, or robots.txt /",
+                "  sitemap.xml are not served;",
+                "- sitemap URL health: a sitemap URL returned a 404 or the SPA",
+                "  shell, or its canonical/og:url drifted from the sitemap URL;",
+                "- dynamic rendering: a Googlebot fetch got the SPA shell",
+                "  instead of the server-rendered page (or a browser got the",
+                "  OG page).",
+                "",
+                "These checks are decoupled from the auth-loop E2E, so they run",
+                "on every push and nightly regardless of the signup step's",
+                "outcome.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Run the three checks locally to see which failed:",
+                "  node scripts/sitemap-url-health.mjs",
+                "  node scripts/dynamic-render-check.mjs",
+                "plus the SEO basics curl block in this workflow. This issue is",
+                "closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-seo-live";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open SEO live alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed SEO live alert issue #${issue.number}.`);
+            }
+
+  vercel-env-guard:
+    # The canonical host is repo-owned by construction: vite.config.ts
+    # defaults to it and the dashboard self-documents it via
+    # PUREWIRE_SITE_URL. The stale VITE_SITE_URL var was the original
+    # source of the wrong-host bug, so this guard fails the job if it EVER
+    # reappears in any Vercel environment — and asserts PUREWIRE_SITE_URL
+    # is still set in production — so a dashboard edit can never silently
+    # re-open the defect. Uses the same VERCEL_TOKEN secret as the Deploy
+    # workflow (scripts/vercel-env-guard.mjs).
+    name: Vercel env guard (no stale VITE_SITE_URL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run the Vercel env guard
+        if: env.VERCEL_TOKEN != ''
+        run: npm run qa:vercel-env
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a reintroduced stale var gets its own visible alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-vercel-env";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Stale VITE_SITE_URL detected in Vercel env (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The Vercel env guard failed against the project's environment variables.",
+                "",
+                "This means **VITE_SITE_URL was re-added to the Vercel project env**, or",
+                "**PUREWIRE_SITE_URL is no longer set in production**. The canonical host",
+                "is repo-owned by construction — the stale var re-opens the wrong-host",
+                "defect and re-emits the build warning.",
+                "",
+                "Fix: remove VITE_SITE_URL from every Vercel environment (Settings →",
+                "Environment Variables) and ensure PUREWIRE_SITE_URL=https://purewire.vercel.app",
+                "exists in production.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-vercel-env";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open Vercel env alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed Vercel env alert issue #${issue.number}.`);
+            }
+
+  vercel-build-warnings:
+    # The env guard proves the stale VITE_SITE_URL var is absent from the
+    # dashboard — but a dashboard edit between runs can re-add it, and the
+    # only place its damage shows up is the Vercel BUILD LOG, where
+    # vite.config.ts's siteUrl() plugin prints `[purewire-site-url]
+    # VITE_SITE_URL is set but ignored`. This job is the log-level twin of
+    # the env guard: it finds the deployment for THIS commit (git SHA, or
+    # the newest deploy of the last 20 min) for EACH target — production
+    # and preview — waits for the build to finish, fetches the deployment
+    # events (the build log), and fails if `VITE_SITE_URL is set but
+    # ignored` or any other `[purewire-site-url]` warning appears. Preview
+    # builds share vite.config.ts and the dashboard env, so a stale var
+    # sitting in the preview environment prints the same warning there —
+    # scanning both targets proves the canonical host is correct in every
+    # shipped bundle, not just the dashboard (scripts/vercel-build-warnings.mjs
+    # with VERCEL_TARGET=production|preview). Runs on the same schedule as
+    # the env guard; skips when VERCEL_TOKEN is not configured.
+    name: Vercel build-log warning guard (prod + preview, no purewire-site-url warnings)
+    runs-on: ubuntu-latest
+    # Two scans run sequentially (production, then preview); each worst
+    # case is find (2 min) + ready poll (10 min), so 40 keeps comfortable
+    # margin over two slow builds without killing the guard mid-poll.
+    timeout-minutes: 40
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Scan the production build log
+        id: scan-prod
+        if: env.VERCEL_TOKEN != ''
+        run: npm run qa:vercel-build-warnings
+
+      - name: Scan the latest preview build log
+        id: scan-preview
+        if: env.VERCEL_TOKEN != ''
+        env:
+          VERCEL_TARGET: preview
+        run: npm run qa:vercel-build-warnings
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label per target so a build-log warning (stale VITE_SITE_URL var
+      # or any esbuild/Vite warning) gets a visible alert for the exact
+      # environment that emitted it. The `steps.<id>.outcome` guards keep
+      # the two alerts independent — a preview-only warning never opens
+      # (or closes) a production alert and vice versa. (Intentional
+      # difference from the `failure()`-guarded jobs: per-step guards mean
+      # an infra failure like checkout/setup-node no longer opens an
+      # alert — only the scans themselves do.)
+      - name: Alert on production failure
+        if: steps.scan-prod.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-build-warnings";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `build-log warning (purewire-site-url or esbuild/Vite) in the production build (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The Vercel build-log warning guard failed against the live deployment's build log.",
+                "",
+                "This means the production build emitted a warning, which a clean build never does.",
+                "",
+                "- **purewire-site-url**: `VITE_SITE_URL is set but ignored` (or another",
+                "  `[purewire-site-url]` line) — the stale var was re-added to a Vercel",
+                "  environment, or the canonical-host plugin in vite.config.ts is misconfigured.",
+                "  The shipped bundle then carries the wrong canonical/OG host, re-opening the",
+                "  cross-host duplicate-content defect. Fix: remove VITE_SITE_URL from every",
+                "  Vercel environment and keep PUREWIRE_SITE_URL=https://purewire.vercel.app set.",
+                "",
+                "- **esbuild/Vite warning** (e.g. `[esbuild css minify]`, chunk-size advisory, eval,",
+                "  sourcemap, or circular-dependency warning) — an unknown CSS property or other",
+                "  bundle defect slipped into the build. Fix at the source: vite.config.ts's esbuild",
+                "  logOverride or the offending dependency, so the log is 100% warning-free again.",
+                "",
+                "See the workflow log for the exact warning line(s) that tripped the guard.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale production alert on success
+        if: steps.scan-prod.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-build-warnings";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open build-warnings alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed build-warnings alert issue #${issue.number}.`);
+            }
+
+      - name: Alert on preview failure
+        if: steps.scan-preview.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "preview-build-warnings";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `build-log warning (purewire-site-url or esbuild/Vite) in a preview build (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The Vercel build-log warning guard failed against a preview deployment's build log.",
+                "",
+                "This means a preview build emitted a warning, which a clean build never does.",
+                "",
+                "- **purewire-site-url**: `VITE_SITE_URL is set but ignored` (or another",
+                "  `[purewire-site-url]` line) — the stale var sits in the Vercel preview",
+                "  environment, or the canonical-host plugin in vite.config.ts is misconfigured.",
+                "  Preview bundles then carry the wrong canonical/OG host; production is unaffected",
+                "  but the defect will ship the moment the preview branch merges.",
+                "",
+                "- **esbuild/Vite warning** (e.g. `[esbuild css minify]`, chunk-size advisory, eval,",
+                "  sourcemap, or circular-dependency warning) — an unknown CSS property or other",
+                "  bundle defect slipped into the preview build and will ship on merge. Fix at the",
+                "  source so the log is 100% warning-free again.",
+                "",
+                "See the workflow log for the exact warning line(s) that tripped the guard.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale preview alert on success
+        if: steps.scan-preview.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "preview-build-warnings";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open preview build-warnings alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed preview build-warnings alert issue #${issue.number}.`);
+            }
+
+  cloudinary-upload:
+    # Proves the SIGNED upload path works (the exact call the composer
+    # makes — server-minted api_key + timestamp + signature, no unsigned
+    # preset) by uploading a 1x1 PNG and destroying it. Catches a revoked
+    # key, a key missing the Upload/create permission (403), or a quota
+    # block the moment it happens — before every user upload breaks
+    # silently. Runs in parallel with the auth loop, same schedule, own
+    # alert label.
+    name: Cloudinary upload health
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the Cloudinary upload probe
+        id: probe
+        env:
+          # Add these under Settings > Secrets > Actions. The cloud name and
+          # preset can come from repository variables instead; the API key +
+          # secret are only used to destroy the probe asset afterward.
+          CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME || secrets.CLOUDINARY_CLOUD_NAME || 'saintscloud' }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        run: bash scripts/retry-once.sh cloudinary-health.log npm run qa:cloudinary-health
+
+      - name: Upload the probe log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudinary-health-log
+          path: cloudinary-health.log
+
+      # Same deduplicated-alert pattern as the auth loop, with its own label
+      # so a media outage doesn't piggyback on (or get swallowed by) the
+      # auth-loop alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-cloudinary";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Cloudinary uploads are down (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The Cloudinary unsigned-preset upload probe failed against production.",
+                "",
+                "This means **every user upload is failing** — the app falls back to Convex",
+                "storage, but media should live in Cloudinary.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the cloudinary-health-log artifact for the probe output.",
+                "",
+                "Common causes:",
+                "- The unsigned upload preset was deleted or renamed (Settings → Upload → Upload Presets).",
+                "- The Cloudinary API key was revoked or the account was suspended.",
+                "- A quota or storage limit was hit.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-cloudinary";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open Cloudinary alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed Cloudinary alert issue #${issue.number}.`);
+            }
+
+  media-architecture:
+    # Enforces the Cloudinary-first media architecture against production:
+    # scripts/media-architecture-qa.mjs scans every media reference on
+    # posts, stories, and comments and fails on anything that violates it —
+    # bytes embedded in Convex (blob:/data:/base64), a media URL hosted off
+    # PureWire's provider, an item with neither storage nor URL, or one
+    # carrying both. Reports the convex/cloudinary split so a regression
+    # that starts shoving bytes into Convex (or hotlinking foreign hosts)
+    # surfaces the moment it lands instead of silently growing storage.
+    # Harness-gated (TEST_HARNESS_SECRET) like the reinstate job.
+    name: Media architecture guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the media-architecture audit
+        id: audit
+        run: bash scripts/retry-once.sh media-architecture.log npm run qa:media-architecture
+
+      - name: Upload the audit log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-architecture-log
+          path: media-architecture.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so an architecture violation doesn't piggyback on (or get
+      # swallowed by) the cloudinary alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-media-architecture";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Media architecture violation (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The media-architecture audit found invalid media references against production.",
+                "",
+                "This means media bytes are not living where the architecture says they should —",
+                "embedded bytes in Convex (blob:/data:/base64), a foreign media host, or a broken",
+                "reference (no storage id AND no URL, or both).",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the media-architecture-log artifact for the offending rows.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-media-architecture";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open media-architecture alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed media-architecture alert issue #${issue.number}.`);
+            }
+
+  ai-visual-hardening:
+    # Pins the visual AI-detection layer (scripts/ai-visual-hardening-qa.mjs):
+    # synthetic AI-like and human-like fixtures run through an adversarial
+    # transformation battery — re-encoding, resizing, cropping, screenshotting,
+    # recompression, format conversion, and combinations — and the QA fails if
+    # the measured separation collapses (AI-like stays >= ai_likely at >=256px,
+    # human-like stays below it, thumbnail bucketing stays honest). A metadata-
+    # stripped screenshot must never read as human-created, and a regression in
+    # the forensics (a signal silently stopping) must fail CI the moment it
+    # lands. Runs locally (pure synthetic fixtures) — no live site, no secrets.
+    name: AI visual-detection hardening guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the adversarial visual QA
+        id: visualqa
+        run: bash scripts/retry-once.sh ai-visual-hardening.log npm run qa:ai-visual-hardening
+
+      - name: Upload the QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-visual-hardening-log
+          path: ai-visual-hardening.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ai-visual-hardening";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `AI visual-detection hardening drift (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The adversarial visual QA found that AI-like vs human-like fixtures no longer",
+                "separate as measured — the detector no longer survives an adversarial",
+                "transformation (re-encode/resize/crop/screenshot/recompress), or a human-like",
+                "fixture now reads as AI.",
+                "",
+                "This means the visual layer of the AI-media pipeline has drifted — a metadata-",
+                "stripped screenshot may now pass as human-created, or real photos may be",
+                "wrongly flagged for review.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the ai-visual-hardening-log artifact for the measured split.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ai-visual-hardening";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open AI-visual-hardening alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed AI-visual-hardening alert issue #${issue.number}.`);
+            }
+
+  ai-scan-integration:
+    # Proves the AI-media scan pipeline is LIVE on the deployed backend, not
+    # just correct in the repo: scripts/ai-scan-integration-qa.mjs uploads a
+    # real JPEG carrying a generator marker (EXIF Software: Midjourney)
+    # through Convex storage and runs the production scanMediaForAi action,
+    # asserting the byte-level scan blocks it and the structured evidence
+    # object is populated. The visual-forensics fixture QA (above) pins the
+    # detector math; this job pins the wiring — it fails the moment the
+    # deployed backend drifts from the repo (a reverted scan, a silently
+    # skipped deploy, a broken upload path) even when the fixtures still
+    # pass locally. Harness-gated like the other live QAs.
+    name: Live AI-scan pipeline (byte-level)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the live AI-scan integration QA
+        id: aiscan
+        run: bash scripts/retry-once.sh ai-scan-integration.log npm run qa:ai-scan-integration
+
+      - name: Upload the QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-scan-integration-log
+          path: ai-scan-integration.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ai-scan-integration";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Live AI-scan pipeline drift (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The live AI-scan integration QA failed against the deployed backend.",
+                "A real JPEG carrying a generator marker (EXIF Software: Midjourney) no",
+                "longer blocks through scanMediaForAi, or the evidence object is missing",
+                "— the deployed backend has drifted from the repo (reverted scan,",
+                "silently skipped deploy, or a broken upload path).",
+                "",
+                "This is separate from the visual-forensics fixture QA: it proves the",
+                "byte-level scan is actually running in production, not just correct",
+                "in the repo.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the ai-scan-integration-log artifact for the failure detail.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ai-scan-integration";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open AI-scan-integration alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed AI-scan-integration alert issue #${issue.number}.`);
+            }
+
+  phishing-scan:
+    # Proves the phishing & account-integrity layer works end-to-end against
+    # production: scripts/phishing-qa.mjs posts scam text, a PureWire
+    # lookalike domain, link shorteners, and credential-harvesting phrasing
+    # across posts, comments, and profile bios/links, asserts the block and
+    # review tiers (while ordinary links still post clean), and confirms the
+    # repeat offender quietly shadowbans with the admin queue explaining why.
+    # Catches a regression in the scanner or its wiring the moment it lands.
+    # Harness-gated (TEST_HARNESS_SECRET) like the reinstate job.
+    name: Phishing & integrity scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The secret can't be tested in an `if:` (GitHub rejects `secrets` in
+    # any if expression) — map it to an env var and gate on that instead.
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the phishing QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: phishing
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh phishing.log npm run qa:phishing
+
+      - name: Upload the phishing QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phishing-log
+          path: phishing.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own label
+      # so an integrity regression doesn't piggyback on another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-phishing";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Phishing protection check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The phishing & account-integrity QA failed against production.",
+                "",
+                "This means the scanner or its wiring is broken: scam links or",
+                "credential-harvesting phrasing may be slipping through, or",
+                "genuine links may be getting blocked or review-queued.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the phishing-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-phishing";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open phishing alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed phishing alert issue #${issue.number}.`);
+            }
+
+  adult-content-qa:
+    # Proves the sexual-solicitation detection layer works end-to-end:
+    # solicitation-flagged posts, comments, bios, and stories are rejected
+    # by the live deployment, while innocent text and verb forms pass.
+    # Also verifies circumvention normalization defeats zero-width chars,
+    # repeated characters, and separator insertion.
+    name: Adult-content policy QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: phishing-scan
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run the adult-content QA
+        if: env.TEST_HARNESS_SECRET != ''
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh adult-content.log npm run qa:adult-content
+      - name: Upload the adult-content QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adult-content-log
+          path: adult-content.log
+
+  profile-type:
+    # Pins the Creator/User identity declaration (scripts/profile-type-qa.mjs):
+    # a fresh account starts with NO profileType (never silently assigned),
+    # setProfileType persists and rejects anything but creator/user, and in
+    # the browser the required onboarding prompt appears and clears on a
+    # choice, the Settings selector flips Creator<->User in both directions,
+    # and the profile badge + tooltip always match the stored choice (the
+    # title follows the declaration). Harness-gated; mints a fresh session.
+    name: Profile-type identity E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: adult-content-qa
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the profile-type QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: profile-type
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: bash scripts/retry-once.sh profile-type.log npm run qa:profile-type
+
+      - name: Upload the profile-type QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-type-log
+          path: profile-type.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so an identity-declaration regression gets its own alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-profile-type";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Profile-type identity drift (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The profile-type identity QA failed against the live site.",
+                "A fresh account no longer starts without a profileType, the Settings",
+                "selector no longer flips Creator/User (or the badge no longer follows",
+                "the choice), or the onboarding prompt regressed.",
+                "",
+                "This means the identity declaration is broken — users may be assigned",
+                "a type silently, unable to change it, or wearing a badge that doesn't",
+                "match their choice.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the profile-type-log artifact for the failure detail.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-profile-type";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open profile-type alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed profile-type alert issue #${issue.number}.`);
+            }
+
+  pwa-install-hint:
+    # Verifies the PWA "Add to Home Screen" hint (PwaInstallHint.tsx)
+    # renders where it should on the live site: iPhone + iPad (including
+    # the iPadOS Mac-masquerade detection) show it, desktop and installed-
+    # PWA (standalone) never do, and dismissal persists. Harness-gated;
+    # each scenario mints a fresh session and browser.
+    name: PWA install hint (live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: adult-content-qa
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the PWA install-hint QA
+        run: npm run qa:pwa-install-hint 2>&1 | tee pwa-install-hint.log
+
+      - name: Upload the PWA install-hint log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwa-install-hint-log
+          path: pwa-install-hint.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-pwa-install-hint";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `PWA install-hint regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The PWA install hint failed its live QA: it rendered where it",
+                "should not (desktop or an installed PWA) or failed to render",
+                "on iOS, or dismissal stopped persisting.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the pwa-install-hint-log artifact. This issue is closed",
+                "automatically on the next passing QA.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-pwa-install-hint";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open PWA install-hint alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed PWA install-hint alert issue #${issue.number}.`);
+            }
+
+  shared-video-autoplay:
+    # Verifies the useDevice()-driven autoplay policy for shared-post
+    # videos on the live site: a real DM-shared video post renders without
+    # autoplay on an emulated iPhone and WITH autoplay on desktop. Guards
+    # the policy (src/lib/shared-video-autoplay.ts) so iOS never burns
+    # cellular data autoplaying videos and desktop never loses autoplay.
+    name: Shared-video autoplay policy (live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: pwa-install-hint
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the shared-video autoplay QA
+        run: npm run qa:shared-video-autoplay 2>&1 | tee shared-video-autoplay.log
+
+      - name: Upload the shared-video autoplay log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-video-autoplay-log
+          path: shared-video-autoplay.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-shared-video-autoplay";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Shared-video autoplay regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The shared-post video autoplay policy failed its live QA:",
+                "videos autoplay on iOS (burning cellular data) or fail to",
+                "autoplay on desktop.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the shared-video-autoplay-log artifact. This issue is",
+                "closed automatically on the next passing QA.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-shared-video-autoplay";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open shared-video autoplay alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed shared-video autoplay alert issue #${issue.number}.`);
+            }
+
+  dm-share-qa:
+    # Two-user share-a-post-into-a-DM verification against production
+    # (scripts/dm-share-qa.mjs): the backend round trip (keys, post,
+    # conversation, sharedPostId on messages, dm-share notification) plus
+    # a real-browser half (A's composer preview → send → B sees the card).
+    # Harness-gated like the phishing/reinstate jobs.
+    name: DM share E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Heavy browser E2E — nightly + manual only (see the auth-loop note).
+    # The chain continues past it via blocklist-sync → shared-video-autoplay,
+    # so the downstream harness checks still run on push.
+    if: github.event_name != 'push'
+    needs: shared-video-autoplay
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the DM share QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: dm-share
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: bash scripts/retry-once.sh dm-share.log npm run qa:dm-share
+
+      - name: Upload the DM share QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dm-share-log
+          path: dm-share.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a DM share regression gets its own visible alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-dm-share";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `DM share check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The two-user DM share QA failed against production.",
+                "",
+                "This means sharing a post into a DM is broken: the backend",
+                "round trip (sharedPostId on messages), the composer preview,",
+                "the recipient's shared-post card, or the dm-share",
+                "notification (bell badge + Open link).",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the dm-share-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-dm-share";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open DM share alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed DM share alert issue #${issue.number}.`);
+            }
+
+  comment-share:
+    # (scripts/comment-share-qa.mjs): the backend round trip (sharedPostId
+    # on comments, the attach-a-post composer rule, both negative cases)
+    # plus a real-browser half (A's ?share= deep link → preview → posted
+    # comment renders the card). Harness-gated like the DM share job.
+    name: Comment share E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Heavy browser E2E — nightly + manual only (see the auth-loop note).
+    if: github.event_name != 'push'
+    needs: dm-share-qa
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the comment share QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: comment-share
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        run: bash scripts/retry-once.sh comment-share.log npm run qa:comment-share
+
+      - name: Upload the comment share QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comment-share-log
+          path: comment-share.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a comment share regression gets its own visible alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-comment-share";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Comment share check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The comment-share QA failed against production.",
+                "",
+                "This means sharing a post into a comment is broken: the backend",
+                "round trip (sharedPostId on comments, empty-husk rule, ghost-post",
+                "rejection), the attach-a-post composer preview, or the posted",
+                "comment's shared-post card with View post link.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the comment-share-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-comment-share";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open comment share alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed comment share alert issue #${issue.number}.`);
+            }
+
+  post-author-delete:
+    # (scripts/post-author-delete-qa.mjs): the post-author comment
+    # deletion permission matrix (author / post owner / third party), the
+    # reply-thread sweep, count honesty, and the comment-deleted
+    # notification (with test-actor and self-delete suppression).
+    # Harness-gated like the comment share job.
+    name: Post-author comment deletion E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Heavy browser E2E — nightly + manual only (see the auth-loop note).
+    if: github.event_name != 'push'
+    needs: comment-share
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the post-author deletion QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: post-author-delete
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh post-author-delete.log npm run qa:post-author-delete
+
+      - name: Upload the post-author deletion QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-author-delete-log
+          path: post-author-delete.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a deletion-permission regression gets its own alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-post-author-delete";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Post-author comment deletion check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The post-author deletion QA failed against production.",
+                "",
+                "This means a post's author can no longer delete comments written by",
+                "other users (or the deletion is broken): the permission matrix",
+                "(author / post owner / third party), the reply-thread sweep, count",
+                "honesty, or the comment-deleted notification side effect.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the post-author-delete-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-post-author-delete";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open post-author deletion alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed post-author deletion alert issue #${issue.number}.`);
+            }
+
+  blocklist-sync:
+    # Scheduled blocklist refresh + bootstrap: the script first runs
+    # registerDefaultBlocklistSources (the self-healing bootstrap that
+    # re-inserts the built-in PureWire data/adult feeds if they were ever
+    # removed), then runs syncExternalSources against production so every
+    # enabled external feed refreshes on the spec's 24h cadence — the action
+    # validates, normalizes, dedupes, adds new domains, deactivates domains
+    # that vanished from their feed, and records lastVerifiedAt + the sync
+    # timestamp for traceability. Runs nightly (plus every push + manual),
+    # harness-gated like the other jobs. A source error fails the job so a
+    # broken feed is visible instead of silently stale.
+    name: Blocklist feed sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Rewired past the nightly-only browser E2Es (dm-share → comment-share
+    # → post-author-delete all carry if: github.event_name != 'push'): this
+    # harness check must still run on push, and it only needs the
+    # serialization guarantee of the shared-video-autoplay step before it.
+    needs: shared-video-autoplay
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the blocklist sync
+        if: env.TEST_HARNESS_SECRET != ''
+        id: sync
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: |
+          set -o pipefail
+          npm run qa:blocklist-sync 2>&1 | tee blocklist-sync.log
+
+      - name: Upload the sync log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blocklist-sync-log
+          path: blocklist-sync.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own label
+      # so a stale/breaking feed doesn't piggyback on another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-blocklist";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Blocklist feed sync failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The external blocklist feed sync failed against production.",
+                "",
+                "This means one or more enabled sources (the data/adult feeds or",
+                "an admin-added source) did not refresh — new domains are not",
+                "being added and vanished domains are not being deactivated.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the blocklist-sync-log artifact for which source failed.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-blocklist";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open blocklist alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed blocklist alert issue #${issue.number}.`);
+            }
+
+  moderation-reinstate:
+    # Proves the admin reinstatement loop end-to-end against production:
+    # scripts/reinstate-qa.mjs silences and bans a throwaway account, then
+    # reinstates it with a required reason and asserts it returns to full
+    # active status, the audit trail records the 'reinstate' action with the
+    # note, and its content becomes public again. Catches a regression in
+    # the restore path — or in the reason/audit contract — the moment it
+    # lands. Harness-gated (TEST_HARNESS_SECRET) like the session audit in
+    # the static gate; the job is skipped on repositories that haven't
+    # configured the harness yet, and runs on the same schedule as the
+    # auth loop (every push to main + nightly + manual dispatch).
+    # Serialized in the admin-account concurrency chain; every admin-
+    # dependent job runs sequentially to prevent session contention.
+    needs: blocklist-sync
+    name: Moderation reinstate loop
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the reinstate moderation QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: reinstate
+        env:
+          # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
+          # with TEST_HARNESS_ENABLED=1 set on the Convex deployment. Add the
+          # secret under Settings > Secrets > Actions.
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh reinstate.log npm run qa:reinstate
+
+      - name: Upload the reinstate QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reinstate-log
+          path: reinstate.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own label
+      # so a moderation regression doesn't piggyback on (or get swallowed by)
+      # the auth-loop alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-moderation";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Admin reinstatement check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The admin-reinstatement moderation QA failed against production.",
+                "",
+                "This means the restore path is broken: reinstated accounts may not",
+                "return to active status, the audit trail may not record the reason,",
+                "or reinstated content may not become public again.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the reinstate-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-moderation";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open moderation alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed moderation alert issue #${issue.number}.`);
+            }
+
+  admin-ip-qa:
+    # Proves the backend-verified admin device gate end-to-end against
+    # production (scripts/admin-ip-qa.mjs): a fresh admin sign-in verified
+    # through /admin/ip/verify binds the session to the IP the backend
+    # OBSERVED (never a client claim) and grants admin power; the harness
+    # then ages the binding server-side and requireAdmin must refuse even
+    # with a valid JWT (enforcement is backend, not UI gating); simulating
+    # an IP change must revoke the session outright, and re-verifying must
+    # stay revoked (sticky). Runs on the same schedule as the auth loop.
+    # Harness-gated for the enforcement/revocation steps; the happy path
+    # runs whenever ADMIN_PASSWORD is configured.
+    name: Admin IP binding QA (backend-verified device gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: moderation-reinstate
+    env:
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the admin IP binding QA
+        if: env.ADMIN_PASSWORD != ''
+        id: admin-ip
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh admin-ip.log npm run qa:admin-ip
+
+      - name: Upload the admin-ip QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-ip-log
+          path: admin-ip.log
+
+      # Deduplicated alert with its own label so a device-gate regression
+      # (revocation not sticky, stale binding granting power, verify broken)
+      # is visible instead of being swallowed by another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-admin-ip";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Admin IP binding check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The backend-verified admin IP gate QA failed against production.",
+                "",
+                "This means admin power may be decoupled from the backend-observed",
+                "IP: revocation may not be sticky (a stolen JWT revives the",
+                "session), a stale binding may still grant power, or the",
+                "/admin/ip/verify endpoint may be broken.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the admin-ip-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-admin-ip";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open admin-ip alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed admin-ip alert issue #${issue.number}.`);
+            }
+
+  test-isolation:
+    # Proves the "testing never disrupts production" invariant end-to-end
+    # against the live site (scripts/qa-test-isolation.mjs): a throwaway
+    # qa_ account posts, follows, likes, and comments on the real admin,
+    # and the admin's (a real member's) viewpoint must show NONE of it —
+    # feed, search, follower list, comment thread, bell notifications, and
+    # the sitemap source queries — while the test account's own viewpoint
+    # still works (self-exclusion preserved so UI-driving QAs keep
+    # passing). If any of it leaks, real members would be seeing
+    # test-correlated content during every QA run.
+    name: Test isolation QA (QA fixtures invisible to real members)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: admin-ip-qa
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the test isolation QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: test-isolation
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+          ADMIN_USERNAME: ${{ vars.ADMIN_USERNAME || 'adminmelrose' }}
+        run: bash scripts/retry-once.sh test-isolation.log npm run qa:test-isolation
+
+      - name: Upload the test-isolation QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-isolation-log
+          path: test-isolation.log
+
+      # Deduplicated alert with its own label so a leak (a QA fixture
+      # surfacing to real members) is visible instead of being swallowed
+      # by another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-test-isolation";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Test isolation check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The test-isolation QA failed against production.",
+                "",
+                "This means a QA run's fixtures are leaking to real members:",
+                "a throwaway account's posts, comments, likes, follows, or",
+                "notifications appeared on a live surface (feed, search,",
+                "follow lists, comment threads, bell, or the sitemap). Real",
+                "members would be seeing test-correlated content.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the test-isolation-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-test-isolation";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open test-isolation alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed test-isolation alert issue #${issue.number}.`);
+            }
+
+  email-domain-qa:
+    # Proves the disposable-email anti-abuse layer against the LIVE signup
+    # action (scripts/disposable-email-qa.mjs Part 2): signups with
+    # disposable, temporary, and mail-forwarding addresses must be rejected
+    # BEFORE the account is created (the error crosses the boundary in
+    # err.data, and mintSessionForEmail must find no leaked account row).
+    # Guards the auth.ts gate so the denylist can never silently stop
+    # enforcing at signup. The static-audit workflow runs the pure-logic
+    # half; this job runs the live half against production.
+    name: Disposable-email gate (live signup rejection)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: test-isolation
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the disposable-email gate QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: email-domain
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh email-domain.log npm run qa:email-domains
+
+      - name: Upload the disposable-email gate QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-domain-log
+          path: email-domain.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-email-domain";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Disposable-email gate check failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The disposable-email gate QA failed against production.",
+                "",
+                "This means a signup with a known disposable/temporary/",
+                "mail-forwarding domain was NOT rejected (or leaked an",
+                "account row), or the denylist drift guard caught the",
+                "generated module out of sync with blocked-email-domains/*.txt.",
+                "",
+                "Fix, then close this issue — the next green run closes it",
+                "automatically.",
+              ].join("\n"),
+            });
+
+      - name: Close alert issue on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-email-domain";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed disposable-email gate alert issue #${issue.number}.`);
+            }
+
+  admin-workload-qa:
+    # Guards the exact crash class that once replaced the whole app with
+    # React Router's bare "Unexpected Application Error!" page: the shell
+    # fired admin:moderationWorkload before the admin's IP binding was
+    # fresh, requireAdmin threw, and Convex 1.30's useQuery THROWS query
+    # errors during render — taking down every route. This job mints a real
+    # admin session against the LIVE deployment and asserts BOTH halves of
+    # the fix (scripts/admin-workload-qa.mjs): (1) the query returns data
+    # after a backend IP verification, refuses with a CLEAN ConvexError
+    # (never a masked "Server Error") when the binding is aged, and
+    # recovers on re-verification; (2) a browser loads /admin with a seeded
+    # session and the page stays up — no router error page, no app
+    # fallback, the Admin surface renders. Harness-gated like the other QA
+    # jobs; runs on the same schedule as the auth loop.
+    name: Admin workload crash guard (live query + page-up)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: email-domain-qa
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the admin workload crash-class QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: admin-workload
+        env:
+          # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
+          # with TEST_HARNESS_ENABLED=1 set on the Convex deployment.
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+          SITE_URL: https://purewire.vercel.app
+        run: bash scripts/retry-once.sh admin-workload.log npm run qa:admin-workload
+
+      - name: Upload the admin-workload QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-workload-log
+          path: admin-workload.log
+
+      # Deduplicated alert with its own label so a regression in this crash
+      # class (query masked-error, router error page, shell fallback) is
+      # visible instead of being swallowed by another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-admin-workload";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Admin workload crash-class regression (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The admin moderationWorkload crash-class QA failed against production.",
+                "",
+                "This means the app can crash back to the bare React Router",
+                "\"Unexpected Application Error!\" page (or the app fallback) when an",
+                "admin loads the shell — the exact defect this QA guards:",
+                "",
+                "- The moderationWorkload query returned a MASKED \"Server Error\"",
+                "  instead of a clean ConvexError when the IP binding was stale",
+                "  (someone reverted the ConvexError wrapping or the admin gate).",
+                "- The query errored even after a fresh backend IP verification",
+                "  (requireAdmin / assertAdminIpVerified broken).",
+                "- A browser load of /admin with an admin session rendered the",
+                "  router error page or the app fallback instead of the shell",
+                "  (the route-level errorElement or workload boundary regressed).",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the admin-workload-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-admin-workload";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open admin-workload alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed admin-workload alert issue #${issue.number}.`);
+            }
+
+  story-views-qa:
+    # Proves the story-viewer feature end-to-end against production with
+    # three throwaway accounts (one author, two viewers):
+    # scripts/story-views-qa.mjs posts a clean story, has both viewers open
+    # it, and asserts the author's list shows BOTH viewers newest-first,
+    # that a re-view dedupes to one row and bubbles that viewer to the top
+    # with a newer viewedAt, and that each viewer gets an EMPTY list as a
+    # non-author (only the author or an admin ever learns who looked).
+    # Catches a regression in ordering, dedupe, or the privacy gate the
+    # moment it lands. Runs on the same schedule as the auth loop (every
+    # push to main + nightly + manual dispatch), harness-gated
+    # (TEST_HARNESS_SECRET) like the other QA jobs; skipped on repositories
+    # that haven't configured the harness yet.
+    name: Story viewer QA (ordering, dedupe, privacy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: admin-workload-qa
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the story-viewer QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: story-views
+        env:
+          # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
+          # with TEST_HARNESS_ENABLED=1 set on the Convex deployment.
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh story-views-qa.log npm run qa:story-views
+
+      - name: Upload the story-viewer QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: story-views-qa-log
+          path: story-views-qa.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a story-viewer regression doesn't piggyback on another
+      # job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-story-views";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Story viewer QA failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The story-viewer QA (ordering, dedupe, privacy) failed against production.",
+                "",
+                "This means one of the guarantees broke: the author's viewer list may",
+                "not sort newest-first, re-views may create duplicate rows, or a",
+                "non-author may be able to see who viewed a story.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the story-views-qa-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-story-views";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open story-views alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed story-views alert issue #${issue.number}.`);
+            }
+
+  blocklist-qa:
+    # Serialized AFTER blocklist-sync (needs:) — the QA registers its own
+    # Serialized in the admin-account concurrency chain.
+    needs: story-views-qa
+    # The blocklist engine's full 54-check QA against production:
+    # scripts/blocklist-qa.mjs seeds the core adult list, adds a domain and
+    # asserts it blocks across every surface, verifies IDN->punycode and
+    # obfuscation handling (notonlyfans.com must NOT match, subdomains must),
+    # follows redirect chains to the final host, syncs an external source,
+    # and asserts cleanup leaves the deployment pristine. Runs nightly on the
+    # same schedule as the auth loop — so the TLD/obfuscation guarantees and
+    # the feed lifecycle are asserted against the LIVE deployment every 24h,
+    # not just on push (static-audit only checks the feed files match the
+    # code list; it never runs the engine against production). Harness-gated
+    # (TEST_HARNESS_SECRET) like the phishing and sync jobs; skipped on
+    # repositories that haven't configured the harness yet.
+    name: Blocklist engine QA (54 checks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the blocklist engine QA
+        if: env.TEST_HARNESS_SECRET != ''
+        id: blocklist-qa
+        env:
+          # The harness secret must match the deployment env (TEST_HARNESS_SECRET)
+          # with TEST_HARNESS_ENABLED=1 set on the Convex deployment.
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh blocklist-qa.log npm run qa:blocklist
+
+      - name: Upload the blocklist QA log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blocklist-qa-log
+          path: blocklist-qa.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own label
+      # so a blocklist regression doesn't piggyback on another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-blocklist-qa";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Blocklist engine QA failed (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The blocklist-engine QA (54 checks) failed against production.",
+                "",
+                "This means the domain-blocking layer is broken: a blocked domain",
+                "may be slipping through, an obfuscation/IDN case may regress,",
+                "or the feed lifecycle (sync/cleanup) may be leaving stale state.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the blocklist-qa-log artifact for the failing check.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-blocklist-qa";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open blocklist QA alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed blocklist QA alert issue #${issue.number}.`);
+            }
+
+  inp-audit:
+    # Real per-interaction INP on the live site (scripts/inp-harness.mjs),
+    # under a Pixel-5 viewport + 4x CPU throttle via CDP — lab values
+    # representative of a mid-range phone. Covers the public surfaces
+    # (Landing nav, Auth fields) and, when TEST_HARNESS_SECRET is set, the
+    # authenticated shell (the sidebar/mobile "More" dropdown). Fails on
+    # any interaction over 200ms, so a regression in an interaction that
+    # was already measured can't ship silently.
+    name: INP audit (live, throttled)
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: blocklist-qa
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the INP audit
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: npm run qa:inp 2>&1 | tee inp.log
+
+      - name: Upload the INP log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inp-log
+          path: inp.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a slow interaction doesn't piggyback on another job's
+      # alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-inp";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `INP regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "An interaction measured on the live site exceeded the 200ms INP",
+                "budget under a Pixel-5 viewport with 4x CPU throttle.",
+                "",
+                "The audit measures real Event Timing API interactions (input delay +",
+                "processing + presentation) plus Long Animation Frames for",
+                "attribution — the same source of truth as field INP.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the inp-log artifact for which interaction (and script, via",
+                "LoAF) regressed. This issue is closed automatically on the next",
+                "passing audit.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-inp";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open INP alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed INP alert issue #${issue.number}.`);
+            }
+
+  refresh-timing-qa:
+    # Measures the two refresh-speed changes on the live site with a real
+    # browser (scripts/refresh-timing-qa.mjs): (1) the service-worker
+    # navigation SWR — a WARM reload serves the cached shell instead of
+    # waiting a network round trip for the HTML, gated on first contentful
+    # paint; (2) the parallel auth gate — a signed-in reload mounts the
+    # shell immediately (no spinner waiting on the `me` query), gated on
+    # time-to-shell and time-to-feed-content. Cold vs warm deltas are
+    # reported for both anonymous and signed-in paths. Fails when a warm
+    # reload exceeds the FCP/shell/feed budgets or the service worker never
+    # takes control, so a refresh-speed regression can't ship silently.
+    name: Refresh timing QA (live, SWR + parallel gate)
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: inp-audit
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the refresh-timing QA
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: npm run qa:refresh-timing 2>&1 | tee refresh-timing.log
+
+      - name: Upload the refresh-timing log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-timing-log
+          path: refresh-timing.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a slow refresh doesn't piggyback on another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-refresh-timing";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Refresh-speed regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "A warm reload on the live site exceeded the refresh budgets (FCP,",
+                "time-to-shell, or time-to-feed-content) or the service worker",
+                "failed to take control.",
+                "",
+                "The QA measures in-document via Paint + MutationObserver (no wall-",
+                "clock jitter), runs each scenario N times and gates on the best",
+                "run — so a real regression pushes even the best run over the",
+                "budget. The signed-in path uses a fresh throwaway qa_ account,",
+                "erased afterwards.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the refresh-timing-log artifact for the measured deltas. This",
+                "issue is closed automatically on the next passing audit.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-refresh-timing";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open refresh-timing alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed refresh-timing alert issue #${issue.number}.`);
+            }
+
+  ios-layout-qa:
+    # Guards the device-adaptive shell on iOS/iPad: emulates iPhone and
+    # iPad (including the iPadOS 13+ "Mac masquerade" — a Mac user agent
+    # with a touch screen) against the live site and asserts the
+    # detection layer stamped the right data-* attributes, there is no
+    # horizontal overflow, and no element leaks past the viewport. A
+    # naive agent sniff would classify a real iPad as a desktop and hide
+    # the touch nav — this job catches that class of regression on every
+    # push and nightly.
+    name: iOS/iPad layout QA (live, emulated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the iOS/iPad layout QA
+        run: npm run qa:ios-layout 2>&1 | tee ios-layout.log
+
+      - name: Upload the iOS layout log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-layout-log
+          path: ios-layout.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ios-layout";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `iOS/iPad layout regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The device-adaptive shell failed its layout QA on the live site:",
+                "a real iPhone/iPad (or the iPadOS Mac-masquerade case) no",
+                "longer gets the right data-* attributes, or the page overflows",
+                "horizontally on a touch device.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the ios-layout-log artifact for which emulated device",
+                "failed. This issue is closed automatically on the next passing",
+                "QA.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-ios-layout";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open iOS layout alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed iOS layout alert issue #${issue.number}.`);
+            }
+
+  robots-live-guard:
+    # The search-visibility contract on the LIVE hosts: the mirror's
+    # robots.txt must keep disallowing everything (a leaked Allow re-exposes
+    # the mirror to Google and can rank it over the canonical host), and the
+    # main host's robots.txt must keep its exact canonical Sitemap line (a
+    # missing or wrong-host line silently stops the sitemap from being
+    # submitted). Both regressions are silent for users — only search engines
+    # notice, weeks later — so this zero-dependency guard fails the job and
+    # opens a deduplicated alert issue on every push and nightly.
+    name: Live robots.txt guard (mirror disallow + main sitemap)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run the live robots.txt guard
+        env:
+          ROBOTS_SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+          ROBOTS_MIRROR_URL: ${{ vars.ROBOTS_MIRROR_URL || 'https://jovial-axolotl-209.convex.site' }}
+          EXPECTED_SITEMAP_HOST: ${{ vars.EXPECTED_SITEMAP_HOST || 'https://purewire.vercel.app' }}
+        run: node scripts/robots-live-guard.mjs
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-robots-live";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Live robots.txt regression on production (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The live robots.txt contract failed on one of the two hosts:",
+                "- the mirror (jovial-axolotl-209.convex.site) no longer",
+                "  disallows everything, or an Allow line leaked back in —",
+                "  Google can crawl and rank the mirror over",
+                "  purewire.vercel.app again;",
+                "- the main host's robots.txt lost its exact canonical Sitemap",
+                "  line, silently stopping sitemap submission.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Run `node scripts/robots-live-guard.mjs` locally to see which",
+                "check failed. This issue is closed automatically on the next",
+                "passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-robots-live";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open robots-live alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed robots-live alert issue #${issue.number}.`);
+            }
+
+  sweep-traces:
+    # Always the LAST job. Every QA job above creates reserved-prefix
+    # (qa_*) throwaway accounts, and admin erasures write one-way
+    # removalLog rows — so a QA run can otherwise leave test data on the
+    # live deployment. This sweep erases any straggler accounts and purges
+    # the test entries from the audit log, enforcing "never keep test stuff
+    # on the site" after every nightly/manual run.
+    name: Sweep test traces (accounts + removal log)
+    env:
+      TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+    needs:
+      - auth-loop
+      - cloudinary-upload
+      - refresh-timing-qa
+    # Run even when a peer QA FAILED — a crashed job is exactly when a
+    # straggler qa_ account is most likely left behind. (Without this,
+    # GitHub skips a dependent job whenever one of its needs fails.)
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sweep test users + purge test removal-log entries
+        if: env.TEST_HARNESS_SECRET != ''
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+        run: bash scripts/retry-once.sh sweep-traces.log npm run qa:cleanup-test-users
+
+      - name: Upload the sweep log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweep-traces-log
+          path: sweep-traces.log
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-sweep-traces";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Test-trace sweep failed (${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The nightly test-trace sweep (cleanup-test-users + removal-log purge) failed.",
+                "QA test accounts or test removal-log entries may still be on the production deployment.",
+                "Run `TEST_HARNESS_SECRET=<secret> npm run qa:cleanup-test-users` locally to inspect and clean.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-sweep-traces";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open sweep alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed sweep alert issue #${issue.number}.`);
+            }

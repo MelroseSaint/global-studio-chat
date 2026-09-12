@@ -1,0 +1,5 @@
+# Shell scripts must stay LF on every platform — bash chokes on CRLF
+# ("command not found\r"), and .githooks/pre-push is copied from the
+# working tree into .git/hooks by the npm postinstall script.
+.githooks/pre-push text eol=lf
+*.sh text eol=lf

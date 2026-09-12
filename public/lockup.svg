@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 128" role="img" aria-label="PureWire">
+  <title>PureWire — say it anyway</title>
+  <defs>
+    <linearGradient id="arcGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff5a4d"/>
+      <stop offset="45%" stop-color="#e01e12"/>
+      <stop offset="100%" stop-color="#b00604"/>
+    </linearGradient>
+    <linearGradient id="metalGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6a6a6a"/>
+      <stop offset="50%" stop-color="#3a3a3a"/>
+      <stop offset="100%" stop-color="#2a2a2a"/>
+    </linearGradient>
+    <linearGradient id="pureGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="55%" stop-color="#e8e6e1"/>
+      <stop offset="100%" stop-color="#b9b7b2"/>
+    </linearGradient>
+    <linearGradient id="wireGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff5a4d"/>
+      <stop offset="55%" stop-color="#e01e12"/>
+      <stop offset="100%" stop-color="#b00604"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Dark panel — visible on light and dark surfaces alike -->
+  <rect width="520" height="128" rx="26" fill="#0d0e0d"/>
+  <rect x="1.5" y="1.5" width="517" height="125" rx="24.5" fill="none" stroke="#d90507" stroke-opacity="0.5" stroke-width="3"/>
+
+  <!-- Emblem (scaled from the 64px app icon, frame dropped — the panel is the frame) -->
+  <g transform="translate(26 26) scale(1.1875)">
+    <path d="M10 26 C 20 10, 44 10, 54 26" stroke="url(#arcGrad)" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M12.2 23.6 C 21.4 9.8, 42.6 9.8, 51.8 23.6" stroke="#ff9d8f" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.85"/>
+    <path d="M18 47 L 30 32 L 42 47 Z" fill="url(#metalGrad)"/>
+    <rect x="18" y="32" width="5.5" height="21" rx="2.2" fill="url(#metalGrad)"/>
+    <path d="M30 41 C 35 38, 40 39, 44.5 42.5 L 43 48 C 38 44.5, 34 44, 30 46.5 Z" fill="url(#metalGrad)"/>
+    <path d="M42 36 L 48.5 40 L 46.5 46 L 42 44" fill="#d90507" opacity="0.9"/>
+  </g>
+
+  <!-- Wordmark: PURE (metallic) WIRE (red gradient) -->
+  <text x="128" y="68" font-family="'Arial Black','Arial',sans-serif" font-size="42" font-weight="900" letter-spacing="4">
+    <tspan fill="url(#pureGrad)">PURE</tspan><tspan fill="url(#wireGrad)">WIRE</tspan>
+  </text>
+
+  <!-- Tagline with flanking lines -->
+  <line x1="136" y1="97" x2="186" y2="97" stroke="#d90507" stroke-width="2.2"/>
+  <text x="260" y="102" text-anchor="middle" font-family="'Segoe UI','Arial',sans-serif" font-size="15" font-weight="600" letter-spacing="6" fill="#e01e12">SAY IT ANYWAY.</text>
+  <line x1="334" y1="97" x2="384" y2="97" stroke="#d90507" stroke-width="2.2"/>
+</svg>

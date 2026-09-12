@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "convex.config.ts",
+    "middleware.ts",
+    "postcss.config.cjs",
+    "sw-template.js",
+    "scripts/generate-og.mjs"
+  ]
+}
