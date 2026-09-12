@@ -54,6 +54,12 @@ function check(name, ok, detail = "") {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Minimal 1x1 PNG — real bytes so the story media passes the byte scan. */
+const PNG_1PX = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
 async function main() {
   console.log(`\nPureWire blocklist-engine QA — ${CONVEX_URL}\n`);
 
@@ -158,16 +164,43 @@ async function main() {
 
     const storyUser = await mkUser("s");
     client.setAuth(storyUser.token);
+    // Upload REAL media the way the client does — prepareUpload hands out a
+    // ticket in either mode (Cloudinary signed/unsigned primary, Convex
+    // fallback). A fabricated Cloudinary URL is NOT legitimate media in
+    // Convex-storage fallback mode: createStory's URL allowlist rejects it
+    // outright ("Media URLs are disabled while storage is in fallback
+    // mode"), which crashed this QA before the caption check ever ran.
+    const ticket = await client.action(api.media.prepareUpload, {
+      contentType: "image/png",
+    });
+    let storyMedia;
+    if (ticket.mode === "cloudinary") {
+      const form = new FormData();
+      form.append("file", new Blob([PNG_1PX], { type: "image/png" }), "qa-story.png");
+      if (ticket.apiKey && ticket.timestamp && ticket.signature) {
+        form.append("api_key", ticket.apiKey);
+        form.append("timestamp", ticket.timestamp);
+        form.append("signature", ticket.signature);
+        if (ticket.folder) form.append("folder", ticket.folder);
+      } else if (ticket.uploadPreset) {
+        form.append("upload_preset", ticket.uploadPreset);
+      }
+      const up = await fetch(ticket.uploadUrl, { method: "POST", body: form });
+      const data = await up.json();
+      if (!up.ok || !data.public_id) throw new Error("Cloudinary story upload failed");
+      storyMedia = { url: data.secure_url, key: data.public_id, kind: "image" };
+    } else {
+      const up = await fetch(ticket.uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": "image/png" },
+        body: new Blob([PNG_1PX], { type: "image/png" }),
+      });
+      const data = await up.json();
+      if (!up.ok || !data.storageId) throw new Error("Convex story upload failed");
+      storyMedia = { storageId: data.storageId, kind: "image" };
+    }
     const story = await client.action(api.stories.createStory, {
-      // A valid media item on the Cloudinary host — the point of this check
-      // is the CAPTION blocklist, and the media gate now requires a real
-      // item (storage id or https URL), never a degenerate empty object.
-      media: {
-        kind: "image",
-        url: `https://res.cloudinary.com/saintscloud/qa-${stamp}.jpg`,
-        key: `qa-${stamp}`,
-        stripped: true,
-      },
+      media: storyMedia,
       caption: `watch https://${testDomain} ${stamp}`,
     });
     check("a story caption linking the domain is rejected", story?.ok === false);
