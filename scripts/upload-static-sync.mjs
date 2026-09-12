@@ -78,6 +78,9 @@ function convexRun(componentName, fn, args = {}, prod = false) {
     "--codegen=disable",
   ];
   if (prod) argv.push("--prod");
+  // Deployment-scoped deploy keys are rejected by implicit/--prod targeting
+  // ("Please set CONVEX_DEPLOY_KEY…") — always name the deployment.
+  argv.push("--deployment", "jovial-axolotl-209");
   let lastErr = null;
   for (let attempt = 1; attempt <= 4; attempt++) {
     const result = spawnSync(process.execPath, argv, {

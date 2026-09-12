@@ -46,9 +46,12 @@ jobs:
 
       - name: Export production snapshot (data + file storage)
         if: env.CONVEX_DEPLOY_KEY != ''
+        # Explicit deployment targeting: a deployment-scoped deploy key is
+        # rejected by implicit/--prod targeting (see migrations.yml).
         run: |
           mkdir -p backups
           npx convex export --include-file-storage \
+            --deployment jovial-axolotl-209 \
             --path "backups/purewire-prod-$(date -u +%Y-%m-%d).zip"
           sha256sum "backups/purewire-prod-$(date -u +%Y-%m-%d).zip" | tee backups/SHA256SUMS.txt
 

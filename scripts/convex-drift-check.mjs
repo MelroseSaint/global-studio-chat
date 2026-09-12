@@ -34,12 +34,21 @@
  */
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 
 const DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY;
 if (!DEPLOY_KEY) {
   console.error("::error::CONVEX_DEPLOY_KEY is not set");
   process.exit(1);
 }
+
+// Deployment-scoped deploy keys are rejected by implicit targeting ("Please
+// set CONVEX_DEPLOY_KEY…"), so the CLI call below always names the
+// deployment explicitly. Override locally with --deployment <name>.
+const deploymentFlagIndex = process.argv.indexOf("--deployment");
+const DEPLOYMENT =
+  deploymentFlagIndex >= 0 ? process.argv[deploymentFlagIndex + 1] : "jovial-axolotl-209";
 
 const mainSha = (process.env.GITHUB_SHA ?? process.env.MAIN_SHA ?? "").toLowerCase();
 if (!mainSha) {
@@ -67,11 +76,15 @@ const emitDrifted = (drifted) => {
  */
 const readDeployedSha = () => {
   try {
-    // npx is npx.cmd on Windows; execFileSync doesn't apply PATHEXT.
-    const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+    // Spawn the CLI binary directly (not via npx): npx.cmd + execFileSync
+    // hits EINVAL on Windows (spawn .cmd needs shell:true, which this must
+    // not use). Same convexBinPath pattern as ensure-jwt-keys.mjs.
+    const requireFromCwd = createRequire(join(process.cwd(), "package.json"));
+    const packageJsonPath = requireFromCwd.resolve("convex/package.json");
+    const convexBin = join(dirname(packageJsonPath), "bin", "main.js");
     const stdout = execFileSync(
-      npx,
-      ["convex", "run", "internal.deployStatus.getDeployedSha"],
+      process.execPath,
+      [convexBin, "run", "internal.deployStatus.getDeployedSha", "--deployment", DEPLOYMENT],
       { env: { ...process.env, CONVEX_DEPLOY_KEY: DEPLOY_KEY }, encoding: "utf8" },
     );
     // Defensive extraction: take the last non-empty line, which is the
@@ -83,7 +96,9 @@ const readDeployedSha = () => {
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
     const out = lines[lines.length - 1] ?? "";
-    if (out === "null") return { sha: null };
+    // Null ledger: Linux prints the literal `null`; some Windows runs emit
+    // nothing at all for it. Both mean "no deploy recorded" — drift.
+    if (out === "null" || out === "") return { sha: null };
     const parsed = JSON.parse(out);
     // getDeployedSha returns a bare JSON string (the SHA), not an object
     // ({ sha }), so a string result IS the sha. A future shape change to

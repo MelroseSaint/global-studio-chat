@@ -75,7 +75,11 @@ function deploymentArgs() {
     }
     return ["--env-file", envFile];
   }
-  return [];
+  // Default to the production deployment explicitly: implicit targeting is
+  // rejected outright by a deployment-scoped deploy key ("Please set
+  // CONVEX_DEPLOY_KEY…") and would otherwise fall back to a local dev
+  // deployment, which is never what an operator run means.
+  return ["--deployment", "jovial-axolotl-209"];
 }
 
 /** Run the local convex CLI synchronously; returns { ok, stdout, stderr }. */
