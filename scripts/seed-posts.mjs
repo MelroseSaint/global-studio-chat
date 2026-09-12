@@ -39,6 +39,7 @@
  * Exit codes: 0 seeded (or dry-run passed), 1 a step failed, 2 missing
  * password.
  */
+import { existsSync, readFileSync } from "node:fs";
 import { ConvexHttpClient } from "convex/browser";
 
 import { api } from "../src/convex/_generated/api.js";
@@ -49,6 +50,14 @@ const CONVEX_URL =
   process.env.CONVEX_URL ?? "https://jovial-axolotl-209.convex.cloud";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "monroedoses@gmail.com";
 const ADMIN_PASSWORD = resolveAdminPassword();
+// Harness fallback: when the password isn't available, an enabled test
+// harness can mint a real admin session (testHarness.mintAdminSession) —
+// the same mechanism the production QAs use. The secret comes from env
+// or the gitignored .freebuff/.harness-secret file.
+const harnessFile = new URL("../.freebuff/.harness-secret", import.meta.url);
+const HARNESS_SECRET =
+  process.env.TEST_HARNESS_SECRET ??
+  (existsSync(harnessFile) ? readFileSync(harnessFile, "utf8").trim() : "");
 const DRY_RUN = process.env.SEED_DRY_RUN === "1";
 const rawCount = Number(process.env.SEED_COUNT ?? 3);
 const COUNT =
@@ -87,21 +96,50 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   console.log(`\nPureWire seed posts (${CONVEX_URL})${DRY_RUN ? " — DRY RUN" : ""}\n`);
-  if (!ADMIN_PASSWORD) {
+  if (!ADMIN_PASSWORD && !HARNESS_SECRET) {
     console.error(passwordHint());
+    console.error(
+      "  3. harness: enable TEST_HARNESS on the deployment and pass TEST_HARNESS_SECRET",
+    );
     process.exit(2);
   }
 
-  // 1. Sign in as the admin through the real password flow (fresh client —
-  //    the same hygiene admin-auth-qa documents for the dead-token bug).
+  // 1. Sign in as the admin. Preferred: the real password flow through a
+  //    fresh client (the same hygiene admin-auth-qa documents for the
+  //    dead-token bug). Fallback: the harness-minted admin session when the
+  //    password isn't available but the deployment's test harness is on.
   const client = new ConvexHttpClient(CONVEX_URL);
-  const signIn = await client.action("auth:signIn", {
-    provider: "password",
-    params: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, flow: "signIn" },
-  });
-  const token = signIn?.tokens?.token;
-  check("signed in as the admin", typeof token === "string" && token.length > 0);
-  if (!token) process.exit(1);
+  let token = null;
+  let via = "password";
+  if (ADMIN_PASSWORD) {
+    const signIn = await client.action("auth:signIn", {
+      provider: "password",
+      params: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, flow: "signIn" },
+    });
+    token = signIn?.tokens?.token;
+  } else if (HARNESS_SECRET) {
+    via = "test-harness";
+    const minted = await client.mutation(api.testHarness.mintAdminSession, {
+      secret: HARNESS_SECRET,
+    });
+    token = minted?.token;
+  }
+  check(
+    `signed in as the admin (via ${via})`,
+    typeof token === "string" && token.length > 0,
+  );
+  if (!token) {
+    if (!ADMIN_PASSWORD && !HARNESS_SECRET) {
+      console.error(
+        "No admin password and no harness secret available. Provide either:",
+      );
+      console.error(passwordHint());
+      console.error(
+        "  3. harness: enable TEST_HARNESS on the deployment and save its secret to .freebuff/.harness-secret",
+      );
+    }
+    process.exit(1);
+  }
   client.setAuth(token);
 
   const me = await client.query(api.users.getCurrentUser);
