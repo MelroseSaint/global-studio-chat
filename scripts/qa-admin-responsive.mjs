@@ -605,15 +605,27 @@ async function main() {
       deviceScaleFactor: 1,
     });
     page.setDefaultTimeout(TIMEOUT);
+    let signedIn = false;
     if (ADMIN_PASSWORD) {
-      await signIn(page, {
-        siteUrl: SITE_URL,
-        email: ADMIN_EMAIL,
-        password: ADMIN_PASSWORD,
-        timeoutMs: TIMEOUT,
-        navTimeoutMs: NAV_TIMEOUT,
-      });
-    } else {
+      try {
+        await signIn(page, {
+          siteUrl: SITE_URL,
+          email: ADMIN_EMAIL,
+          password: ADMIN_PASSWORD,
+          timeoutMs: TIMEOUT,
+          navTimeoutMs: NAV_TIMEOUT,
+        });
+        signedIn = true;
+      } catch (e) {
+        // A stale ADMIN_PASSWORD must not red the gate — fall through to
+        // the harness-minted session below.
+        console.log(
+          `  password sign-in failed (${String(e.message).slice(0, 100)});`,
+          `falling back to the harness session.`,
+        );
+      }
+    }
+    if (!signedIn) {
       // Passwordless path: seed a harness-minted admin session into the
       // browser's auth storage before any app script runs (BOTH the JWT
       // and the refresh token — the auth client signs out on boot if the
