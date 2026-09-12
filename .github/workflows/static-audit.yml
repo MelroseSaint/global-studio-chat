@@ -271,7 +271,8 @@ jobs:
     # job in the QA→cleanup chain, so gating on it makes this the final
     # integrity gate. `if: always()` keeps the audit running (and able to
     # red) even if a sweep fails — a failed cleanup is exactly when the
-    # audit matters most.
+    # audit matters most. Dependabot PR runs get no repo secrets; skip
+    # instead of red.
     needs: cleanup-test-domains
     if: always()
     steps:
@@ -282,6 +283,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run DQS audit against production
+        if: env.TEST_HARNESS_SECRET != ''
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
         run: bash scripts/retry-once.sh count-drift.log npm run qa:count-drift
@@ -509,6 +511,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Test shadowban lifecycle against production
+        if: env.TEST_HARNESS_SECRET != ''
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
         run: bash scripts/retry-once.sh shadowban.log npm run qa:shadowban
@@ -542,6 +545,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Probe Cloudinary upload pipeline
+        if: env.CLOUDINARY_API_SECRET != ''
         env:
           # Cloud name with the same fallback the healthcheck uses: it can
           # live in a variable OR secret OR default to the production cloud
@@ -584,6 +588,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Erase leftover QA test users from production
+        if: env.TEST_HARNESS_SECRET != ''
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
         run: bash scripts/retry-once.sh cleanup-users.log npm run qa:cleanup-test-users
@@ -602,6 +607,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Erase leftover QA domains/patterns/sources from production
+        if: env.TEST_HARNESS_SECRET != ''
         env:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
         run: bash scripts/retry-once.sh cleanup-domains.log npm run qa:cleanup-test-domains
