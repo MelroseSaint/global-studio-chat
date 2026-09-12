@@ -53,6 +53,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Sync the Cloudinary env onto the deployment from the repo secrets
+      # (when configured) so the media pipeline's Cloudinary mode is
+      # env-driven from CI — the flip needs no code change, and the values
+      # never appear in chat or logs. Only sets what the repo actually
+      # holds; a missing secret is skipped, not an error. `--prod` mirrors
+      # `npx convex deploy`'s default targeting under a deploy key; values
+      # come AFTER the flag (commander gotcha, see ensure-jwt-keys.mjs).
+      - name: Sync Cloudinary env from repo secrets
+        if: env.CONVEX_DEPLOY_KEY != ''
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        run: |
+          if [ -n "$CLOUDINARY_CLOUD_NAME" ]; then
+            npx convex env set --prod CLOUDINARY_CLOUD_NAME "$CLOUDINARY_CLOUD_NAME"
+          fi
+          if [ -n "$CLOUDINARY_API_KEY" ]; then
+            npx convex env set --prod CLOUDINARY_API_KEY "$CLOUDINARY_API_KEY"
+          fi
+          if [ -n "$CLOUDINARY_API_SECRET" ]; then
+            npx convex env set --prod CLOUDINARY_API_SECRET "$CLOUDINARY_API_SECRET"
+          fi
+
       - name: Deploy the backend to production
         if: env.CONVEX_DEPLOY_KEY != ''
         id: deploy
