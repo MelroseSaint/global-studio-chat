@@ -51,6 +51,30 @@ jobs:
   # push's run do the verification. A lone push (no newer queued run)
   # always runs the full suite — the push gate can never starve, and the
   # latest commit is always the one that gets verified.
+  # S1 canary (issue #129): production must NEVER sit at zero posts/users.
+  # The 2026-09-12 content wipe surfaced as a sitemap with zero post URLs;
+  # this job turns that symptom into a named red run the moment it happens
+  # again. Runs FIRST (needs: nothing) so a wipe can't hide behind a
+  # later job's failure.
+  content-baseline:
+    name: Content baseline canary (wipe alarm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Assert the content baseline
+        env:
+          TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
+          CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+        if: env.TEST_HARNESS_SECRET != ''
+        run: npm run qa:content-baseline
+
   push-burst-gate:
     name: Push burst gate
     runs-on: ubuntu-latest

@@ -86,7 +86,8 @@
     "qa:pwa-output:live": "node scripts/check-pwa-output.mjs --live",
     "lab:fps": "node scripts/fps-lab.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "qa:content-baseline": "node scripts/content-baseline-qa.mjs"
   },
   "overrides": {
     "@metascraper/helpers": "file:stubs/metascraper-helpers"
