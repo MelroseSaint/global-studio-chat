@@ -72,6 +72,11 @@ jobs:
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
+          # Operator-tuned floors (repo Variables): CONTENT_FLOOR_POSTS=1
+          # re-arms the catastrophic-wipe alarm around real content;
+          # CONTENT_SITEMAP_POSTS=1 requires the sitemap to carry it.
+          CONTENT_FLOOR_POSTS: ${{ vars.CONTENT_FLOOR_POSTS || '0' }}
+          CONTENT_SITEMAP_POSTS: ${{ vars.CONTENT_SITEMAP_POSTS || '0' }}
         if: env.TEST_HARNESS_SECRET != ''
         run: npm run qa:content-baseline
 
