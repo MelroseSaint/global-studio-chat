@@ -61,8 +61,13 @@ jobs:
       # explicit production deployment: CONVEX_DEPLOY_KEY may be a
       # deployment-scoped key, which `--prod` rejects ("Please set
       # CONVEX_DEPLOY_KEY…"), so every Convex CLI call names the deployment.
+      # Best-effort by design: a deployment-scoped key cannot run `env set`
+      # at all (MissingAccessToken — it carries no team/project scope), so
+      # the owner sets these vars via the CLI; this step only helps when a
+      # project-scoped key is configured.
       - name: Sync Cloudinary env from repo secrets
         if: env.CONVEX_DEPLOY_KEY != ''
+        continue-on-error: true
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
@@ -70,13 +75,13 @@ jobs:
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         run: |
           if [ -n "$CLOUDINARY_CLOUD_NAME" ]; then
-            npx convex env set --deployment jovial-axolotl-209 CLOUDINARY_CLOUD_NAME "$CLOUDINARY_CLOUD_NAME"
+            npx --no-install convex env set --deployment jovial-axolotl-209 CLOUDINARY_CLOUD_NAME "$CLOUDINARY_CLOUD_NAME"
           fi
           if [ -n "$CLOUDINARY_API_KEY" ]; then
-            npx convex env set --deployment jovial-axolotl-209 CLOUDINARY_API_KEY "$CLOUDINARY_API_KEY"
+            npx --no-install convex env set --deployment jovial-axolotl-209 CLOUDINARY_API_KEY "$CLOUDINARY_API_KEY"
           fi
           if [ -n "$CLOUDINARY_API_SECRET" ]; then
-            npx convex env set --deployment jovial-axolotl-209 CLOUDINARY_API_SECRET "$CLOUDINARY_API_SECRET"
+            npx --no-install convex env set --deployment jovial-axolotl-209 CLOUDINARY_API_SECRET "$CLOUDINARY_API_SECRET"
           fi
 
       # The MEDIA_MODE_EXPECTATION repo variable is flipped by the owner
@@ -101,7 +106,7 @@ jobs:
           # production deployment (verified: prints the jovial-axolotl-209
           # dashboard URL before pushing).
           printf 'CONVEX_DEPLOYMENT=jovial-axolotl-209\n' > deploy-target.env
-          npx convex deploy --env-file deploy-target.env
+          npx --no-install convex deploy --env-file deploy-target.env
 
       # Record the deployed git commit so the nightly drift job can compare
       # the live backend against main HEAD (Convex exposes no commit
@@ -112,7 +117,7 @@ jobs:
         if: steps.deploy.conclusion == 'success' && env.CONVEX_DEPLOY_KEY != ''
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: npx convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}" --deployment jovial-axolotl-209
+        run: npx --no-install convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}" --deployment jovial-axolotl-209
 
       - name: Run all migrations
         if: env.CONVEX_DEPLOY_KEY != ''
@@ -121,7 +126,7 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: |
           set -o pipefail
-          npx convex run internal.migrationsRunner.runAllMigrations --deployment jovial-axolotl-209 2>&1 | tee migrations.log
+          npx --no-install convex run internal.migrationsRunner.runAllMigrations --deployment jovial-axolotl-209 2>&1 | tee migrations.log
 
       - name: Upload the migration log
         if: failure()

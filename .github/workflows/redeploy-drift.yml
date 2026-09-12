@@ -258,7 +258,7 @@ jobs:
         run: |
           node scripts/ensure-jwt-keys.mjs --deployment jovial-axolotl-209
           printf 'CONVEX_DEPLOYMENT=jovial-axolotl-209\n' > deploy-target.env
-          npx convex deploy --env-file deploy-target.env
+          npx --no-install convex deploy --env-file deploy-target.env
 
       # A drift deploy can ship schema/code that carries pending migrations
       # (the very case this guard exists for — a migrations deploy that
@@ -269,7 +269,7 @@ jobs:
         if: steps.deploy.conclusion == 'success' && env.CONVEX_DEPLOY_KEY != ''
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: npx convex run internal.migrationsRunner.runAllMigrations --deployment jovial-axolotl-209
+        run: npx --no-install convex run internal.migrationsRunner.runAllMigrations --deployment jovial-axolotl-209
 
       # Re-establish the ledger after a drift deploy, exactly as
       # migrations.yml does, so the next nightly comparison is meaningful.
@@ -277,7 +277,7 @@ jobs:
         if: steps.deploy.conclusion == 'success' && env.CONVEX_DEPLOY_KEY != ''
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: npx convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}" --deployment jovial-axolotl-209
+        run: npx --no-install convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}" --deployment jovial-axolotl-209
 
       # The drift check exits 0 in BOTH sync and drift states — it only
       # fails when the check itself is broken (deploy key rejected, CLI

@@ -50,7 +50,7 @@ jobs:
         # rejected by implicit/--prod targeting (see migrations.yml).
         run: |
           mkdir -p backups
-          npx convex export --include-file-storage \
+          npx --no-install convex export --include-file-storage \
             --deployment jovial-axolotl-209 \
             --path "backups/purewire-prod-$(date -u +%Y-%m-%d).zip"
           sha256sum "backups/purewire-prod-$(date -u +%Y-%m-%d).zip" | tee backups/SHA256SUMS.txt
