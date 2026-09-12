@@ -169,31 +169,63 @@ async function main() {
     typeof proof.powChallenge === "string" && proof.powChallenge.length > 0,
   );
 
+  // 3. Idempotency: topics already live under the admin's name are skipped
+  //    (re-running must never re-post near-identical text — the platform's
+  //    originality gate rightly rejects that). Stored seed posts carry the
+  //    topic text with a trailing "(seed …)" stamp, so compare the
+  //    stamp-stripped prefix.
+  const mine = await client.query(api.posts.listUserPosts, {
+    userId: me._id,
+    paginationOpts: { numItems: 100, cursor: null },
+  });
+  const existing = new Set(
+    (mine?.page ?? [])
+      .map((p) => String(p.content ?? "").replace(/\s*\(seed [^)]*\)\s*$/, "").trim().slice(0, 60))
+      .filter((s) => s.length > 0),
+  );
+  const targets = [];
+  for (let i = 0; targets.length < COUNT && i < TOPICS.length; i++) {
+    const topic = TOPICS[i % TOPICS.length];
+    if (!existing.has(topic.slice(0, 60))) targets.push(topic);
+  }
+  if (targets.length === 0) {
+    check("seed posts already present (idempotent skip)", true);
+  }
+
   if (DRY_RUN) {
     console.log("\nDry run — would create these posts:");
-    for (let i = 0; i < COUNT; i++) {
-      console.log(`  ${i + 1}. ${TOPICS[i % TOPICS.length]}`);
+    for (const t of targets) {
+      console.log(`  - ${t}`);
     }
     console.log(`\n${passed} passed, ${failed} failed (no writes performed)`);
     process.exit(failed > 0 ? 1 : 0);
   }
 
-  // 3. Publish through the public action — every platform gate applies,
+  // 4. Publish through the public action — every platform gate applies,
   //    including the rate limit, so space the posts out a little.
   const stamp = Date.now().toString(36);
   const createdIds = [];
-  for (let i = 0; i < COUNT; i++) {
-    const content = `${TOPICS[i % TOPICS.length]} (seed ${stamp}-${i + 1})`;
+  for (let i = 0; i < targets.length; i++) {
+    const content = `${targets[i]} (seed ${stamp}-${i + 1})`;
     const result = await client.action(api.posts.createPost, {
       content,
       creatorDisclosure: "human-made",
       ...proof,
     });
     const ok = result?.ok === true && typeof result.postId === "string";
-    check(`published post ${i + 1}/${COUNT}`, ok, result?.error ?? "");
+    // The duplicate gate can still fire on a race; it means the content
+    // is already there, which is the idempotent outcome.
+    const duped =
+      !ok && /recently|already exists|original/i.test(String(result?.error ?? ""));
+    check(
+      `published post ${i + 1}/${targets.length}`,
+      ok || duped,
+      result?.error ?? "",
+    );
+    if (duped) continue;
     if (!ok) break;
     createdIds.push(result.postId);
-    if (i < COUNT - 1) await sleep(1500);
+    if (i < targets.length - 1) await sleep(1500);
   }
 
   // 4. Verify each post is publicly readable (the same query the OG page
