@@ -79,6 +79,23 @@ async function main() {
     `comments: ${stats.comments}`,
   );
 
+  // Zero-test-posts invariant (the "always delete any test posts" rule):
+  // the baseline canary doubles as the last line of defense against test
+  // content surviving on production. Any post or comment authored by a
+  // QA test account means the cleanup sweep failed somewhere — visible
+  // here even if the sweep job itself was skipped.
+  const leftovers = await client.query(api.testHarness.countTestAuthorPosts, {
+    secret: SECRET,
+  });
+  check(
+    `zero test posts/comments (test content is always deleted)`,
+    leftovers.posts === 0 && leftovers.comments === 0,
+    `${leftovers.posts} test post(s), ${leftovers.comments} test comment(s)` +
+      (leftovers.posts + leftovers.comments > 0
+        ? ` owned by ${leftovers.testAuthors} test author(s) — run npm run qa:cleanup-test-users`
+        : ""),
+  );
+
   // The crawlable surface: the sitemap must carry the seeded posts.
   const res = await fetch(`${SITE_URL}/sitemap.xml`, {
     headers: { "Cache-Control": "no-cache" },

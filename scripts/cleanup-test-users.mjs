@@ -70,6 +70,11 @@ async function main() {
     secret: HARNESS_SECRET,
   });
 
+  // Any erasure that fails is a violation of the zero-test-posts
+  // invariant, not just a warning — a leftover test account keeps its
+  // posts on the public feed. Counted here, asserted at the end.
+  let eraseFailures = 0;
+
   if (targets.length > 0) {
     console.log(`Found ${targets.length} test user(s) to erase:`);
     for (const u of targets) {
@@ -94,6 +99,7 @@ async function main() {
             : " (no content)";
         console.log(`  ✅ @${u.username} erased${radius}`);
       } catch (err) {
+        eraseFailures++;
         console.error(
           `  ❌ @${u.username} failed: ${err instanceof Error ? err.message : err}`,
         );
@@ -128,6 +134,7 @@ async function main() {
           );
         }
       } catch (err) {
+        eraseFailures++;
         console.error(
           `  ❌ ${String(p.postId).slice(0, 8)} failed: ${
             err instanceof Error ? err.message : err
@@ -243,6 +250,32 @@ async function main() {
     console.log(`  ${JSON.stringify(byTable)}`);
   } else {
     console.log("No foreign-key orphans found.");
+  }
+
+  // Zero-test-posts invariant — the "always delete any test posts" gate.
+  // After the sweep, the deployment must carry ZERO posts and comments
+  // authored by test accounts. Any survivor means an erasure above failed
+  // and test content is still on the public feed; that fails this run so
+  // CI cannot silently carry the leftovers to the next one.
+  const leftovers = await client.query(api.testHarness.countTestAuthorPosts, {
+    secret: HARNESS_SECRET,
+  });
+  if (leftovers.posts > 0 || leftovers.comments > 0) {
+    eraseFailures += leftovers.posts + leftovers.comments;
+    console.error(
+      `🚨 Zero-test-posts invariant VIOLATED: ${leftovers.posts} post(s) and ${leftovers.comments} comment(s) still owned by ${leftovers.testAuthors} test author(s).`,
+    );
+  } else {
+    console.log(
+      `Zero-test-posts invariant holds (0 test posts, 0 test comments; ${leftovers.testAuthors} test author(s) on record).`,
+    );
+  }
+
+  if (eraseFailures > 0) {
+    console.error(
+      `Cleanup finished with ${eraseFailures} failure(s) — see ❌ lines above. Re-run once failures are addressed; CI treats leftover test content as a red run.`,
+    );
+    process.exit(1);
   }
 }
 

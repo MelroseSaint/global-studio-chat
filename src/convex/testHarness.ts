@@ -1709,6 +1709,91 @@ export const qaIsolationSnapshot = query({
  * from the admin surface, so the maintenance path gets its own dedicated
  * (secret-gated) reader instead. Same reserved prefixes as testAuthorIds.
  */
+/**
+ * Zero-test-posts invariant reader: counts the posts and comments that
+ * still belong to QA test authors (reserved-prefix qa_ and pwtest
+ * handles) after a sweep has run. CI asserts ZERO — "always delete any test posts"
+ * is a hard gate, not a best-effort sweep. A nonzero return after the
+ * sweep means an erasure failed mid-run and the site is carrying test
+ * content the public can see (test authors post into public feeds).
+ *
+ * Counting goes through runQuery sub-functions — each execution gets its
+ * own single positional paginate walk (the runtime allows one paginated
+ * query per function execution); this outer handler only reads the small
+ * test-author index range. Read-only, harness-gated. Awaits are cast to
+ * break the module's documented TS7022 inference cycle.
+ */
+export const countTestAuthorPosts = query({
+  args: { secret: v.string() },
+  handler: async (ctx, { secret }) => {
+    requireHarness(secret);
+    const testUsername = /^(qa_|pwtest)/;
+    const qa = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.gte("username", "qa_").lt("username", "qb_"))
+      .take(1000);
+    const pw = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) =>
+        q.gte("username", "pwtest").lt("username", "pwtf"),
+      )
+      .take(1000);
+    const testIds = [...qa, ...pw]
+      .filter((u) => testUsername.test(u.username ?? ""))
+      .map((u) => u._id);
+    const posts = (await ctx.runQuery(internal.testHarness.countTestAuthorPostsQ, {
+      secret,
+      testIds,
+    })) as unknown as number;
+    const comments = (await ctx.runQuery(
+      internal.testHarness.countTestAuthorCommentsQ,
+      { secret, testIds },
+    )) as unknown as number;
+    return { testAuthors: testIds.length, posts, comments };
+  },
+});
+
+/** Posts owned by test authors: one positional paginate walk (internalQuery). */
+export const countTestAuthorPostsQ = internalQuery({
+  args: { secret: v.string(), testIds: v.array(v.id("users")) },
+  handler: async (ctx, { secret, testIds }) => {
+    requireHarness(secret);
+    const ids = new Set(testIds);
+    let total = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page: PaginationResult<{ _id: Id<"posts">; authorId: Id<"users"> }> =
+        await ctx.db.query("posts").order("asc").paginate({ cursor, numItems: 500 });
+      total += page.page.filter((p) => ids.has(p.authorId)).length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return total;
+  },
+});
+
+/** Comments owned by test authors: one positional paginate walk (internalQuery). */
+export const countTestAuthorCommentsQ = internalQuery({
+  args: { secret: v.string(), testIds: v.array(v.id("users")) },
+  handler: async (ctx, { secret, testIds }) => {
+    requireHarness(secret);
+    const ids = new Set(testIds);
+    let total = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page: PaginationResult<{ _id: Id<"comments">; authorId: Id<"users"> }> =
+        await ctx.db
+          .query("comments")
+          .order("asc")
+          .paginate({ cursor, numItems: 500 });
+      total += page.page.filter((c) => ids.has(c.authorId)).length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return total;
+  },
+});
+
 export const listTestAccountsForSweep = query({
   args: { secret: v.string() },
   handler: async (ctx, { secret }) => {
