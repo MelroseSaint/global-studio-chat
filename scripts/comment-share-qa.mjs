@@ -261,8 +261,14 @@ async function browserChecks(client, fx) {
     await composer.fill(`Via the browser ${fx.stamp}`);
     const postBtn = page.locator('button[aria-label="Send comment"]').first();
     await postBtn.click();
-    await page.waitForTimeout(3000);
-    const bodyAfter = (await page.locator("body").innerText()) ?? "";
+    // Poll for the comment to land instead of a fixed sleep — under load
+    // 3s false-fails (observed as a CI flake).
+    let bodyAfter = "";
+    for (let i = 0; i < 10; i++) {
+      await page.waitForTimeout(1000);
+      bodyAfter = (await page.locator("body").innerText()) ?? "";
+      if (bodyAfter.includes(`Via the browser ${fx.stamp}`)) break;
+    }
     check(
       "the comment posted with the caption",
       bodyAfter.includes(`Via the browser ${fx.stamp}`),

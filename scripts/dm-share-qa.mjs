@@ -282,10 +282,16 @@ async function browserChecks(client, fx) {
     await composer.fill(`Sharing this with you ${fx.stamp}`);
     const sendBtn = aPage.locator('button[aria-label="Send"]').first();
     await sendBtn.click();
-    await aPage.waitForTimeout(3000);
     // The composer itself clears (the sent text legitimately appears in
-    // the thread above — assert the textarea, not the body).
-    const draftAfter = await composer.inputValue().catch(() => "");
+    // the thread above — assert the textarea, not the body). Poll instead
+    // of a fixed sleep: under load the optimistic clear lags past 3s and
+    // the check false-fails (observed as a 16/18 flake).
+    let draftAfter = "";
+    for (let i = 0; i < 10; i++) {
+      draftAfter = await composer.inputValue().catch(() => "sentinel");
+      if (draftAfter.trim() === "") break;
+      await aPage.waitForTimeout(1000);
+    }
     check("A's shared message was sent (composer cleared)", draftAfter.trim() === "");
     await aCtx.close();
 
