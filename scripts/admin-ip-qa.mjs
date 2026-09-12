@@ -69,19 +69,37 @@ function check(name, ok, detail = "") {
 
 async function signInAsAdmin() {
   const client = new ConvexHttpClient(CONVEX_URL);
-  const res = await client.action("auth:signIn", {
-    provider: "password",
-    params: {
-      email: ADMIN_EMAIL,
-      password: ADMIN_PASSWORD,
-      flow: "signIn",
-    },
-  });
-  if (!res?.tokens?.token) {
-    throw new Error("auth:signIn returned no session token.");
+  // Preferred: the real password flow. Fallback: the harness-minted admin
+  // session — a set-but-stale ADMIN_PASSWORD must not wedge the whole QA
+  // when the harness secret is available (same pattern as seed-posts.mjs);
+  // the IP-binding checks only need a valid admin session token.
+  let token = null;
+  if (ADMIN_PASSWORD) {
+    try {
+      const res = await client.action("auth:signIn", {
+        provider: "password",
+        params: {
+          email: ADMIN_EMAIL,
+          password: ADMIN_PASSWORD,
+          flow: "signIn",
+        },
+      });
+      token = res?.tokens?.token;
+    } catch (e) {
+      console.log(`  password sign-in failed (${String(e.message).slice(0, 80)})`);
+    }
   }
-  client.setAuth(res.tokens.token);
-  return { client, token: res.tokens.token };
+  if (!token && HARNESS_SECRET) {
+    const minted = await client.mutation(api.testHarness.mintAdminSession, {
+      secret: HARNESS_SECRET,
+    });
+    token = minted?.token;
+  }
+  if (!token) {
+    throw new Error("No admin session available (password rejected and no harness secret).");
+  }
+  client.setAuth(token);
+  return { client, token };
 }
 
 /** Call dashboardStats; returns the error message, or "" when it succeeded. */
@@ -108,8 +126,11 @@ async function adminQueryError(client) {
 async function main() {
   console.log(`\nPureWire backend-verified admin IP QA — ${CONVEX_URL}\n`);
 
-  if (!ADMIN_PASSWORD) {
+  if (!ADMIN_PASSWORD && !HARNESS_SECRET) {
     console.log(passwordHint());
+    console.log(
+      "  3. harness: enable TEST_HARNESS on the deployment and pass TEST_HARNESS_SECRET",
+    );
     process.exit(2);
   }
 
