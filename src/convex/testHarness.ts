@@ -15,11 +15,13 @@ import {
 import {
   mutation,
   query,
+  internalQuery,
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
 
 import type { Id } from "./_generated/dataModel";
+import type { PaginationResult } from "convex/server";
 
 /**
  * QA harness for the silent-moderation layer.
@@ -559,7 +561,7 @@ async function extendSessionLifetimesImpl(
   // prefs from rows it is about to extend.
   const prefs =
     sessions.scanned < EXTEND_BATCH && tokens.scanned < EXTEND_BATCH
-      ? await sweepOrphanPrefs(ctx)
+      ? await sweepOrphanPrefs(ctx, secret)
       : 0;
   // A batch whose scan returned fewer than the cap means that table has no
   // rows left short of the horizon — both tables converged => the
@@ -583,7 +585,10 @@ async function extendSessionLifetimesImpl(
  * this converges them (harmless — the audit only ever consults prefs for
  * sessions that still exist).
  */
-async function sweepOrphanPrefs(ctx: MutationCtx): Promise<number> {
+async function sweepOrphanPrefs(
+  ctx: MutationCtx,
+  secret: string,
+): Promise<number> {
   // sessionPrefs only ever holds opt-out rows (a tiny subset), but keep the
   // same bounded walk discipline as the rest of the migration: a per-row
   // ctx.db.get (one extra read per candidate) plus an unbounded cursor walk
@@ -591,21 +596,20 @@ async function sweepOrphanPrefs(ctx: MutationCtx): Promise<number> {
   let swept = 0;
   let cursor: string | null = null;
   for (;;) {
-    const rows = await ctx.db
-      .query("sessionPrefs")
-      .order("asc")
-      .filter((q) =>
-        q.gt(q.field("_id"), (cursor ?? "") as Id<"sessionPrefs">),
-      )
-      .take(500);
-    if (rows.length === 0) break;
-    for (const row of rows) {
+    // Chunked read via runQuery (one paginate per execution — the platform
+    // allows only a single paginated query per function). Deletions happen
+    // here in the mutation; the positional cursor cannot revisit rows.
+    const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+      secret, table: "sessionPrefs" as const, cursor: cursor ?? undefined,
+    })) as Extract<WalkPage, { sessionPrefs: unknown }>;
+    for (const row of page.sessionPrefs) {
       if ((await ctx.db.get(row.sessionId)) === null) {
-        await ctx.db.delete(row._id);
+        await ctx.db.delete(row.id);
         swept++;
       }
-      cursor = row._id;
     }
+    if (page.isDone) break;
+    cursor = page.continueCursor;
   }
   return swept;
 }
@@ -671,25 +675,20 @@ export const reconcilePostsCounts = mutation({
       const fixed: Array<{ userId: Id<"users">; was: number; now: number }> =
         [];
       let usersSeen = 0;
-      let cursor: string | null = null;
-      for (;;) {
-        const users = await ctx.db
-          .query("users")
-          .order("asc")
-          .filter((q) =>
-            q.gt(q.field("_id"), (cursor ?? "") as Id<"users">),
-          )
-          .take(500);
-        if (users.length === 0) break;
-        for (const user of users) {
-          usersSeen++;
-          const actual = await countPostsByAuthor(ctx, user._id);
-          const was = user.postsCount ?? 0;
-          if (was !== actual) {
-            await ctx.db.patch(user._id, { postsCount: actual });
-            fixed.push({ userId: user._id, was, now: actual });
-          }
-          cursor = user._id;
+      // One bounded read of the users table (the reconcile doesn't delete
+      // users, so a take() cap is safe; counts themselves run in separate
+      // query executions — see the count*Q queries below — because Convex
+      // allows only ONE paginated query per function execution).
+      const users = await ctx.db.query("users").order("asc").take(1000);
+      for (const user of users) {
+        usersSeen++;
+        const actual = await ctx.runQuery(internal.testHarness.countPostsByAuthorQ, {
+          secret, userId: user._id,
+        });
+        const was = user.postsCount ?? 0;
+        if (was !== actual) {
+          await ctx.db.patch(user._id, { postsCount: actual });
+          fixed.push({ userId: user._id, was, now: actual });
         }
       }
       return { fixed, usersSeen };
@@ -702,157 +701,162 @@ export const reconcilePostsCounts = mutation({
 });
 
 /**
- * Count one author's posts exactly, without loading them all into memory:
- * pages the by_author index in 500-row chunks with an _id cursor filter,
- * the same bounded pattern extendTable uses. (The deployed Convex runtime
- * has no query `.count()`, and a fixed take() cap could undercount a heavy
- * account.)
+ * Count one author's posts exactly (internalQuery): a single positional
+ * paginate walk over the by_author index — one paginated query per
+ * execution, as the Convex runtime requires.
+ *
+ * HISTORY NOTE: this walk used to run INSIDE the reconcile mutation and
+ * filter `_id > cursor` while paging an index ordered by creation time.
+ * Ids are random, so rows whose _id sorted after the last-visited row
+ * REAPPEARED on the next page and were counted again — three real posts
+ * counted as five, and the reconciler then wrote the inflated number into
+ * users.postsCount. Two fixes: positional cursors (order-native, cannot
+ * revisit) and a dedicated query execution per count (Convex allows only
+ * one paginated query per function).
  */
-async function countPostsByAuthor(
-  ctx: MutationCtx,
-  userId: Id<"users">,
-): Promise<number> {
-  let total = 0;
-  let cursor: string | null = null;
-  for (;;) {
-    const rows = await ctx.db
-      .query("posts")
-      .withIndex("by_author", (q) => q.eq("authorId", userId))
-      .order("asc")
-      .filter((q) => q.gt(q.field("_id"), (cursor ?? "") as Id<"posts">))
-      .take(500);
-    if (rows.length === 0) break;
-    total += rows.length;
-    cursor = rows[rows.length - 1]._id;
-  }
-  return total;
-}
+export const countPostsByAuthorQ = internalQuery({
+  args: { secret: v.string(), userId: v.id("users") },
+  handler: async (ctx, { secret, userId }) => {
+    requireHarness(secret);
+    let total = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await ctx.db
+        .query("posts")
+        .withIndex("by_author", (q) => q.eq("authorId", userId))
+        .order("asc")
+        .paginate({ cursor, numItems: 500 });
+      total += page.page.length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return total;
+  },
+});
 
 /**
- * Count one direction of a user's follows exactly, without loading them
- * all into memory: pages the relevant follows index in 500-row chunks with
- * an _id cursor filter, the same bounded pattern countPostsByAuthor uses.
- * (The deployed Convex runtime has no query `.count()`.)
+ * Count one direction of a user's follows exactly (internalQuery): a
+ * single positional paginate walk over the relevant follows index. (The
+ * deployed Convex runtime has no query `.count()`.)
  */
-async function countFollowRows(
-  ctx: MutationCtx,
-  kind: "followers" | "following",
-  userId: Id<"users">,
-): Promise<number> {
-  let total = 0;
-  let cursor: string | null = null;
-  for (;;) {
-    const rows =
-      kind === "followers"
-        ? await ctx.db
-            .query("follows")
-            .withIndex("by_following", (q) => q.eq("followingId", userId))
-            .order("asc")
-            .filter((q) =>
-              q.gt(q.field("_id"), (cursor ?? "") as Id<"follows">),
-            )
-            .take(500)
-        : await ctx.db
-            .query("follows")
-            .withIndex("by_follower", (q) => q.eq("followerId", userId))
-            .order("asc")
-            .filter((q) =>
-              q.gt(q.field("_id"), (cursor ?? "") as Id<"follows">),
-            )
-            .take(500);
-    if (rows.length === 0) break;
-    total += rows.length;
-    cursor = rows[rows.length - 1]._id;
-  }
-  return total;
-}
+export const countFollowRowsQ = internalQuery({
+  args: {
+    secret: v.string(),
+    kind: v.union(v.literal("followers"), v.literal("following")),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, { secret, kind, userId }) => {
+    requireHarness(secret);
+    let total = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      // Explicitly typed: the conditional await must not infer through its
+      // own initializer (TS7022 — the file's documented inference hazard).
+      const page: PaginationResult<{
+        _id: Id<"follows">;
+        followerId: Id<"users">;
+        followingId: Id<"users">;
+      }> =
+        kind === "followers"
+          ? await ctx.db
+              .query("follows")
+              .withIndex("by_following", (q) => q.eq("followingId", userId))
+              .order("asc")
+              .paginate({ cursor, numItems: 500 })
+          : await ctx.db
+              .query("follows")
+              .withIndex("by_follower", (q) => q.eq("followerId", userId))
+              .order("asc")
+              .paginate({ cursor, numItems: 500 });
+      total += page.page.length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return total;
+  },
+});
 
 /**
- * Count one post's engagement rows exactly (likes, comments, or shares),
- * without loading them all into memory: pages the by_post index in
- * 500-row chunks with an _id cursor filter, the same bounded pattern the
- * other count helpers use. (The deployed Convex runtime has no query
- * `.count()`.)
+ * Count one post's engagement rows exactly (internalQuery): likes,
+ * comments, or shares — a single positional paginate walk over the
+ * by_post index.
  */
-async function countByPostIndex(
-  ctx: MutationCtx,
-  table: "likes" | "comments" | "shares",
-  postId: Id<"posts">,
-): Promise<number> {
-  let total = 0;
-  let cursor: string | null = null;
-  for (;;) {
-    const rows = await ctx.db
-      .query(table)
-      .withIndex("by_post", (q) => q.eq("postId", postId))
-      .order("asc")
-      .filter((q) =>
-        q.gt(
-          q.field("_id"),
-          (cursor ?? "") as Id<"likes"> | Id<"comments"> | Id<"shares">,
-        ),
-      )
-      .take(500);
-    if (rows.length === 0) break;
-    total += rows.length;
-    cursor = rows[rows.length - 1]._id;
-  }
-  return total;
-}
+export const countByPostIndexQ = internalQuery({
+  args: {
+    secret: v.string(),
+    table: v.union(
+      v.literal("likes"),
+      v.literal("comments"),
+      v.literal("shares"),
+    ),
+    postId: v.id("posts"),
+  },
+  handler: async (ctx, { secret, table, postId }) => {
+    requireHarness(secret);
+    let total = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await ctx.db
+        .query(table)
+        .withIndex("by_post", (q) => q.eq("postId", postId))
+        .order("asc")
+        .paginate({ cursor, numItems: 500 });
+      total += page.page.length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return total;
+  },
+});
 
 /**
- * Count one comment's like rows exactly, without loading them all into
- * memory — the same bounded cursor pattern as countByPostIndex, but over
- * the commentLikes table's by_comment index.
+ * Count one comment's like rows exactly (internalQuery) — a single
+ * positional paginate walk over the commentLikes table's by_comment index.
  */
-async function countByCommentIndex(
-  ctx: MutationCtx,
-  commentId: Id<"comments">,
-): Promise<number> {
-  let total = 0;
-  let cursor: string | null = null;
-  for (;;) {
-    const rows = await ctx.db
-      .query("commentLikes")
-      .withIndex("by_comment", (q) => q.eq("commentId", commentId))
-      .order("asc")
-      .filter((q) =>
-        q.gt(q.field("_id"), (cursor ?? "") as Id<"commentLikes">),
-      )
-      .take(500);
-    if (rows.length === 0) break;
-    total += rows.length;
-    cursor = rows[rows.length - 1]._id;
-  }
-  return total;
-}
+export const countByCommentIndexQ = internalQuery({
+  args: { secret: v.string(), commentId: v.id("comments") },
+  handler: async (ctx, { secret, commentId }) => {
+    requireHarness(secret);
+    let total = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await ctx.db
+        .query("commentLikes")
+        .withIndex("by_comment", (q) => q.eq("commentId", commentId))
+        .order("asc")
+        .paginate({ cursor, numItems: 500 });
+      total += page.page.length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return total;
+  },
+});
 
 /**
- * Count the replies hanging under one comment — the same bounded cursor
- * pattern as countByCommentIndex, but over the comments table's by_parent
- * index. Drives the comments.replyCount reconcile.
+ * Count the replies hanging under one comment (internalQuery) — a single
+ * positional paginate walk over the comments table's by_parent index.
+ * Drives the comments.replyCount reconcile.
  */
-async function countByParentIndex(
-  ctx: MutationCtx,
-  parentId: Id<"comments">,
-): Promise<number> {
-  let total = 0;
-  let cursor: string | null = null;
-  for (;;) {
-    const rows = await ctx.db
-      .query("comments")
-      .withIndex("by_parent", (q) => q.eq("parentId", parentId))
-      .order("asc")
-      .filter((q) =>
-        q.gt(q.field("_id"), (cursor ?? "") as Id<"comments">),
-      )
-      .take(500);
-    if (rows.length === 0) break;
-    total += rows.length;
-    cursor = rows[rows.length - 1]._id;
-  }
-  return total;
-}
+export const countByParentIndexQ = internalQuery({
+  args: { secret: v.string(), parentId: v.id("comments") },
+  handler: async (ctx, { secret, parentId }) => {
+    requireHarness(secret);
+    let total = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await ctx.db
+        .query("comments")
+        .withIndex("by_parent", (q) => q.eq("parentId", parentId))
+        .order("asc")
+        .paginate({ cursor, numItems: 500 });
+      total += page.page.length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return total;
+  },
+});
 
 /**
  * Sweep orphan engagement rows and reconcile every post's engagement
@@ -879,6 +883,81 @@ async function countByParentIndex(
  * the count-drift QA can assert clean state and this can be re-run any
  * time. Gated by the same two env gates as the rest of the module.
  */
+/**
+ * One page of a table walk for the reconcile mutations (internalQuery).
+ * The platform allows only ONE paginated query per function execution, so
+ * the mutations read their tables through this chunked helper — each
+ * runQuery call is its own execution with its own paginate budget — and
+ * do all writes themselves. Per-table items are returned in the dedicated
+ * array (only one is populated) with exactly the fields the caller needs.
+ */
+export const walkPageQ = internalQuery({
+  args: {
+    secret: v.string(),
+    table: v.union(
+      v.literal("likes"),
+      v.literal("comments"),
+      v.literal("commentLikes"),
+      v.literal("shares"),
+      v.literal("supportTickets"),
+      v.literal("posts"),
+      v.literal("follows"),
+      v.literal("sessionPrefs"),
+      v.literal("users"),
+    ),
+    cursor: v.optional(v.string()),
+  },
+  handler: async (ctx, { secret, table, cursor }) => {
+    requireHarness(secret);
+    const page = await ctx.db
+      .query(table)
+      .order("asc")
+      .paginate({ cursor: cursor ?? null, numItems: 500 });
+    const base = { isDone: page.isDone, continueCursor: page.continueCursor };
+    // The generic union table name types rows as a union of every table's
+    // doc, so each case narrows with an explicit cast (the handler's return
+    // must stay explicit anyway — TS7022 hazard documented above).
+    const rows = page.page as unknown as Array<Record<string, unknown>>;
+    switch (table) {
+      case "likes":
+        return { ...base, likes: rows.map((r) => ({ id: r._id, postId: r.postId })) };
+      case "comments":
+        return { ...base, comments: rows.map((r) => ({ id: r._id, postId: r.postId, parentId: r.parentId, likeCount: r.likeCount ?? 0, replyCount: r.replyCount ?? 0 })) };
+      case "commentLikes":
+        return { ...base, commentLikes: rows.map((r) => ({ id: r._id, commentId: r.commentId })) };
+      case "shares":
+        return { ...base, shares: rows.map((r) => ({ id: r._id, postId: r.postId })) };
+      case "supportTickets":
+        return { ...base, tickets: rows.map((r) => ({ id: r._id, postId: r.postId, status: r.status })) };
+      case "posts":
+        return { ...base, posts: rows.map((r) => ({ id: r._id, likeCount: r.likeCount ?? 0, commentCount: r.commentCount ?? 0, shareCount: r.shareCount ?? 0, reportCount: r.reportCount ?? 0 })) };
+      case "follows":
+        return { ...base, follows: rows.map((r) => ({ id: r._id, followerId: r.followerId, followingId: r.followingId })) };
+      case "sessionPrefs":
+        return { ...base, sessionPrefs: rows.map((r) => ({ id: r._id, sessionId: r.sessionId })) };
+      case "users":
+        return { ...base, users: rows.map((r) => ({ id: r._id, postsCount: r.postsCount ?? 0, followersCount: r.followersCount ?? 0, followingCount: r.followingCount ?? 0 })) };
+    }
+  },
+});
+
+/**
+ * Chunk shape returned by walkPageQ per table. Callers cast the runQuery
+ * result with Extract<WalkPage, { key: unknown }> — the internal-namespace
+ * return type must not flow back into this module's own initializer
+ * inference (the TS7022 hazard documented throughout this file).
+ */
+type WalkPage =
+  | { isDone: boolean; continueCursor: string; likes: Array<{ id: Id<"likes">; postId: Id<"posts"> }> }
+  | { isDone: boolean; continueCursor: string; comments: Array<{ id: Id<"comments">; postId: Id<"posts">; parentId?: Id<"comments">; likeCount: number; replyCount: number }> }
+  | { isDone: boolean; continueCursor: string; commentLikes: Array<{ id: Id<"commentLikes">; commentId: Id<"comments"> }> }
+  | { isDone: boolean; continueCursor: string; shares: Array<{ id: Id<"shares">; postId: Id<"posts"> }> }
+  | { isDone: boolean; continueCursor: string; tickets: Array<{ id: Id<"supportTickets">; postId?: Id<"posts">; status: string }> }
+  | { isDone: boolean; continueCursor: string; posts: Array<{ id: Id<"posts">; likeCount: number; commentCount: number; shareCount: number; reportCount: number }> }
+  | { isDone: boolean; continueCursor: string; follows: Array<{ id: Id<"follows">; followerId: Id<"users">; followingId: Id<"users"> }> }
+  | { isDone: boolean; continueCursor: string; sessionPrefs: Array<{ id: Id<"sessionPrefs">; sessionId: Id<"authSessions"> }> }
+  | { isDone: boolean; continueCursor: string; users: Array<{ id: Id<"users">; postsCount: number; followersCount: number; followingCount: number }> };
+
 export const reconcileEngagementCounts = mutation({
   args: { secret: v.string() },
   handler: async (ctx, { secret }) => {
@@ -900,119 +979,100 @@ export const reconcileEngagementCounts = mutation({
       let commentsSeen = 0;
       let sharesSeen = 0;
       let commentLikesSeen = 0;
-      let cursor: string | null = null;
+      let likesCursor: string | null = null;
       for (;;) {
-        const rows = await ctx.db
-          .query("likes")
-          .order("asc")
-          .filter((q) => q.gt(q.field("_id"), (cursor ?? "") as Id<"likes">))
-          .take(500);
-        if (rows.length === 0) break;
-        for (const row of rows) {
+        // Chunked read via runQuery (one paginate per execution — the
+        // platform allows only a single paginated query per function).
+        const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "likes" as const, cursor: likesCursor ?? undefined,
+        })) as Extract<WalkPage, { likes: unknown }>;
+        for (const row of page.likes) {
           likesSeen++;
           if ((await ctx.db.get(row.postId)) === null) {
-            await ctx.db.delete(row._id);
-            orphanLikes.push({ rowId: row._id, postId: row.postId });
+            await ctx.db.delete(row.id);
+            orphanLikes.push({ rowId: row.id, postId: row.postId });
           }
-          cursor = row._id;
         }
+        if (page.isDone) break;
+        likesCursor = page.continueCursor;
       }
       let commentCursor: string | null = null;
       for (;;) {
-        const rows = await ctx.db
-          .query("comments")
-          .order("asc")
-          .filter((q) =>
-            q.gt(q.field("_id"), (commentCursor ?? "") as Id<"comments">),
-          )
-          .take(500);
-        if (rows.length === 0) break;
-        for (const row of rows) {
+        const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "comments" as const, cursor: commentCursor ?? undefined,
+        })) as Extract<WalkPage, { comments: unknown }>;
+        for (const row of page.comments) {
           commentsSeen++;
           const post = await ctx.db.get(row.postId);
           if (post === null) {
-            await ctx.db.delete(row._id);
-            orphanComments.push({ rowId: row._id, postId: row.postId });
+            await ctx.db.delete(row.id);
+            orphanComments.push({ rowId: row.id, postId: row.postId });
           } else if (row.parentId !== undefined) {
             // Replies: the parent must still exist on the same post (left
             // behind by interrupted erasures or stale re-roots). Orphans
             // are deleted — with their likes — like any other orphan.
             const parent = await ctx.db.get(row.parentId);
             if (parent === null || parent.postId !== row.postId) {
-              await sweepCommentLikes(ctx, row._id);
-              await ctx.db.delete(row._id);
-              orphanComments.push({ rowId: row._id, postId: row.postId });
+              await sweepCommentLikes(ctx, row.id);
+              await ctx.db.delete(row.id);
+              orphanComments.push({ rowId: row.id, postId: row.postId });
             }
           }
-          commentCursor = row._id;
         }
+        if (page.isDone) break;
+        commentCursor = page.continueCursor;
       }
       // Comment likes: rows whose comment no longer exists (left behind by
       // comment deletions made before the sweep path was added) are removed
       // the same way.
       let commentLikeCursor: string | null = null;
       for (;;) {
-        const rows = await ctx.db
-          .query("commentLikes")
-          .order("asc")
-          .filter((q) =>
-            q.gt(
-              q.field("_id"),
-              (commentLikeCursor ?? "") as Id<"commentLikes">,
-            ),
-          )
-          .take(500);
-        if (rows.length === 0) break;
-        for (const row of rows) {
+        const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "commentLikes" as const, cursor: commentLikeCursor ?? undefined,
+        })) as Extract<WalkPage, { commentLikes: unknown }>;
+        for (const row of page.commentLikes) {
           commentLikesSeen++;
           if ((await ctx.db.get(row.commentId)) === null) {
-            await ctx.db.delete(row._id);
-            orphanCommentLikes.push({ rowId: row._id, commentId: row.commentId });
+            await ctx.db.delete(row.id);
+            orphanCommentLikes.push({ rowId: row.id, commentId: row.commentId });
           }
-          commentLikeCursor = row._id;
         }
+        if (page.isDone) break;
+        commentLikeCursor = page.continueCursor;
       }
       let shareCursor: string | null = null;
       for (;;) {
-        const rows = await ctx.db
-          .query("shares")
-          .order("asc")
-          .filter((q) =>
-            q.gt(q.field("_id"), (shareCursor ?? "") as Id<"shares">),
-          )
-          .take(500);
-        if (rows.length === 0) break;
-        for (const row of rows) {
+        const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "shares" as const, cursor: shareCursor ?? undefined,
+        })) as Extract<WalkPage, { shares: unknown }>;
+        for (const row of page.shares) {
           sharesSeen++;
           if ((await ctx.db.get(row.postId)) === null) {
-            await ctx.db.delete(row._id);
-            orphanShares.push({ rowId: row._id, postId: row.postId });
+            await ctx.db.delete(row.id);
+            orphanShares.push({ rowId: row.id, postId: row.postId });
           }
-          shareCursor = row._id;
         }
+        if (page.isDone) break;
+        shareCursor = page.continueCursor;
       }
       // One pass over the tickets table builds the truthful reportCount
       // for every post: the number of open/in_review tickets targeting it.
       const openReports = new Map<string, number>();
       let ticketCursor: string | null = null;
       for (;;) {
-        const rows = await ctx.db
-          .query("supportTickets")
-          .order("asc")
-          .filter((q) =>
-            q.gt(q.field("_id"), (ticketCursor ?? "") as Id<"supportTickets">),
-          )
-          .take(500);
-        if (rows.length === 0) break;
-        for (const row of rows) {
+        const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "supportTickets" as const, cursor: ticketCursor ?? undefined,
+        })) as Extract<WalkPage, { tickets: unknown }>;
+        for (const row of page.tickets) {
           if (
             row.postId !== undefined &&
             (row.status === "open" || row.status === "in_review")
           ) {
             openReports.set(row.postId, (openReports.get(row.postId) ?? 0) + 1);
           }
-          ticketCursor = row._id;
         }
+        if (page.isDone) break;
+        ticketCursor = page.continueCursor;
       }
       const fixed: Array<{
         postId: Id<"posts">;
@@ -1041,27 +1101,28 @@ export const reconcileEngagementCounts = mutation({
       let postsSeen = 0;
       let postCursor: string | null = null;
       for (;;) {
-        const posts = await ctx.db
-          .query("posts")
-          .order("asc")
-          .filter((q) =>
-            q.gt(q.field("_id"), (postCursor ?? "") as Id<"posts">),
-          )
-          .take(500);
-        if (posts.length === 0) break;
-        for (const post of posts) {
+        const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "posts" as const, cursor: postCursor ?? undefined,
+        })) as Extract<WalkPage, { posts: unknown }>;
+        for (const post of page.posts) {
           postsSeen++;
           const [likeCount, commentCount, shareCount] = await Promise.all([
-            countByPostIndex(ctx, "likes", post._id),
-            countByPostIndex(ctx, "comments", post._id),
-            countByPostIndex(ctx, "shares", post._id),
+            ctx.runQuery(internal.testHarness.countByPostIndexQ, {
+              secret, table: "likes" as const, postId: post.id,
+            }),
+            ctx.runQuery(internal.testHarness.countByPostIndexQ, {
+              secret, table: "comments" as const, postId: post.id,
+            }),
+            ctx.runQuery(internal.testHarness.countByPostIndexQ, {
+              secret, table: "shares" as const, postId: post.id,
+            }),
           ]);
-          const reportCount = openReports.get(post._id) ?? 0;
+          const reportCount = openReports.get(post.id) ?? 0;
           const was = {
-            likeCount: post.likeCount ?? 0,
-            commentCount: post.commentCount ?? 0,
-            shareCount: post.shareCount ?? 0,
-            reportCount: post.reportCount ?? 0,
+            likeCount: post.likeCount,
+            commentCount: post.commentCount,
+            shareCount: post.shareCount,
+            reportCount: post.reportCount,
           };
           const now = { likeCount, commentCount, shareCount, reportCount };
           if (
@@ -1070,37 +1131,37 @@ export const reconcileEngagementCounts = mutation({
             was.shareCount !== now.shareCount ||
             was.reportCount !== now.reportCount
           ) {
-            await ctx.db.patch(post._id, now);
-            fixed.push({ postId: post._id, was, now });
+            await ctx.db.patch(post.id, now);
+            fixed.push({ postId: post.id, was, now });
           }
-          postCursor = post._id;
         }
+        if (page.isDone) break;
+        postCursor = page.continueCursor;
       }
       let commentReconcileCursor: string | null = null;
       for (;;) {
-        const comments = await ctx.db
-          .query("comments")
-          .order("asc")
-          .filter((q) =>
-            q.gt(
-              q.field("_id"),
-              (commentReconcileCursor ?? "") as Id<"comments">,
-            ),
-          )
-          .take(500);
-        if (comments.length === 0) break;
-        for (const comment of comments) {
+        const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "comments" as const, cursor: commentReconcileCursor ?? undefined,
+        })) as Extract<WalkPage, { comments: unknown }>;
+        for (const comment of page.comments) {
           commentsReconciled++;
-          const likeCount = await countByCommentIndex(ctx, comment._id);
-          const replyCount = await countByParentIndex(ctx, comment._id);
-          const was = { likeCount: comment.likeCount ?? 0, replyCount: comment.replyCount ?? 0 };
+          const likeCount = await ctx.runQuery(
+            internal.testHarness.countByCommentIndexQ,
+            { secret, commentId: comment.id },
+          );
+          const replyCount = await ctx.runQuery(
+            internal.testHarness.countByParentIndexQ,
+            { secret, parentId: comment.id },
+          );
+          const was = { likeCount: comment.likeCount, replyCount: comment.replyCount };
           const now = { likeCount, replyCount };
           if (was.likeCount !== now.likeCount || was.replyCount !== now.replyCount) {
-            await ctx.db.patch(comment._id, now);
-            fixedComments.push({ commentId: comment._id, was, now });
+            await ctx.db.patch(comment.id, now);
+            fixedComments.push({ commentId: comment.id, was, now });
           }
-          commentReconcileCursor = comment._id;
         }
+        if (page.isDone) break;
+        commentReconcileCursor = page.continueCursor;
       }
       return {
         orphanLikes,
@@ -1158,30 +1219,28 @@ export const reconcileFollowCounts = mutation({
       let followsSeen = 0;
       let cursor: string | null = null;
       for (;;) {
-        const rows = await ctx.db
-          .query("follows")
-          .order("asc")
-          .filter((q) =>
-            q.gt(q.field("_id"), (cursor ?? "") as Id<"follows">),
-          )
-          .take(500);
-        if (rows.length === 0) break;
-        for (const row of rows) {
+        // Chunked read via runQuery (one paginate per execution — the
+        // platform allows only a single paginated query per function).
+        const page = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "follows" as const, cursor: cursor ?? undefined,
+        })) as Extract<WalkPage, { follows: unknown }>;
+        for (const row of page.follows) {
           followsSeen++;
           const [follower, following] = await Promise.all([
             ctx.db.get(row.followerId),
             ctx.db.get(row.followingId),
           ]);
           if (follower === null || following === null) {
-            await ctx.db.delete(row._id);
+            await ctx.db.delete(row.id);
             orphanFollows.push({
-              rowId: row._id,
+              rowId: row.id,
               followerId: row.followerId,
               followingId: row.followingId,
             });
           }
-          cursor = row._id;
         }
+        if (page.isDone) break;
+        cursor = page.continueCursor;
       }
       const fixed: Array<{
         userId: Id<"users">;
@@ -1193,35 +1252,39 @@ export const reconcileFollowCounts = mutation({
       let usersSeen = 0;
       let userCursor: string | null = null;
       for (;;) {
-        const users = await ctx.db
-          .query("users")
-          .order("asc")
-          .filter((q) =>
-            q.gt(q.field("_id"), (userCursor ?? "") as Id<"users">),
-          )
-          .take(500);
-        if (users.length === 0) break;
-        for (const user of users) {
+        // Chunked read via runQuery (one paginate per execution — the
+        // platform allows only a single paginated query per function).
+        const usersPage = (await ctx.runQuery(internal.testHarness.walkPageQ, {
+          secret, table: "users" as const, cursor: userCursor ?? undefined,
+        })) as Extract<WalkPage, { users: unknown }>;
+        for (const user of usersPage.users) {
           usersSeen++;
-          const followers = await countFollowRows(ctx, "followers", user._id);
-          const following = await countFollowRows(ctx, "following", user._id);
-          const wasFollowers = user.followersCount ?? 0;
-          const wasFollowing = user.followingCount ?? 0;
+          const followers = await ctx.runQuery(
+            internal.testHarness.countFollowRowsQ,
+            { secret, kind: "followers" as const, userId: user.id },
+          );
+          const following = await ctx.runQuery(
+            internal.testHarness.countFollowRowsQ,
+            { secret, kind: "following" as const, userId: user.id },
+          );
+          const wasFollowers = user.followersCount;
+          const wasFollowing = user.followingCount;
           if (wasFollowers !== followers || wasFollowing !== following) {
-            await ctx.db.patch(user._id, {
+            await ctx.db.patch(user.id, {
               followersCount: followers,
               followingCount: following,
             });
             fixed.push({
-              userId: user._id,
+              userId: user.id,
               wasFollowers,
               nowFollowers: followers,
               wasFollowing,
               nowFollowing: following,
             });
           }
-          userCursor = user._id;
         }
+        if (usersPage.isDone) break;
+        userCursor = usersPage.continueCursor;
       }
       return { orphanFollows, followsSeen, fixed, usersSeen };
     } catch (e) {
@@ -1232,6 +1295,22 @@ export const reconcileFollowCounts = mutation({
   },
 });
 
+/**
+ * Purge QA traces so no test data ever lingers on a real deployment.
+ *
+ * The QA suite creates reserved-prefix accounts (`qa_*`, `pwtest*`, and
+ * the signup e2e's `pw_e2e_*` — deliberately assignable so the real-flow
+ * test can register it) and normally erases them with the full admin
+ * sweep, but the one-way removal log keeps an audit row for every erasure
+ * — including test sweeps — so the log fills up with test-user entries
+ * the moment any QA runs.
+ *
+ * This harness-gated mutation deletes removalLog rows whose username
+ * carries a reserved test prefix, and reports what it swept so a QA gate
+ * can assert the site is test-free. Only the removal log is touched: real
+ * moderation entries (real usernames) are one-way and never deleted.
+ * Gated by the same two env gates as the rest of the module.
+ */
 /**
  * Purge QA traces so no test data ever lingers on a real deployment.
  *
