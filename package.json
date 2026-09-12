@@ -12,6 +12,7 @@
     "icons": "node scripts/generate-icons.mjs",
     "data:sync": "node scripts/sync-blocklist-data.mjs",
     "data:check": "node scripts/sync-blocklist-data.mjs && git diff --exit-code -- data public/data",
+    "seed:posts": "node scripts/seed-posts.mjs",
     "qa:shadowban": "node scripts/shadowban-qa.mjs",
     "qa:phishing": "node scripts/phishing-qa.mjs",
     "qa:adult-content": "node scripts/adult-content-qa.mjs",
