@@ -1,0 +1,47 @@
+name: Seed admin posts
+
+# Publishes a few original seed posts as the admin account through the
+# real createPost path (scripts/seed-posts.mjs) so the sitemap gains
+# /post/:id URLs and the SEO guards (dynamic render, sitemap URL health)
+# have something to verify on a young deployment. Dispatch-only: it never
+# runs on push, and re-running it just adds a few more admin posts — the
+# script is deliberately non-destructive (no mentions, no engagement
+# rows, no QA accounts; see the script header for the user-safety notes).
+#
+# Uses the ADMIN_PASSWORD repo secret — the same credential the admin
+# auth-path QAs use — so the run doubles as a live validation that the
+# secret is current.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-posts
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    name: Publish seed posts as the admin
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish seed posts
+        env:
+          CONVEX_URL: https://jovial-axolotl-209.convex.cloud
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: npm run seed:posts
