@@ -1,0 +1,15 @@
+# PureWire blocklist feed — adult_cam
+# One domain per line, lowercased, no scheme. Lines starting with # are ignored.
+# Category: adult_cam
+chaturbate.com
+stripchat.com
+myfreecams.com
+streamate.com
+cam4.com
+livejasmin.com
+flirt4free.com
+camsoda.com
+bongacams.com
+xhamsterlive.com
+vual1.tv
+tease.bot

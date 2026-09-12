@@ -1,0 +1,6 @@
+# PureWire blocklist feed — adult_community
+# One domain per line, lowercased, no scheme. Lines starting with # are ignored.
+# Category: adult_community
+rule34.xxx
+gelbooru.com
+danbooru.donmai.us

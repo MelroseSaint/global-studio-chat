@@ -1,0 +1,27 @@
+# PureWire blocklist feed — adult_creator
+# One domain per line, lowercased, no scheme. Lines starting with # are ignored.
+# Category: adult_creator
+onlyfans.com
+fansly.com
+fanvue.com
+loyalfans.com
+justfor.fans
+fancentro.com
+mym.fans
+ismygirl.com
+admireme.vip
+unlockd.com
+exclu.app
+avnstars.com
+adultnode.com
+modelhub.com
+ifans.com
+fanfix.com
+playboy.com
+dfans.com
+sospoilt.com
+nowblind.com
+scrile.com
+scrile.app
+nvs.video
+sofiagray.com
