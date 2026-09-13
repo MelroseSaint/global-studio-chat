@@ -78,9 +78,19 @@ function convexRun(componentName, fn, args = {}, prod = false) {
     "--codegen=disable",
   ];
   if (prod) argv.push("--prod");
-  // Deployment-scoped deploy keys are rejected by implicit/--prod targeting
-  // ("Please set CONVEX_DEPLOY_KEY…") — always name the deployment.
-  argv.push("--deployment", "jovial-axolotl-209");
+  // Implicit targeting: the deploy key (CONVEX_DEPLOY_KEY) self-targets its
+  // deployment; --prod is ignored under a key with a friendly notice. An
+  // explicit --deployment/CONVEX_DEPLOYMENT would OVERRIDE the key and
+  // route through a user-token endpoint that 401s — never add one.
+  // Fail fast on a swapped secret: a Convex deploy key is
+  // `<scope>:<deployment>|<payload>`; anything else (e.g. a Cloudinary API
+  // secret) would 401 identically to an outage.
+  if (process.env.CONVEX_DEPLOY_KEY && !/^(prod|dev|preview):[a-z0-9-]+\|/.test(process.env.CONVEX_DEPLOY_KEY)) {
+    console.error(
+      "::error::CONVEX_DEPLOY_KEY does not look like a Convex deploy key (expected 'prod:<deployment>|<payload>'). It may be swapped with another service's secret. Generate one in the Convex dashboard: deployment settings → Deploy keys.",
+    );
+    process.exit(1);
+  }
   let lastErr = null;
   for (let attempt = 1; attempt <= 4; attempt++) {
     const result = spawnSync(process.execPath, argv, {

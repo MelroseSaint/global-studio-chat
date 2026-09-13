@@ -42,13 +42,22 @@ if (!DEPLOY_KEY) {
   console.error("::error::CONVEX_DEPLOY_KEY is not set");
   process.exit(1);
 }
+// Fail fast on a swapped secret — this repo once had a Cloudinary API
+// secret stored here, which 401s identically to an outage and wastes a
+// debugging cycle. A Convex deploy key is `<scope>:<deployment>|<payload>`.
+if (!/^(prod|dev|preview):[a-z0-9-]+\|/.test(DEPLOY_KEY)) {
+  console.error(
+    "::error::CONVEX_DEPLOY_KEY does not look like a Convex deploy key (expected 'prod:<deployment>|<payload>'). It may be swapped with another service's secret. Generate one in the Convex dashboard: deployment settings → Deploy keys.",
+  );
+  process.exit(1);
+}
 
-// Deployment-scoped deploy keys are rejected by implicit targeting ("Please
-// set CONVEX_DEPLOY_KEY…"), so the CLI call below always names the
-// deployment explicitly. Override locally with --deployment <name>.
+// No explicit targeting: the deploy key self-targets its deployment, and a
+// --deployment flag would override it and 401. An explicit flag is still
+// honored for local, logged-in operator runs.
 const deploymentFlagIndex = process.argv.indexOf("--deployment");
 const DEPLOYMENT =
-  deploymentFlagIndex >= 0 ? process.argv[deploymentFlagIndex + 1] : "jovial-axolotl-209";
+  deploymentFlagIndex >= 0 ? process.argv[deploymentFlagIndex + 1] : null;
 
 const mainSha = (process.env.GITHUB_SHA ?? process.env.MAIN_SHA ?? "").toLowerCase();
 if (!mainSha) {
@@ -82,9 +91,12 @@ const readDeployedSha = () => {
     const requireFromCwd = createRequire(join(process.cwd(), "package.json"));
     const packageJsonPath = requireFromCwd.resolve("convex/package.json");
     const convexBin = join(dirname(packageJsonPath), "bin", "main.js");
+    const cliArgs = DEPLOYMENT
+      ? [convexBin, "run", "internal.deployStatus.getDeployedSha", "--deployment", DEPLOYMENT]
+      : [convexBin, "run", "internal.deployStatus.getDeployedSha"];
     const stdout = execFileSync(
       process.execPath,
-      [convexBin, "run", "internal.deployStatus.getDeployedSha", "--deployment", DEPLOYMENT],
+      cliArgs,
       { env: { ...process.env, CONVEX_DEPLOY_KEY: DEPLOY_KEY }, encoding: "utf8" },
     );
     // Defensive extraction: take the last non-empty line, which is the

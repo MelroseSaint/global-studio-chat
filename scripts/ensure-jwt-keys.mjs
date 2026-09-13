@@ -56,30 +56,26 @@ function convexBinPath() {
   return join(dirname(packageJsonPath), "bin", "main.js");
 }
 
-/** Parse --deployment / --env-file flags and the env fallback. */
-function deploymentArgs() {
+/**
+ * Resolve targeting. Default: NO explicit targeting args — the deploy key
+ * (CONVEX_DEPLOY_KEY) self-targets its deployment, and an explicit
+ * --deployment / CONVEX_DEPLOYMENT would OVERRIDE the key and route through
+ * a user-token endpoint that 401s (MissingAccessToken). An explicit
+ * --deployment is still honored for local, logged-in operator runs.
+ * The deployment NAME (for the public-HTTP preflight and messages) is
+ * derived from the key when present: `prod:<name>|…` / `dev:<name>|…`.
+ */
+function deploymentInfo() {
   const argv = process.argv.slice(2);
-  const get = (flag) => {
-    const i = argv.indexOf(flag);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
-  const deployment = get("--deployment") ?? process.env.CONVEX_DEPLOYMENT;
-  const envFile = get("--env-file");
-  if (deployment) return ["--deployment", deployment];
-  if (envFile) {
-    if (existsSync(envFile)) {
-      const line = readFileSync(envFile, "utf8")
-        .split("\n")
-        .find((l) => l.startsWith("CONVEX_DEPLOYMENT="));
-      if (line) return ["--deployment", line.split("=")[1].trim()];
-    }
-    return ["--env-file", envFile];
-  }
-  // Default to the production deployment explicitly: implicit targeting is
-  // rejected outright by a deployment-scoped deploy key ("Please set
-  // CONVEX_DEPLOY_KEY…") and would otherwise fall back to a local dev
-  // deployment, which is never what an operator run means.
-  return ["--deployment", "jovial-axolotl-209"];
+  const i = argv.indexOf("--deployment");
+  const explicit = i >= 0 ? argv[i + 1] : process.env.CONVEX_DEPLOYMENT;
+  if (explicit) return { args: ["--deployment", explicit], name: explicit };
+  const key = process.env.CONVEX_DEPLOY_KEY ?? "";
+  const fromKey = /^(?:prod|dev|preview):([a-z0-9-]+)\|/.exec(key)?.[1];
+  // No key and no flag: default to the production deployment by name —
+  // same as before, and the public preflight needs a concrete name anyway.
+  const name = fromKey ?? "jovial-axolotl-209";
+  return { args: fromKey ? [] : ["--deployment", name], name };
 }
 
 /** Run the local convex CLI synchronously; returns { ok, stdout, stderr }. */
@@ -157,8 +153,7 @@ function authMetadataBlocked(err) {
  * processes can lose their credentials in some environments while npx-style
  * invocations in the same job carry them fine.
  */
-async function keyPresence(deployment) {
-  const deploymentName = deployment.includes("--deployment") ? deployment[1] : "jovial-axolotl-209";
+async function keyPresence(deploymentName) {
   const url = `https://${deploymentName}.convex.cloud/api/query`;
   let res;
   try {
@@ -185,13 +180,10 @@ async function keyPresence(deployment) {
 }
 
 async function main() {
-  const deployment = deploymentArgs();
-  const where = deployment.includes("--deployment")
-    ? deployment[1]
-    : "default deployment";
-  console.log(`ensure-jwt-keys: targeting ${where}`);
+  const { args: deployment, name: deploymentName } = deploymentInfo();
+  console.log(`ensure-jwt-keys: targeting ${deploymentName}${deployment.length === 0 ? " (via the deploy key itself)" : ""}`);
 
-  const { priv, jwks: jwksExisting } = await keyPresence(deployment);
+  const { priv, jwks: jwksExisting } = await keyPresence(deploymentName);
   const hasPriv = priv.exists;
   const hasJwks = jwksExisting.exists;
 

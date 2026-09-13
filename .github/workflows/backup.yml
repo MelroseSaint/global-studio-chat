@@ -44,14 +44,25 @@ jobs:
 
       - run: npm ci
 
+      # Fail fast when CONVEX_DEPLOY_KEY holds the wrong kind of value —
+      # see the matching step in migrations.yml for why.
+      - name: Sanity-check the deploy key's shape
+        if: env.CONVEX_DEPLOY_KEY != ''
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          case "$CONVEX_DEPLOY_KEY" in
+            prod:*) echo "deploy key shape: OK (prod deploy key)";;
+            *) echo "::error::CONVEX_DEPLOY_KEY does not look like a Convex deploy key (expected 'prod:<deployment>|<payload>'). Generate one in the Convex dashboard: deployment settings → Deploy keys."; exit 1;;
+          esac
+
       - name: Export production snapshot (data + file storage)
         if: env.CONVEX_DEPLOY_KEY != ''
-        # Explicit deployment targeting: a deployment-scoped deploy key is
-        # rejected by implicit/--prod targeting (see migrations.yml).
+        # Implicit targeting: the prod deploy key names the deployment
+        # itself — a --deployment flag would override it and 401.
         run: |
           mkdir -p backups
           npx --no-install convex export --include-file-storage \
-            --deployment jovial-axolotl-209 \
             --path "backups/purewire-prod-$(date -u +%Y-%m-%d).zip"
           sha256sum "backups/purewire-prod-$(date -u +%Y-%m-%d).zip" | tee backups/SHA256SUMS.txt
 

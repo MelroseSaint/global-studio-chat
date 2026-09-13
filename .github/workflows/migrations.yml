@@ -9,8 +9,12 @@ name: Run Convex migrations
 # `runAllMigrations` walks the registered steps in code, so adding a new
 # migration never requires editing this file.
 #
-# Requires the CONVEX_DEPLOY_KEY secret (a project deploy key from the
-# Convex dashboard: Settings → Access tokens → Deploy). The job is skipped
+# Requires the CONVEX_DEPLOY_KEY secret — a production deploy key from the
+# deployment's dashboard settings (Deploy keys → Generate), format
+# `prod:<deployment>|<payload>`, with the deployment:deploy permission.
+# The key self-targets its deployment: never add --deployment or
+# CONVEX_DEPLOYMENT to a call that runs under it (that override routes
+# through a user-token endpoint and 401s). The job is skipped
 # on repositories that haven't configured it yet.
 on:
   push:
@@ -53,21 +57,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # DIAGNOSTIC (remove once deploy targeting is settled): probe every
-      # targeting variant under the CI key and print which authenticates.
-      # Runs BEFORE the deploy step so a deploy failure can't skip it.
+      # Fail fast when the CONVEX_DEPLOY_KEY secret holds the wrong kind of
+      # value — this repo once had it swapped with a Cloudinary API secret
+      # (no `prod:` prefix), which made every Convex CLI call in every
+      # workflow 401 with MissingAccessToken and look like an auth outage
+      # instead of a misconfiguration.
+      - name: Sanity-check the deploy key's shape
+        if: env.CONVEX_DEPLOY_KEY != ''
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          case "$CONVEX_DEPLOY_KEY" in
+            prod:*) echo "deploy key shape: OK (prod deploy key)";;
+            *) echo "::error::CONVEX_DEPLOY_KEY does not look like a Convex deploy key (expected 'prod:<deployment>|<payload>'). It may be swapped with another service's secret (e.g. a Cloudinary API secret). Generate one in the Convex dashboard: deployment settings → Deploy keys."; exit 1;;
+          esac
+
       # Sync the Cloudinary env onto the deployment from the repo secrets
       # (when configured) so the media pipeline's Cloudinary mode is
       # env-driven from CI — the flip needs no code change, and the values
       # never appear in chat or logs. Only sets what the repo actually
       # holds; a missing secret is skipped, not an error. Targeting is the
-      # explicit production deployment: CONVEX_DEPLOY_KEY may be a
-      # deployment-scoped key, which `--prod` rejects ("Please set
-      # CONVEX_DEPLOY_KEY…"), so every Convex CLI call names the deployment.
-      # Best-effort by design: CI intermittently drops the deploy-key
-      # credential on BigBrain calls (observed both outcomes for identical
-      # code), so a failure here must not red the run — the owner sets
-      # these vars via the CLI anyway.
+      # deploy key's own (implicit) — it names the deployment itself.
       - name: Sync Cloudinary env from repo secrets
         if: env.CONVEX_DEPLOY_KEY != ''
         continue-on-error: true
@@ -78,13 +88,13 @@ jobs:
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         run: |
           if [ -n "$CLOUDINARY_CLOUD_NAME" ]; then
-            npx --no-install convex env set --deployment jovial-axolotl-209 CLOUDINARY_CLOUD_NAME "$CLOUDINARY_CLOUD_NAME"
+            npx --no-install convex env set CLOUDINARY_CLOUD_NAME "$CLOUDINARY_CLOUD_NAME"
           fi
           if [ -n "$CLOUDINARY_API_KEY" ]; then
-            npx --no-install convex env set --deployment jovial-axolotl-209 CLOUDINARY_API_KEY "$CLOUDINARY_API_KEY"
+            npx --no-install convex env set CLOUDINARY_API_KEY "$CLOUDINARY_API_KEY"
           fi
           if [ -n "$CLOUDINARY_API_SECRET" ]; then
-            npx --no-install convex env set --deployment jovial-axolotl-209 CLOUDINARY_API_SECRET "$CLOUDINARY_API_SECRET"
+            npx --no-install convex env set CLOUDINARY_API_SECRET "$CLOUDINARY_API_SECRET"
           fi
 
       # The MEDIA_MODE_EXPECTATION repo variable is flipped by the owner
@@ -104,15 +114,12 @@ jobs:
         # the production deployment was recreated 2026-09-11). Idempotent —
         # a no-op once the keys are present, never rotates them.
         run: |
-          node scripts/ensure-jwt-keys.mjs --deployment jovial-axolotl-209
-          # deploy has no --deployment flag; the env-file form targets the
-          # production deployment (verified: prints the jovial-axolotl-209
-          # dashboard URL before pushing). Retry-once: CI intermittently
-          # drops the deploy-key credential on BigBrain project resolution
-          # (observed both outcomes for identical code across runs).
-          printf 'CONVEX_DEPLOYMENT=jovial-axolotl-209\n' > deploy-target.env
+          node scripts/ensure-jwt-keys.mjs
+          # Bare deploy: the prod deploy key self-targets jovial-axolotl-209.
+          # A CONVEX_DEPLOYMENT env var or --deployment flag would OVERRIDE
+          # the key and route through a user-token endpoint that 401s.
           bash scripts/retry-once.sh deploy.log \
-            npx --no-install convex deploy --env-file deploy-target.env
+            npx --no-install convex deploy
 
       # Record the deployed git commit so the nightly drift job can compare
       # the live backend against main HEAD (Convex exposes no commit
@@ -123,7 +130,7 @@ jobs:
         if: steps.deploy.conclusion == 'success' && env.CONVEX_DEPLOY_KEY != ''
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: npx --no-install convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}" --deployment jovial-axolotl-209 || echo "recordDeploy failed (transient auth) — the drift check will re-establish the ledger"
+        run: npx --no-install convex run internal.deployStatus.recordDeploy "{\"sha\":\"$GITHUB_SHA\"}" || echo "recordDeploy failed (transient auth) — the drift check will re-establish the ledger"
 
       - name: Run all migrations
         if: env.CONVEX_DEPLOY_KEY != ''
@@ -133,7 +140,7 @@ jobs:
         run: |
           set -o pipefail
           bash scripts/retry-once.sh migrations.log \
-            npx --no-install convex run internal.migrationsRunner.runAllMigrations --deployment jovial-axolotl-209
+            npx --no-install convex run internal.migrationsRunner.runAllMigrations
 
       - name: Upload the migration log
         if: failure()
