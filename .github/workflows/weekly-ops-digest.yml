@@ -72,7 +72,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BODY="$(cat digest.md)"
-          ISSUE_JSON=$(jq -n --arg body "$BODY" '{body: $body}')
+          # gh refuses --label with an unknown label (it never auto-creates).
+          gh label create weekly-ops-digest --color "0E8A16" \
+            --description "Weekly ops health digest" --force 2>/dev/null || true
           NUMBER=$(gh issue list --label weekly-ops-digest --state open --json number \
             --jq '.[0].number' 2>/dev/null || echo "")
           if [ -n "$NUMBER" ] && [ "$NUMBER" != "null" ]; then
