@@ -56,22 +56,6 @@ jobs:
       # DIAGNOSTIC (remove once deploy targeting is settled): probe every
       # targeting variant under the CI key and print which authenticates.
       # Runs BEFORE the deploy step so a deploy failure can't skip it.
-      - name: Debug Convex CLI targeting
-        if: env.CONVEX_DEPLOY_KEY != ''
-        continue-on-error: true
-        env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-        run: |
-          node -v
-          npx --no-install convex --version
-          echo '--- env list via --deployment (known-good shape):'
-          npx --no-install convex env list --deployment jovial-axolotl-209 | head -3 || true
-          echo '--- deploy dry-run, key alone (no CONVEX_DEPLOYMENT anywhere):'
-          env -u CONVEX_DEPLOYMENT npx --no-install convex deploy --dry-run 2>&1 | head -6 || true
-          echo '--- deploy dry-run via env-file (current failing shape):'
-          printf 'CONVEX_DEPLOYMENT=jovial-axolotl-209\n' > deploy-target.env
-          npx --no-install convex deploy --dry-run --env-file deploy-target.env 2>&1 | head -8 || true
-
       # Sync the Cloudinary env onto the deployment from the repo secrets
       # (when configured) so the media pipeline's Cloudinary mode is
       # env-driven from CI — the flip needs no code change, and the values
