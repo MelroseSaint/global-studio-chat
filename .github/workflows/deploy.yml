@@ -109,7 +109,7 @@ jobs:
       # silently leaving the mirror behind the main host.
       - name: Alert on sync failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-mirror-sync";
@@ -155,7 +155,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-mirror-sync";

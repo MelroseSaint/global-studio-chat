@@ -86,7 +86,7 @@ jobs:
     if: github.event_name == 'push'
     steps:
       - name: Cancel self when a newer push is queued
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -191,7 +191,7 @@ jobs:
       # spams one issue per night, because an open alert blocks a new one.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-healthcheck";
@@ -234,7 +234,7 @@ jobs:
       # a stale alert.
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-healthcheck";
@@ -341,7 +341,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-seo-live";
@@ -394,7 +394,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-seo-live";
@@ -450,7 +450,7 @@ jobs:
       # label so a reintroduced stale var gets its own visible alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-vercel-env";
@@ -496,7 +496,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-vercel-env";
@@ -578,7 +578,7 @@ jobs:
       # alert — only the scans themselves do.)
       - name: Alert on production failure
         if: steps.scan-prod.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-build-warnings";
@@ -631,7 +631,7 @@ jobs:
 
       - name: Close stale production alert on success
         if: steps.scan-prod.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-build-warnings";
@@ -658,7 +658,7 @@ jobs:
 
       - name: Alert on preview failure
         if: steps.scan-preview.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "preview-build-warnings";
@@ -710,7 +710,7 @@ jobs:
 
       - name: Close stale preview alert on success
         if: steps.scan-preview.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "preview-build-warnings";
@@ -782,7 +782,7 @@ jobs:
       # auth-loop alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-cloudinary";
@@ -829,7 +829,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-cloudinary";
@@ -903,7 +903,7 @@ jobs:
       # another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-cloudinary-e2e";
@@ -946,7 +946,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-cloudinary-e2e";
@@ -1027,7 +1027,7 @@ jobs:
       # label so a quota alarm doesn't piggyback on another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-cloudinary-quota";
@@ -1074,7 +1074,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-cloudinary-quota";
@@ -1149,7 +1149,7 @@ jobs:
       # swallowed by) the cloudinary alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-media-architecture";
@@ -1192,7 +1192,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-media-architecture";
@@ -1256,7 +1256,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-ai-visual-hardening";
@@ -1302,7 +1302,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-ai-visual-hardening";
@@ -1369,7 +1369,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-ai-scan-integration";
@@ -1416,7 +1416,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-ai-scan-integration";
@@ -1489,7 +1489,7 @@ jobs:
       # so an integrity regression doesn't piggyback on another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-phishing";
@@ -1532,7 +1532,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-phishing";
@@ -1645,7 +1645,7 @@ jobs:
       # label so an identity-declaration regression gets its own alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-profile-type";
@@ -1691,7 +1691,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-profile-type";
@@ -1762,7 +1762,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-pwa-install-hint";
@@ -1802,7 +1802,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-pwa-install-hint";
@@ -1873,7 +1873,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-shared-video-autoplay";
@@ -1913,7 +1913,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-shared-video-autoplay";
@@ -1996,7 +1996,7 @@ jobs:
       # label so a DM share regression gets its own visible alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-dm-share";
@@ -2040,7 +2040,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-dm-share";
@@ -2120,7 +2120,7 @@ jobs:
       # label so a comment share regression gets its own visible alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-comment-share";
@@ -2164,7 +2164,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-comment-share";
@@ -2235,7 +2235,7 @@ jobs:
       # label so a deletion-permission regression gets its own alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-post-author-delete";
@@ -2279,7 +2279,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-post-author-delete";
@@ -2359,7 +2359,7 @@ jobs:
       # so a stale/breaking feed doesn't piggyback on another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-blocklist";
@@ -2402,7 +2402,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-blocklist";
@@ -2482,7 +2482,7 @@ jobs:
       # the auth-loop alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-moderation";
@@ -2525,7 +2525,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-moderation";
@@ -2602,7 +2602,7 @@ jobs:
       # is visible instead of being swallowed by another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-admin-ip";
@@ -2646,7 +2646,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-admin-ip";
@@ -2722,7 +2722,7 @@ jobs:
       # by another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-test-isolation";
@@ -2767,7 +2767,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-test-isolation";
@@ -2837,7 +2837,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-email-domain";
@@ -2875,7 +2875,7 @@ jobs:
 
       - name: Close alert issue on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-email-domain";
@@ -2961,7 +2961,7 @@ jobs:
       # visible instead of being swallowed by another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-admin-workload";
@@ -3013,7 +3013,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-admin-workload";
@@ -3092,7 +3092,7 @@ jobs:
       # job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-story-views";
@@ -3135,7 +3135,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-story-views";
@@ -3215,7 +3215,7 @@ jobs:
       # so a blocklist regression doesn't piggyback on another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-blocklist-qa";
@@ -3258,7 +3258,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-blocklist-qa";
@@ -3337,7 +3337,7 @@ jobs:
       # alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-inp";
@@ -3381,7 +3381,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-inp";
@@ -3462,7 +3462,7 @@ jobs:
       # label so a slow refresh doesn't piggyback on another job's alert.
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-refresh-timing";
@@ -3508,7 +3508,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-refresh-timing";
@@ -3579,7 +3579,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-ios-layout";
@@ -3621,7 +3621,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-ios-layout";
@@ -3676,7 +3676,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-robots-live";
@@ -3721,7 +3721,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-robots-live";
@@ -3830,7 +3830,7 @@ jobs:
 
       - name: Alert on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-sweep-traces";
@@ -3858,7 +3858,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-sweep-traces";

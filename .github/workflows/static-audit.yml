@@ -49,7 +49,7 @@ jobs:
     if: github.event_name == 'push'
     steps:
       - name: Cancel self when a newer push is queued
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
