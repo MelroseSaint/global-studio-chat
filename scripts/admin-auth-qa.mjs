@@ -113,7 +113,17 @@ async function uploadMedia(client) {
   }
   const form = new FormData();
   form.append("file", new Blob([PNG_1PX], { type: "image/png" }), "qa.png");
-  form.append("upload_preset", ticket.uploadPreset);
+  // Signed credentials are the primary path (API secret configured); the
+  // unsigned preset is the legacy fallback the ticket names when the
+  // secret is absent — support both, exactly like the composer.
+  if (ticket.apiKey && ticket.timestamp && ticket.signature) {
+    form.append("api_key", ticket.apiKey);
+    form.append("timestamp", ticket.timestamp);
+    form.append("signature", ticket.signature);
+    if (ticket.folder) form.append("folder", ticket.folder);
+  } else {
+    form.append("upload_preset", ticket.uploadPreset);
+  }
   const res = await fetch(ticket.uploadUrl, { method: "POST", body: form });
   if (res.ok) {
     const data = await res.json();

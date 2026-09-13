@@ -118,3 +118,21 @@ stays honest until the flip is intentional.
   via the server-held secret; they start deleting real Cloudinary assets
   (invalidation included) as soon as the env lands.
 - Storage quota growth on Convex stops the moment the flip lands.
+
+## Account hardening (applied 2026-09-13)
+
+- `purewire_unsigned` is locked down: **folder-restricted to `purewire/`**
+  (`asset_folder`), an allowed-formats allowlist matching the composer
+  (`png,jpg,jpeg,webp,gif,mp4,webm,mov,mp3,wav,m4a,ogg`), unique
+  filenames, and `overwrite: false` — so an unsigned upload can never
+  plant files elsewhere or clobber existing assets. (The preset had been
+  created with completely empty settings.)
+- The signed path (primary) ignores presets entirely; its folder comes
+  from the server-minted ticket (`folder: purewire`).
+- Every QA that uploads through `prepareUpload` now discards rejected
+  uploads (`media.discardUploads`) and the CI E2E requires the CDN to
+  404 after deletion — a leaked asset fails the build instead of
+  silently accumulating in the member's Cloudinary library.
+- `qa:cloudinary-e2e` runs in the Production Health Check as
+  `cloudinary-e2e` (harness-gated, own `prod-cloudinary-e2e` alert
+  label) proving the URL-only invariant and zero orphans on every run.

@@ -77,9 +77,19 @@ async function uploadMedia(client, bytes, mime, kind) {
     contentType: mime,
   });
   if (prepared.mode === "cloudinary") {
+    // Signed credentials are the primary path (API secret configured);
+    // the unsigned preset is the legacy fallback the ticket names when
+    // the secret is absent — support both, exactly like the composer.
     const form = new FormData();
     form.append("file", new Blob([bytes], { type: mime }), "qa-story.png");
-    form.append("upload_preset", prepared.uploadPreset);
+    if (prepared.apiKey && prepared.timestamp && prepared.signature) {
+      form.append("api_key", prepared.apiKey);
+      form.append("timestamp", prepared.timestamp);
+      form.append("signature", prepared.signature);
+      if (prepared.folder) form.append("folder", prepared.folder);
+    } else {
+      form.append("upload_preset", prepared.uploadPreset);
+    }
     const res = await fetch(prepared.uploadUrl, { method: "POST", body: form });
     const data = await res.json();
     if (res.ok && data.public_id) {
@@ -304,6 +314,14 @@ async function main() {
         r?.ok === false,
         r?.error ?? "unexpected ok",
       );
+      // The rejection happens AFTER the media upload, so the asset exists
+      // but no story row references it — discard it or it orphans in the
+      // member's Cloudinary library on every CI run.
+      if (media?.key) {
+        await client.mutation(api.media.discardUploads, {
+          items: [{ key: media.key, resourceType: "image", kind: "image" }],
+        }).catch(() => {});
+      }
     }
   }
 

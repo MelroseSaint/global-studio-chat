@@ -204,6 +204,14 @@ async function main() {
       caption: `watch https://${testDomain} ${stamp}`,
     });
     check("a story caption linking the domain is rejected", story?.ok === false);
+    // The rejection runs AFTER the media upload, so the asset exists with
+    // no story row referencing it — discard it or it orphans in the
+    // member's Cloudinary library on every CI run.
+    if (storyMedia?.key) {
+      await client.mutation(api.media.discardUploads, {
+        items: [{ key: storyMedia.key, resourceType: "image", kind: "image" }],
+      }).catch(() => {});
+    }
 
     // ── 2b. URL patterns are enforced across surfaces too ─────────────────
     const patternText = `qa-pat-${stamp}`;

@@ -13,7 +13,7 @@ spams one issue per night.
 | --- | --- | --- |
 | **Static Audit** (`static-audit.yml`) | push to `main` + `pull_request` | Typecheck, lint, build, secrets scan, static SEO file guard (robots/sitemap drift), sitemap URL health, and 15+ parallel QA jobs (racism, phishing, blocklist, AI scan, automation, shadowban, reinstate, salt, admin-responsive, count-drift, session-audit, cleanup) |
 | **Deploy to Vercel** (`deploy.yml`) | push to `main` | `vercel --prod` for the frontend; shares a concurrency group with the drift redeploy so deploys never race |
-| **Production Health Check** (`production-healthcheck.yml`) | push to `main` + nightly 03:00 UTC + manual | Live-site e2e probes (auth loop, phishing, blocklist sync, moderation reinstate, admin IP binding, story views, cloudinary upload), the Vercel env guard, the build-log warning guard, SEO basics + dynamic-render guards, and the sitemap URL health checks |
+| **Production Health Check** (`production-healthcheck.yml`) | push to `main` + nightly 03:00 UTC + manual | Live-site e2e probes (auth loop, phishing, blocklist sync, moderation reinstate, admin IP binding, story views, cloudinary upload, cloudinary E2E), the Vercel env guard, the build-log warning guard, SEO basics + dynamic-render guards, and the sitemap URL health checks |
 | **SEO Audit** (`seo-audit.yml`) | nightly 04:00 UTC + manual | claude-seo audit + sitemap-wide sweep against the live site; score regressions open a `prod-seo-audit` alert; a weekly step (Monday 05:00 UTC) posts the metrics to a deduplicated `seo-weekly-report` trend issue with accumulating score history |
 | **Run Convex migrations** (`migrations.yml`) | push to `main` + nightly 04:00 UTC | Deploys the Convex backend and auto-runs schema migrations — backfills like the comment like-count never need a manual step |
 | **Redeploy on drift** (`redeploy-drift.yml`) | nightly 03:47 UTC | Compares the commit live on Vercel production against `main` HEAD and redeploys only when they drift, so the canonical/env state never silently lags the repo; fails safe (a check error never triggers a deploy) |
@@ -47,7 +47,8 @@ noted:
 | `ADMIN_PASSWORD` | admin-ip, admin-responsive, pages-inflation | |
 | `RESEND_API_KEY` | auth-loop e2e | The script reads email OTPs from Resend's API |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_UPLOAD_PRESET` | cloudinary-health | Public; also set as `vars` in the healthcheck |
-| `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | cloudinary-health | Signed deletes of the probe asset |
+| `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | cloudinary-health, cloudinary-e2e | Signed deletes of the probe asset |
+| `TEST_HARNESS_SECRET` | cloudinary-e2e | Harness-gated media-lifecycle QA |
 | `SITE_URL` (var) | healthcheck | Defaults to the Convex static host |
 | `CONVEX_URL` (var) | healthcheck + QA jobs | Defaults to the production deployment |
 | `VERCEL_TOKEN` / Vercel project linkage | deploy + env guards | |

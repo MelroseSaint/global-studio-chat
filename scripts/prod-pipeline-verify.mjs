@@ -207,18 +207,20 @@ async function backendChecks() {
     check("dirty fixture carries GPS and device atoms", hasType(dirty, "\u00a9xyz") && hasType(dirty, "udta"));
 
     // prepareUpload is the real public entry point: it authenticates,
-    // enforces account status + upload budget, then mints the Convex
-    // storage URL (or hands back Cloudinary credentials when configured).
-    // This deployment has no Cloudinary env, so mode is always "convex".
+    // enforces account status + upload budget, then mints the storage
+    // ticket. This check verifies the server-side remux, not the storage
+    // mode, so it always uploads to the ticket's Convex fallback URL —
+    // deterministic even in Cloudinary mode (no CDN-invalidation races).
     const prepared = await client.action(api.media.prepareUpload, {
       contentType: "video/mp4",
     });
     check(
       "minted an upload slot via media.prepareUpload",
-      prepared?.mode === "convex" && typeof prepared?.uploadUrl === "string",
+      typeof prepared?.fallbackUrl === "string" ||
+        (prepared?.mode === "convex" && typeof prepared?.uploadUrl === "string"),
       `mode=${prepared?.mode}`,
     );
-    const uploadUrl = prepared.uploadUrl;
+    const uploadUrl = prepared.fallbackUrl ?? prepared.uploadUrl;
     const up = await fetch(uploadUrl, {
       method: "POST",
       headers: { "Content-Type": "video/mp4" },
