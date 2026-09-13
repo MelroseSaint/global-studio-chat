@@ -48,7 +48,7 @@ jobs:
       # rolling `cloudinary-quota-baseline-` prefix; restoring it lets the
       # digest report the same growth trend the guard computes.
       - name: Restore the quota baseline
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .quota-baseline.json
           key: weekly-digest-${{ github.run_id }}
