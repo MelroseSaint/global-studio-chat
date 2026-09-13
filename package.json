@@ -55,6 +55,7 @@
     "qa:vercel-build-warnings": "node scripts/vercel-build-warnings.mjs",
     "qa:cloudinary-health": "node scripts/cloudinary-health-probe.mjs",
     "qa:cloudinary-e2e": "node scripts/qa-cloudinary-e2e.mjs",
+    "qa:cloudinary-quota": "node scripts/cloudinary-quota-guard.mjs",
     "qa:extend-sessions": "node scripts/extend-sessions.mjs",
     "qa:session-lifetime": "node scripts/session-lifetime-qa.mjs",
     "qa:session-audit": "node scripts/session-audit.mjs",

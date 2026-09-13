@@ -47,7 +47,7 @@ noted:
 | `ADMIN_PASSWORD` | admin-ip, admin-responsive, pages-inflation | |
 | `RESEND_API_KEY` | auth-loop e2e | The script reads email OTPs from Resend's API |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_UPLOAD_PRESET` | cloudinary-health | Public; also set as `vars` in the healthcheck |
-| `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | cloudinary-health, cloudinary-e2e | Signed deletes of the probe asset |
+| `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | cloudinary-health, cloudinary-e2e, cloudinary-quota | Signed deletes of the probe asset |
 | `TEST_HARNESS_SECRET` | cloudinary-e2e | Harness-gated media-lifecycle QA |
 | `SITE_URL` (var) | healthcheck | Defaults to the Convex static host |
 | `CONVEX_URL` (var) | healthcheck + QA jobs | Defaults to the production deployment |

@@ -136,3 +136,12 @@ stays honest until the flip is intentional.
 - `qa:cloudinary-e2e` runs in the Production Health Check as
   `cloudinary-e2e` (harness-gated, own `prod-cloudinary-e2e` alert
   label) proving the URL-only invariant and zero orphans on every run.
+
+- Quota & growth alarm: `qa:cloudinary-quota` runs in the Production
+  Health Check as `cloudinary-quota`. On the Free plan the monthly
+  credit limit (25) is a HARD STOP — at 100% every upload fails until
+  the cycle resets. The guard fails at credits >= 80% (warns at 60%),
+  at storage >= 80% of the cap, and projects storage growth against a
+  CI-cached baseline — if headroom exhausts within 30 days it alarms
+  BEFORE anything breaks. Thresholds are overridable via
+  `QUOTA_*` env vars (see the script header).

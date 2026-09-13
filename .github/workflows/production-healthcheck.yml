@@ -971,6 +971,134 @@ jobs:
               console.log(`Closed Cloudinary E2E alert issue #${issue.number}.`);
             }
 
+  cloudinary-quota:
+    # Quota & growth alarm BEFORE uploads start failing: on the Free plan
+    # the monthly credit limit is a hard stop (every upload errors at 100%),
+    # and the storage cap is equally absolute. Fails at configurable
+    # thresholds (credits >= 80%, storage >= 80% of cap) and projects the
+    # storage trend against a baseline cached across runs — the alarm
+    # fires when headroom exhausts within the horizon, not when uploads
+    # are already broken.
+    name: Cloudinary quota & growth
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME || secrets.CLOUDINARY_CLOUD_NAME || 'saintscloud' }}
+      CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+      CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Restore the most recent baseline (written by the previous run) so
+      # the trend projection spans runs. The run_id primary key always
+      # misses, so the post-step saves THIS run's baseline under the
+      # rolling prefix for the next run to restore.
+      - name: Restore the quota baseline
+        uses: actions/cache@v4
+        with:
+          path: .quota-baseline.json
+          key: cloudinary-quota-baseline-${{ github.run_id }}
+          restore-keys: |
+            cloudinary-quota-baseline-
+
+      - name: Run the quota & growth guard
+        id: quota
+        if: env.CLOUDINARY_API_KEY != '' && env.CLOUDINARY_API_SECRET != ''
+        run: bash scripts/retry-once.sh cloudinary-quota.log npm run qa:cloudinary-quota
+
+      - name: Upload the quota log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudinary-quota-log
+          path: cloudinary-quota.log
+
+      # Same deduplicated-alert pattern as the other jobs, with its own
+      # label so a quota alarm doesn't piggyback on another job's alert.
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-cloudinary-quota";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length > 0) {
+              console.log(`Alert issue already open: #${open[0].number} — keeping it.`);
+              return;
+            }
+            const via =
+              context.eventName === "schedule" ? "nightly" :
+              context.eventName === "workflow_dispatch" ? "manual" :
+              `push to ${context.ref.replace("refs/heads/", "")}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Cloudinary quota alarm (${via}, ${new Date().toISOString()})`,
+              labels: [label],
+              body: [
+                "The Cloudinary quota guard fired against production.",
+                "",
+                "On the current plan the credit limit is a hard stop: at 100%",
+                "EVERY user upload fails until the cycle resets or the plan is",
+                "upgraded. The alarm fired at a threshold — act before that.",
+                "",
+                `Triggered by: ${via}`,
+                `Commit: ${context.sha.slice(0, 12)} (${context.ref})`,
+                "",
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                "",
+                "Check the cloudinary-quota-log artifact for the exact numbers",
+                "(credits %, storage % of cap, projected days of headroom).",
+                "",
+                "Options: upgrade the Cloudinary plan, prune unused assets, or",
+                "tighten client upload sizes.",
+                "",
+                "This issue is closed automatically on the next passing run.",
+              ].join("\n"),
+            });
+
+      - name: Close stale alert on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "prod-cloudinary-quota";
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: label,
+            });
+            if (open.length === 0) {
+              console.log("No open Cloudinary quota alert issue to close.");
+              return;
+            }
+            for (const issue of open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+                state_reason: "completed",
+              });
+              console.log(`Closed Cloudinary quota alert issue #${issue.number}.`);
+            }
+
   media-architecture:
     # Enforces the Cloudinary-first media architecture against production:
     # scripts/media-architecture-qa.mjs scans every media reference on
@@ -3643,6 +3771,7 @@ jobs:
       - vercel-build-warnings
       - cloudinary-upload
       - cloudinary-e2e
+      - cloudinary-quota
       - media-architecture
       - ai-visual-hardening
       - ai-scan-integration
