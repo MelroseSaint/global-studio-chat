@@ -46,3 +46,6 @@ skills-lock.json# TypeScript incremental build artifacts (tsc -b)
 
 # Cloudinary quota guard trend baseline (CI-cached, never committed)
 .quota-baseline.json
+
+# weekly digest build artifact
+/digest.md

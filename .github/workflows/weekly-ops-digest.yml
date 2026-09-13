@@ -1,0 +1,84 @@
+name: Weekly ops digest
+
+# One always-current health thread: every Sunday 06:00 UTC (after the
+# weekly backup at 04:30, so the digest reports THIS week's snapshot)
+# the job generates digest.md — CI trends for the last 7 days, backup
+# age, open prod-* alert issues, and Cloudinary quota + growth trend —
+# and upserts a single deduplicated `weekly-ops-digest` issue. The
+# previous week's body is replaced, so the issue is a live dashboard,
+# not an archive. Runs on workflow_dispatch too (e.g. right after setup,
+# or any time you want a fresh picture).
+
+on:
+  schedule:
+    - cron: "0 6 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: weekly-ops-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    name: Generate + post the weekly digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME || secrets.CLOUDINARY_CLOUD_NAME || 'saintscloud' }}
+      CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+      CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The healthcheck's quota job caches its trend baseline under the
+      # rolling `cloudinary-quota-baseline-` prefix; restoring it lets the
+      # digest report the same growth trend the guard computes.
+      - name: Restore the quota baseline
+        uses: actions/cache@v4
+        with:
+          path: .quota-baseline.json
+          key: weekly-digest-${{ github.run_id }}
+          restore-keys: |
+            cloudinary-quota-baseline-
+
+      - name: Generate the digest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/weekly-ops-digest.mjs
+
+      - name: Upload the digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-ops-digest
+          path: digest.md
+
+      - name: Upsert the digest issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY="$(cat digest.md)"
+          ISSUE_JSON=$(jq -n --arg body "$BODY" '{body: $body}')
+          NUMBER=$(gh issue list --label weekly-ops-digest --state open --json number \
+            --jq '.[0].number' 2>/dev/null || echo "")
+          if [ -n "$NUMBER" ] && [ "$NUMBER" != "null" ]; then
+            gh issue edit "$NUMBER" --body "$BODY" >/dev/null
+            echo "updated existing digest issue #$NUMBER"
+          else
+            gh issue create --title "Weekly ops digest" \
+              --label "weekly-ops-digest" --body "$BODY" >/dev/null
+            echo "created the digest issue"
+          fi
