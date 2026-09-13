@@ -135,7 +135,7 @@ jobs:
       # so a failing nightly audit is visible on the repo and never spams.
       - name: Alert on regression
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           METRICS: ${{ steps.audit.outputs.metrics }}
           SWEEP_METRICS: ${{ steps.sweep.outputs.sweep_metrics }}
@@ -187,7 +187,7 @@ jobs:
 
       - name: Close stale alert on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const label = "prod-seo-audit";
@@ -223,7 +223,7 @@ jobs:
       # strictly-weekly cadence.
       - name: Post weekly SEO report
         if: always() && ((github.event_name == 'schedule' && github.event.schedule == '0 5 * * 1') || github.event_name == 'workflow_dispatch')
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           METRICS: ${{ steps.audit.outputs.metrics }}
           SWEEP_METRICS: ${{ steps.sweep.outputs.sweep_metrics }}
