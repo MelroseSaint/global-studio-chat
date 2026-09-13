@@ -68,7 +68,8 @@ jobs:
 
       - name: Upsert the digest issue
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gh authenticates via GH_TOKEN specifically (not GITHUB_TOKEN).
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BODY="$(cat digest.md)"
           ISSUE_JSON=$(jq -n --arg body "$BODY" '{body: $body}')
