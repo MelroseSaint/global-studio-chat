@@ -55,6 +55,16 @@ transferred to the deployment because that needs one of:
 
 ### Option A — rotate the deploy key, let CI do it (recommended)
 
+> **Status 2026-09-12: the migration is COMPLETE via Option B.** All four
+> `CLOUDINARY_*` env vars are on the deployment (preset `purewire_unsigned`
+> created for the unsigned path; the signed key+secret path is primary and
+> verified by `qa:cloudinary-health`), and `MEDIA_MODE_EXPECTATION` is
+> `cloudinary` — the live pipeline mints cloudinary tickets. What remains
+> for Option A only: a **real** Convex deploy key (format
+> `prod:<deployment>#<secret>` — the value currently in the
+> `CONVEX_DEPLOY_KEY` repo secret is the Cloudinary API secret; the two
+> were swapped) so Migrations and the `convex.site` mirror sync go green.
+
 1. Convex dashboard → team `monroedoses` → project PureWire →
    Settings → Access Keys → **Deploy key** → create.
 2. GitHub → repo → Settings → Secrets and variables → Actions → update
