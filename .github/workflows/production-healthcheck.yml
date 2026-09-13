@@ -2559,14 +2559,14 @@ jobs:
     # with a valid JWT (enforcement is backend, not UI gating); simulating
     # an IP change must revoke the session outright, and re-verifying must
     # stay revoked (sticky). Runs on the same schedule as the auth loop.
-    # Harness-gated for the enforcement/revocation steps; the happy path
-    # runs whenever ADMIN_PASSWORD is configured.
+    # Harness-gated throughout: the harness mints the admin session for the
+    # happy path too — no real admin password is involved (see
+    # docs/secrets-setup.md; the ADMIN_PASSWORD repo secret was retired).
     name: Admin IP binding QA (backend-verified device gate)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: moderation-reinstate
     env:
-      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
       - name: Check out the repo
@@ -2582,10 +2582,9 @@ jobs:
         run: npm ci
 
       - name: Run the admin IP binding QA
-        if: env.ADMIN_PASSWORD != ''
+        if: env.TEST_HARNESS_SECRET != ''
         id: admin-ip
         env:
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           CONVEX_URL: ${{ vars.CONVEX_URL || 'https://jovial-axolotl-209.convex.cloud' }}
         run: bash scripts/retry-once.sh admin-ip.log npm run qa:admin-ip

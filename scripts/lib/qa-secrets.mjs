@@ -3,8 +3,9 @@
  * Shared secret resolution for PureWire production QA scripts.
  *
  * Precedence:
- *   1. The ADMIN_PASSWORD environment variable (still supported — useful in
- *      CI, where a secret is injected, or when a caller wants to override).
+ *   1. The ADMIN_PASSWORD environment variable (optional local override —
+ *      no repo secret injects it into CI anymore; CI authenticates admin
+ *      QAs via the harness, see docs/secrets-setup.md).
  *   2. The gitignored local file `.freebuff/.admin-password` (a single line,
  *      trimmed). This is the recommended path for interactive runs so the
  *      real password never appears in shell history, this transcript, or a

@@ -419,8 +419,6 @@ jobs:
     # so push runs don't burn the free-plan database-I/O budget walking the
     # whole admin dashboard once per commit.
     if: github.event_name != 'push' && github.event_name != 'pull_request'
-    env:
-      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -430,9 +428,8 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Run the admin dashboard responsive QA
-        if: env.ADMIN_PASSWORD != '' || env.TEST_HARNESS_SECRET != ''
+        if: env.TEST_HARNESS_SECRET != ''
         env:
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
         # retry-once: this QA walks 50+ live pages; a single transient
@@ -440,7 +437,7 @@ jobs:
         # own. A genuine regression fails identically on the second attempt.
         run: bash scripts/retry-once.sh admin-responsive.log npm run qa:admin-responsive
       - name: Upload QA log
-        if: always() && env.ADMIN_PASSWORD != ''
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: admin-responsive-log
@@ -453,7 +450,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
       - uses: actions/checkout@v4
@@ -464,9 +460,8 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Run the dense-page inflation QA
-        if: env.ADMIN_PASSWORD != '' || env.TEST_HARNESS_SECRET != ''
+        if: env.TEST_HARNESS_SECRET != ''
         env:
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
         run: npm run qa:pages-inflation
@@ -476,7 +471,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
     steps:
       - uses: actions/checkout@v4
@@ -487,9 +481,8 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Run the signed-in shell layout QA
-        if: env.TEST_HARNESS_SECRET != '' || env.ADMIN_PASSWORD != ''
+        if: env.TEST_HARNESS_SECRET != ''
         env:
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           TEST_HARNESS_SECRET: ${{ secrets.TEST_HARNESS_SECRET }}
           SITE_URL: ${{ vars.SITE_URL || 'https://purewire.vercel.app' }}
         run: npm run qa:shell-layout 2>&1 | tee shell-layout.log

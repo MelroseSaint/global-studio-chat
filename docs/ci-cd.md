@@ -45,7 +45,6 @@ noted:
 | Name | Used by | Notes |
 | --- | --- | --- |
 | `TEST_HARNESS_SECRET` | All harness-gated QAs | Must match the Convex deployment env; `TEST_HARNESS_ENABLED=1` on the deployment |
-| `ADMIN_PASSWORD` | admin-ip, admin-responsive, pages-inflation | |
 | `RESEND_API_KEY` | auth-loop e2e | The script reads email OTPs from Resend's API |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_UPLOAD_PRESET` | cloudinary-health | Public; also set as `vars` in the healthcheck |
 | `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | cloudinary-health, cloudinary-e2e, cloudinary-quota | Signed deletes of the probe asset |

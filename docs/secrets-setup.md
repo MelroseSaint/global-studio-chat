@@ -56,9 +56,9 @@ After setting it, run **Run Convex migrations** manually from the
 Actions tab once — it deploys the current functions and records the
 deployed commit for the drift check.
 
-## 3. `TEST_HARNESS_SECRET` + `ADMIN_PASSWORD` — the production QAs
+## 3. `TEST_HARNESS_SECRET` — the production QAs
 
-The harness QAs are wired in CI but inert without these:
+The harness QAs are wired in CI but inert without this:
 
 1. Pick a long random value
    (`node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`).
@@ -70,9 +70,19 @@ The harness QAs are wired in CI but inert without these:
    `--deployment` must come before the value — see the CLI gotcha in
    `.freebuff/run.md` (values starting with `-` or `-----BEGIN` parse as
    flags otherwise).
-3. Repo secret `TEST_HARNESS_SECRET` = the same value. Repo secret
-   `ADMIN_PASSWORD` = the real admin password (used by admin-ip,
-   admin-responsive, pages-inflation QAs).
+3. Repo secret `TEST_HARNESS_SECRET` = the same value. That is the only
+   credential the admin-path QAs need: the harness mints admin sessions
+   for them (admin-ip, admin-responsive, pages-inflation all support
+   this since 2026-09).
+
+> ⚠️ **Do not (re-)add an `ADMIN_PASSWORD` repo secret.** It was
+> deliberately retired: every CI consumer authenticates through the
+> harness instead, and a real admin password has no business sitting in
+> repo secrets where any workflow edit could read it. The QAs still
+> accept a local `ADMIN_PASSWORD` env override for interactive runs
+> (`.freebuff/.admin-password`), but CI never needs one. If a future QA
+> genuinely needs the real password, gate it on a dedicated secret and
+> justify it in review — don't resurrect this name.
 
 ## 4. `RESEND_API_KEY` — the auth-loop e2e
 
