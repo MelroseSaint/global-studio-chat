@@ -28,10 +28,23 @@ workflows pass them explicitly.
 
 Create a deploy key:
 
-1. dashboard.convex.com → project **PureWire** (deployment
-   `jovial-axolotl-209`) → **Settings → Access Keys → Deploy**.
-2. Generate the key, copy it → add as the repo secret
-   `CONVEX_DEPLOY_KEY`.
+1. dashboard.convex.com → deployment `jovial-axolotl-209` →
+   **Settings → Deploy Keys → Generate a deploy key** (give it the
+   `deployment:deploy` permission; add env read/write if CI should also
+   sync `CLOUDINARY_*`).
+2. The key looks like `prod:jovial-axolotl-209|eyJ2…0=` — a real Convex
+   deploy key always starts with a scope (`prod:`/`dev:`/`preview:`)
+   followed by `<deployment>|<payload>`. Copy it → add as the repo
+   secret `CONVEX_DEPLOY_KEY`.
+
+   ⚠️ Don't mix it up with the Cloudinary API secret — this repo once
+   had the two swapped, and every Convex workflow 401s with a misleading
+   `MissingAccessToken`. The workflows now fail fast on a non-`prod:`
+   value with a pointed error.
+3. **Never add `--deployment` or `CONVEX_DEPLOYMENT` to a CLI call that
+   runs under the key** — the key self-targets its deployment, and an
+   explicit override routes through a user-token endpoint that 401s
+   (`MissingAccessToken` / `team_and_project`).
 
 Consumers: `migrations.yml` (deploys backend + runs migrations, runs
 `scripts/ensure-jwt-keys.mjs` first so JWT_PRIVATE_KEY/JWKS can never be

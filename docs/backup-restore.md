@@ -28,6 +28,11 @@ CONVEX_DEPLOYMENT=jovial-axolotl-209 \
   --path backups/purewire-prod-$(date -u +%Y-%m-%d).zip
 ```
 
+- `CONVEX_DEPLOYMENT` selects the target for a **logged-in** CLI. If you
+  run under a deploy key (`CONVEX_DEPLOY_KEY` exported) instead, drop the
+  env var — the key self-targets its deployment, and combining the two
+  makes the CLI 401 on a user-token endpoint.
+
 - `--include-file-storage` matters: post/avatar/banner media on the
   fallback (Convex storage) path lives in `_storage`; without the flag the
   snapshot has document references whose bytes are gone.

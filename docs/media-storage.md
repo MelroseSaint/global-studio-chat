@@ -59,11 +59,12 @@ transferred to the deployment because that needs one of:
 > `CLOUDINARY_*` env vars are on the deployment (preset `purewire_unsigned`
 > created for the unsigned path; the signed key+secret path is primary and
 > verified by `qa:cloudinary-health`), and `MEDIA_MODE_EXPECTATION` is
-> `cloudinary` — the live pipeline mints cloudinary tickets. What remains
-> for Option A only: a **real** Convex deploy key (format
-> `prod:<deployment>#<secret>` — the value currently in the
-> `CONVEX_DEPLOY_KEY` repo secret is the Cloudinary API secret; the two
-> were swapped) so Migrations and the `convex.site` mirror sync go green.
+> `cloudinary` — the live pipeline mints cloudinary tickets. The repo's
+> `CONVEX_DEPLOY_KEY` has since been replaced with a real production
+> deploy key (format `prod:<deployment>|<payload>`); the workflows run
+> all Convex CLI calls bare (the key self-targets — an explicit
+> `--deployment`/`CONVEX_DEPLOYMENT` override 401s under key-only
+> environments) and fail fast when the secret holds a non-`prod:` value.
 
 1. Convex dashboard → team `monroedoses` → project PureWire →
    Settings → Access Keys → **Deploy key** → create.
